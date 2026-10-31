@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import copy
 import time
-from src.game_records import outcome_text
+from src.game_records import outcome_text, display_bot_copy
 from dataclasses import dataclass
 import hashlib
 import re
@@ -977,7 +977,7 @@ class _Connect4Mechanics:
             valid=True,
             canonical_move_id=norm,
             player_move_summary=player_summary,
-            bot_move_summary=bot_summary,
+            bot_move_summary=display_bot_copy(bot_summary),
             short_status_line=short_line,
             round_over=round_over,
             winner=winner,
@@ -1814,9 +1814,9 @@ def apply_visitor_move(
         return MoveResult(
             accepted=True,
             status_code="accepted",
-            message=bot_summary + ' ' + outcome_text(state),
+            message=display_bot_copy(bot_summary) + ' ' + outcome_text(state),
             player_move_summary="Triggered VS_BOT takeover",
-            bot_move_summary=bot_summary,
+            bot_move_summary=display_bot_copy(bot_summary),
             round_over=bool(state.get("round_over", False)),
             winner=state.get("winner"),
             new_state=state,

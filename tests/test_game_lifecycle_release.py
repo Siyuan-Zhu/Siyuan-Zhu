@@ -168,3 +168,9 @@ def test_bot_display_projection_preserves_record_identity():
     md = render_readme_game_section(state, elo_ledger=ledger)
     assert 'House - Bot took over' in md and '`@House-Bot`' not in md
     assert state == before
+
+
+def test_human_bot_handle_is_not_a_bot_display_label():
+    from src.game_records import history_markdown
+    state = {'round_id': 2, 'past_rounds': [{'round_id': 1, 'winner': 'red', 'mode': 'VS_BOT', 'finisher_handle': 'bot', 'moves_count': 7}]}
+    assert 'Terracotta won · @bot' in history_markdown(state)

@@ -78,7 +78,7 @@ def history_markdown(state):
             else 'Outcome unavailable')
         finisher = record.get('finisher_handle')
         if finisher:
-            result += (' · ' + BOT_DISPLAY_NAME) if finisher in ('House-Bot', 'house_bot', 'bot') else f' · @{escape(str(finisher).lstrip("@"))}'
+            result += (' · ' + BOT_DISPLAY_NAME) if winner in ('bot', 'house_bot') and record.get('mode') != 'PVP_DUEL' and finisher == 'House-Bot' else f' · @{escape(str(finisher).lstrip("@"))}'
         count = record.get('moves_count')
         rows.append(f'| {rid} | {result} | {count if type(count) is int else "—"} |')
     content = '\n'.join(['| Round | Result | Discs |','| :---: | :--- | ---: |',*rows]) if rows else '_No completed rounds yet._'
