@@ -1,0 +1,72 @@
+{
+  "entries": [
+    {
+      "24h_shift": 0.24,
+      "artwork_artist": "Pete F",
+      "artwork_source": "Unsplash",
+      "artwork_title": "ABSORPTION",
+      "artwork_url": "https://unsplash.com/photos/lbje0RZTvOg",
+      "cluster_keywords": [
+        "binance",
+        "hack",
+        "losses",
+        "remaining liquid",
+        "christy reuters"
+      ],
+      "commissioned_thesis": "Binance absorbs billions in catastrophic hack fallout via internal reserves, crystallizing an era where private exchange balance sheets serve as sovereign backstops against digital asset instability.",
+      "critic_scores": {
+        "composite": 0.703,
+        "semantic_alignment": 0.71
+      },
+      "date": "2026-10-31",
+      "dominant_category": "AI & Distributed Systems",
+      "dominant_signal_type": "HYBRID",
+      "fallback_webp_path": "assets/pulse/2026-10-31.webp",
+      "flux_model": null,
+      "gloss": "Private reserves soak up systemic shock.",
+      "headline": "ABSORPTION \u2014 Private reserves soak up systemic shock.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/lbje0RZTvOg",
+      "macro_contribution_pct": 38.0,
+      "mood_votes": {
+        "spot_on": 0,
+        "too_heavy": 0,
+        "too_sunny": 0
+      },
+      "orbit_contribution_pct": 62.0,
+      "orbit_sources_matched": [],
+      "orbit_weight_ratio": 0.62,
+      "publication_id": "fd0a9d30c45ddb79f2b6",
+      "published_at": "2026-10-31T19:04:59.079663Z",
+      "quote": "Private reserves soak up systemic shock.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "Binance absorbs billions in catastrophic hack fallout via internal reserves, crystallizing an era where private exchange balance sheets serve as sovereign backstops against digital asset instability.",
+      "top_macro_themes": [
+        "binance",
+        "hack",
+        "losses",
+        "remaining liquid",
+        "christy reuters"
+      ],
+      "top_orbit_themes": [
+        "binance",
+        "hack",
+        "losses",
+        "remaining liquid",
+        "christy reuters"
+      ],
+      "unsplash_photographer": "Pete F",
+      "unsplash_profile_url": "https://unsplash.com/@pete_2112",
+      "updated_at": "2026-10-31T19:04:59.079663Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "ABSORPTION"
+    }
+  ],
+  "schema_version": "2.0",
+  "updated_at": "2026-10-31T19:04:59.079663Z",
+  "version": "2.0"
+}

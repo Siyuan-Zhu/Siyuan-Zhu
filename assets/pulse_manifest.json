@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "date": "2026-10-31",
+  "word": "ABSORPTION",
+  "gloss": "Private reserves soak up systemic shock.",
+  "archetype": "POETIC_CINEMA",
+  "medium": "PHOTOGRAPHY",
+  "files": {
+    "assets/daily_pulse_light.webp": "1b8d3d85befdc74878574c69e351ffab1cffc41f96850833193699db90ca2a91",
+    "assets/daily_pulse_dark.webp": "1b8d3d85befdc74878574c69e351ffab1cffc41f96850833193699db90ca2a91",
+    "assets/daily_pulse.svg": "398c2b6f64055a6318b2874d4b7248b94a75da4e7d7a2f86de8ec9137219c353",
+    "assets/pulse/2026-10-31.webp": "81fe51f1ff1d01ed77ddc478a7bd33839f5d1697cf7d36353a99d538812bff81"
+  },
+  "publication_id": "fd0a9d30c45ddb79f2b6"
+}

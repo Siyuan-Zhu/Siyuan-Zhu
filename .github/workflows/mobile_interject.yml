@@ -1,0 +1,163 @@
+name: Mobile Personal Orbit Interjection
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action: interject | clear | switch-game"
+        required: true
+        default: "interject"
+        type: choice
+        options:
+          - interject
+          - clear
+          - switch-game
+      word:
+        description: "Override Word of the Day (e.g., CONVERGENCE, ANCHORED)"
+        required: false
+        default: ""
+      phrase:
+        description: "Override short explanation phrase"
+        required: false
+        default: ""
+      note:
+        description: "Personal field note (e.g., 'Morning run along the Hudson')"
+        required: false
+        default: ""
+      visual_mode:
+        description: "Visual mode override: auto | photo | blueprint"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - photo
+          - blueprint
+      game:
+        description: "Game to activate when action=switch-game (connect4)"
+        required: false
+        default: "connect4"
+        type: choice
+        options:
+          - connect4
+
+  repository_dispatch:
+    types: [orbit-interject]
+
+concurrency:
+  group: readme-state-writer
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  update-orbit:
+    if: vars.ZEITGEIST_WRITER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 with pip cache
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci.lock
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Apply Mobile Orbit Update & Rebuild Profile
+        env:
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
+          APIFY_INSTAGRAM_BUILD: ${{ vars.APIFY_INSTAGRAM_BUILD }}
+          SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+          ZEITGEIST_LIVE_LLM: "1"
+          ZEITGEIST_LIVE_COLLECT: "1"
+          ZEITGEIST_LIVE_UNSPLASH: "1"
+          ZEITGEIST_OFFLINE_DEMO: "0"
+          ACTION: ${{ github.event.inputs.action || github.event.client_payload.action || 'interject' }}
+          WORD: ${{ github.event.inputs.word || github.event.client_payload.word || '' }}
+          PHRASE: ${{ github.event.inputs.phrase || github.event.client_payload.phrase || '' }}
+          NOTE: ${{ github.event.inputs.note || github.event.client_payload.note || '' }}
+          VISUAL_MODE: ${{ github.event.inputs.visual_mode || github.event.client_payload.visual_mode || 'auto' }}
+          GAME: ${{ github.event.inputs.game || github.event.client_payload.game || 'connect4' }}
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+
+          action = os.environ.get("ACTION", "interject")
+          if action not in {"interject", "clear", "switch-game"}:
+              raise ValueError("Unknown owner action")
+          preflight = ["python3", "scripts/check_runtime_configuration.py"]
+          if action != "switch-game":
+              preflight.append("--daily")
+          subprocess.run(preflight, check=True)
+          if action != "switch-game" and os.environ.get("SPEND_POLICY_SHA256"):
+              subprocess.run(["python3", "scripts/maintain_spend_control.py", "--apply"], check=True)
+          if action == "clear":
+              command = ["python3", "scripts/orbit.py", "clear-interjection"]
+          elif action == "switch-game":
+              command = ["python3", "scripts/orbit.py", "switch-game", os.environ.get("GAME", "connect4")]
+          else:
+              command = ["python3", "scripts/orbit.py", "interject",
+                         "--word", os.environ.get("WORD", ""),
+                         "--phrase", os.environ.get("PHRASE", ""),
+                         "--note", os.environ.get("NOTE", ""),
+                         "--mode", os.environ.get("VISUAL_MODE", "auto"),
+                         "--channel", "github_mobile"]
+          subprocess.run(command, check=True)
+          PY
+          python3 scripts/build_readme.py
+
+      - name: Commit and Push with 3-Attempt Rebase Retry
+        env:
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          ACTION: ${{ github.event.inputs.action || github.event.client_payload.action || 'interject' }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 scripts/publish_readme.py --message "chore(orbit): mobile control update [skip ci]"
+
+      - name: Preserve public publication assets when a writer fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: ignore
+          path: |
+            .publication-recovery/*/assets/
+            .publication-recovery/*/README.md
+            .publication-recovery/*/variants/
+            data/publication_reconcile.json

@@ -1,0 +1,147 @@
+name: Daily Zeitgeist Commissioning
+
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    inputs:
+      preflight_only:
+        description: Read-only owner readiness check without publication or paid calls
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: readme-state-writer
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  profile-preflight:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.preflight_only == true &&
+      github.actor == 'Siyuan-Zhu' &&
+      (github.repository == 'Siyuan-Zhu/readme-live-sandbox' || github.repository == 'Siyuan-Zhu/Siyuan-Zhu')
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Check canonical profile and metadata without writes
+        env:
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          PULSE_VOTE_SALT: ${{ secrets.PULSE_VOTE_SALT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
+          APIFY_INSTAGRAM_BUILD: ${{ vars.APIFY_INSTAGRAM_BUILD }}
+          SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+          ZEITGEIST_LIVE_LLM: "1"
+          ZEITGEIST_LIVE_COLLECT: "1"
+          ZEITGEIST_LIVE_UNSPLASH: "1"
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: python3 scripts/probe_profile_readiness.py
+  synthesize-pulse:
+    timeout-minutes: 15
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.preflight_only != true) &&
+      vars.ZEITGEIST_WRITER_ENABLED == 'true' &&
+      (github.event_name != 'schedule' || vars.ZEITGEIST_SCHEDULE_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 with pip cache
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci.lock
+
+      - name: Install Zeitgeist pipeline dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Daily Zeitgeist Pipeline & Rebuild README
+        env:
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
+          APIFY_INSTAGRAM_BUILD: ${{ vars.APIFY_INSTAGRAM_BUILD }}
+          SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+          ZEITGEIST_LIVE_LLM: "1"
+          ZEITGEIST_LIVE_COLLECT: "1"
+          ZEITGEIST_LIVE_UNSPLASH: "1"
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 scripts/check_runtime_configuration.py --daily
+          python3 - <<'PY'
+          import os, subprocess
+          if os.environ.get("SPEND_POLICY_SHA256"):
+              subprocess.run(["python3", "scripts/maintain_spend_control.py", "--apply"], check=True)
+          PY
+          python3 scripts/run_zeitgeist.py
+          python3 scripts/build_readme.py
+
+      - name: Commit and Push with 3-Attempt Rebase Retry
+        env:
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 scripts/publish_readme.py --message "chore(pulse): daily zeitgeist synthesis [skip ci]"
+
+      - name: Preserve public publication assets when a writer fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: ignore
+          path: |
+            .publication-recovery/*/assets/
+            .publication-recovery/*/README.md
+            .publication-recovery/*/variants/
+            data/publication_reconcile.json

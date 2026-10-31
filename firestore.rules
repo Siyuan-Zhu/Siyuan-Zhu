@@ -1,0 +1,864 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file enforces the data structures for the
+// README Live Command Center (`src/state_store.py`) and Workstream 1 (WS1, Issue #21)
+// in `design_draft.md` Table 3.1.
+//
+// All production writes, rate-limit deduplication checks, and TTL pruning
+// sweeps are performed server-side via the Google Cloud Firestore Admin SDK or
+// authenticated service-account REST client running in GitHub Actions / Cloud Run.
+// Public read access (`allow get, list`) is permitted only on sanitized display
+// documents (`profile_state/daily_pulse`, `profile_state/active_game`,
+// `profile_state/elo_ledger`, `pulse_history/{dateId}`, `pulse_votes/{dateId}`),
+// while private operational state (`orbit_roster`, `bot_memory`, `game_rate_limits`,
+// `ingestion_cache`, `vote_rate_limits`) and all write operations are strictly
+// gated by `isPipelineAdmin()` with schema, type, size, and immutability validation.
+//
+// Collection: profile_state
+// Document ID: docId in [
+//   'daily_pulse',
+//   'active_game',
+//   'orbit_roster',
+//   'elo_ledger',
+//   'bot_memory',
+//   'game_rate_limits'
+// ]
+//
+// 1. profile_state/daily_pulse (Section 7.1 + Table 3.1 + src/state_store.py compatibility):
+//   - schema_version: string or int (optional)
+//   - state_version: int (optional/required in v2, >= 0)
+//   - date / date_utc: string (optional/required in v2, YYYY-MM-DD)
+//   - word: string (1..60 chars)
+//   - gloss: string (0..500 chars)
+//   - commissioned_thesis: string (0..2000 chars)
+//   - visual_anchor: string (0..500 chars)
+//   - visual_medium: string (1..64 chars)
+//   - curatorial_archetype: string in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY']
+//   - text_quadrant: string in ['top_left', 'top_right', 'bottom_left', 'bottom_right', 'bottom_center', 'margin_outside', 'spine_vertical', 'split_diptych', 'upper_left', 'upper_right', 'lower_left', 'lower_right', 'margin_bottom', 'margin_right', 'full_canvas']
+//   - primary_image_url / image_url: string (URL <= 2048 chars)
+//   - fallback_image_url / fallback_webp_path: string (<= 2048 chars)
+//   - published_pulse / commission: map (optional nested pulse/commission payloads)
+//   - cluster_keywords, orbit_sources_matched, runner_up_clusters: list
+//   - silhouette_score, velocity, orbit_resonance, orbit_contribution_pct, macro_contribution_pct: number
+//   - unsplash_photographer, unsplash_profile_url, flux_model, published_at, quietest_quadrant, exif_summary
+//   - mood_votes: map (spot_on, too_sunny, too_heavy)
+//   - history_words_30d: list (<= 30 items)
+//   - medium_history_30d: list (<= 30 items)
+//   - archetype_history_30d: list (<= 30 items)
+//   - Legacy fields supported: definition, insight, category, votes,
+//     history_words, updated_at, visitor_mood_tally, recent_words,
+//     analysis, visual_decision, telemetry, date_iso, word_history
+//
+// 2. profile_state/active_game (Section 7.1 + Table 3.1 Connect 4 + src/state_store.py):
+//   - schema_version: string or int (optional)
+//   - state_version: int (>= 0)
+//   - round_id: int (>= 1)
+//   - turn: int (>= 0)
+//   - mode: string in ['VS_BOT', 'PVP_DUEL', 'COOP_FORUM']
+//   - status: string (e.g. 'ACTIVE', 'COMPLETED', 'active', 'won', 'lost', 'draw', 'completed')
+//   - current_turn_color: string in ['RED', 'YELLOW', 'GOLD', 'BLUE', 'TERRACOTTA', 'CHARCOAL']
+//   - board: list (<= 16 rows)
+//   - bitboard_p1: int (or hex string)
+//   - bitboard_p2: int (or hex string)
+//   - winning_cells: list (<= 16 items)
+//   - last_move: map or null
+//   - move_history: list (<= 100 items)
+//   - gold_moves / blue_moves / red_team / yellow_team / red_contributors / yellow_contributors: list or map
+//   - moves_this_round, last_finished_board, finisher_handle, last_elo_delta, episode_trace, last_move_epoch
+//   - Legacy fields supported: game_type, active_game, game_key, round_over, updated_at
+//
+// 3. profile_state/orbit_roster (Table 3.1):
+//   - handles: map (size <= 500)
+//   - curated_o3_cursor: int (>= 0) or map (size <= 500)
+//
+// 4. profile_state/elo_ledger (Table 3.1 + src/state_store.py):
+//   - schema_version: string or int (optional)
+//   - state_version: int (>= 0)
+//   - bot_elo: number
+//   - players / ratings: map (size <= 1000)
+//   - recent_rounds / history / recent_matches: list
+//
+// 5. profile_state/bot_memory (Table 3.1 + src/state_store.py):
+//   - schema_version / version: string or int (optional)
+//   - state_version: int (>= 0)
+//   - games_learned / games_played: int (>= 0)
+//   - states / state_values / values: map (size <= 5000)
+//
+// 6. profile_state/game_rate_limits (Table 3.1 + src/state_store.py):
+//   - schema_version: string or int (optional)
+//   - users / cooldowns / hourly_moves / daily_games: map (size <= 2000)
+//
+// Collection: ingestion_cache
+// Document ID: dateId (ISO 8601 date string YYYY-MM-DD)
+// Fields:
+//   - date: string (required, matches dateId, immutable on update)
+//   - items: map (required, size <= 500)
+//
+// Collection: pulse_history
+// Document ID: dateId (ISO 8601 date string YYYY-MM-DD)
+// Fields:
+//   - Section 7.1 + Table 3.1 v2 fields + PublishedPulse.to_feed_entry() fields
+//     and legacy fields (date_iso, word_of_the_day, explanation_phrase, composite_score)
+//
+// Collection: pulse_votes
+// Document ID: dateId (1..32 chars, e.g. YYYY-MM-DD)
+// Fields:
+//   - spot_on: int (0..10000000)
+//   - too_sunny: int (0..10000000)
+//   - too_heavy: int (0..10000000)
+//
+// Collection: vote_rate_limits
+// Document ID: limitId ('{date}_{hmac}', 12..128 chars)
+// Fields:
+//   - Table 3.1 v2 fields (date, vote_type, voted_at) and legacy fields
+//     (date_str, voter_hmac, mood_key)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the caller is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the authenticated caller holds a server-minted admin/pipeline claim
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.get('admin', false) == true ||
+         request.auth.token.get('pipeline_admin', false) == true ||
+         request.auth.token.get('role', '') == 'pipeline_admin');
+    }
+
+    // Alias for service-account / pipeline admin authorization
+    function isPipelineAdmin() {
+      return isAdmin();
+    }
+
+    // Check if user owns the resource (for user-owned documents)
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if user is owner based on document's uid field
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    // Verify UID hasn't been tampered with on create
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    // Ensure uid field is not modified on update
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validate that immutable fields have not changed on update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // Validate string length on request.resource.data
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // Validate optional string (if present, must be string and within length)
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+        (request.resource.data[field] is string &&
+         request.resource.data[field].size() >= minLen &&
+         request.resource.data[field].size() <= maxLen);
+    }
+
+    // Validate optional nullable string (if present and non-null, must be string within length)
+    function isValidOptionalNullableString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+        request.resource.data[field] == null ||
+        (request.resource.data[field] is string &&
+         request.resource.data[field].size() >= minLen &&
+         request.resource.data[field].size() <= maxLen);
+    }
+
+    // Validate URL format (must start with https:// or http:// and obey max length)
+    function isValidUrl(url) {
+      return url is string &&
+        url.size() <= 2048 &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Validate email format without literal dollar character
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() >= 3 &&
+        email.size() <= 320 &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}");
+    }
+
+    // Validate ISO 8601 date string (YYYY-MM-DD) without literal dollar character
+    function isValidIsoDate(dateStr) {
+      return dateStr is string &&
+        dateStr.size() == 10 &&
+        dateStr.matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}");
+    }
+
+    // Validate ISO 8601 datetime string format (YYYY-MM-DDTHH:MM:SS)
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.size() >= 10 &&
+        dateStr.size() <= 64 &&
+        dateStr.matches("^[0-9]{4}-[0-9]{2}-[0-9]{2}.*");
+    }
+
+    // Validate that a string path is correctly scoped to the user's ID
+    function isScopedPath(path) {
+      return isAuthenticated() &&
+        path is string &&
+        path.size() <= 512 &&
+        path.matches("^users/" + request.auth.uid + "/.*");
+    }
+
+    // Validate that a numeric field is positive
+    function isPositive(field) {
+      return (request.resource.data[field] is int || request.resource.data[field] is float) &&
+        request.resource.data[field] > 0;
+    }
+
+    // Validate that a list is a list and enforces size limits
+    function isValidList(listData, maxSize) {
+      return listData is list && listData.size() <= maxSize;
+    }
+
+    // Validate that a string list enforces both list size and element string bounds
+    function isValidBoundedStringList(listData, maxItems, minElemLen, maxElemLen) {
+      return isValidList(listData, maxItems) &&
+        (listData.size() == 0 ||
+         (listData[0] is string &&
+          listData[0].size() >= minElemLen &&
+          listData[0].size() <= maxElemLen &&
+          listData[listData.size() - 1] is string &&
+          listData[listData.size() - 1].size() >= minElemLen &&
+          listData[listData.size() - 1].size() <= maxElemLen));
+    }
+
+    // Validate that a map contains only allowed keys
+    function isValidMap(mapData, allowedKeys) {
+      return mapData is map && mapData.keys().hasOnly(allowedKeys);
+    }
+
+    // Validate that a timestamp is recent (within the last 5 minutes)
+    function isRecent(time) {
+      return time is timestamp &&
+        time > request.time - duration.value(5, 'm') &&
+        time <= request.time;
+    }
+
+    // ===============================================================
+    // Domain Validators (Called in BOTH create and update rules)
+    // ===============================================================
+
+    // Validate mood tally map structure and bounded non-negative integer counts
+    function isValidMoodTallyMap(tally) {
+      return tally is map &&
+        tally.keys().hasAll(['spot_on', 'too_sunny', 'too_heavy']) &&
+        tally.keys().hasOnly(['spot_on', 'too_sunny', 'too_heavy']) &&
+        tally.spot_on is int && tally.spot_on >= 0 && tally.spot_on <= 10000000 &&
+        tally.too_sunny is int && tally.too_sunny >= 0 && tally.too_sunny <= 10000000 &&
+        tally.too_heavy is int && tally.too_heavy >= 0 && tally.too_heavy <= 10000000;
+    }
+
+    // 1. Validate `profile_state/daily_pulse` document (Section 7.1 + Table 3.1 + src/state_store.py)
+    function isValidDailyPulseState(data) {
+      let allowedFields = [
+        'schema_version',
+        'state_version',
+        'date',
+        'date_utc',
+        'word',
+        'gloss',
+        'commissioned_thesis',
+        'visual_anchor',
+        'visual_medium',
+        'curatorial_archetype',
+        'text_quadrant',
+        'quietest_quadrant',
+        'primary_image_url',
+        'fallback_image_url',
+        'image_url',
+        'fallback_webp_path',
+        'exif_summary',
+        'unsplash_photographer',
+        'unsplash_profile_url',
+        'flux_model',
+        'published_pulse',
+        'commission',
+        'cluster_keywords',
+        'silhouette_score',
+        'velocity',
+        'orbit_resonance',
+        'orbit_contribution_pct',
+        'macro_contribution_pct',
+        'orbit_sources_matched',
+        'runner_up_clusters',
+        'published_at',
+        'mood_votes',
+        'history_words_30d',
+        'medium_history_30d',
+        'archetype_history_30d',
+        'palette_hex',
+        'attribution',
+        'signal_metrics',
+        'critic_scores',
+        'definition',
+        'insight',
+        'category',
+        'votes',
+        'history_words',
+        'updated_at',
+        'visitor_mood_tally',
+        'recent_words',
+        'analysis',
+        'visual_decision',
+        'telemetry',
+        'date_iso',
+        'word_history',
+        'vote_rate_limits'
+      ];
+      let validTextQuadrants = [
+        'top_left',
+        'top_right',
+        'bottom_left',
+        'bottom_right',
+        'bottom_center',
+        'margin_outside',
+        'spine_vertical',
+        'split_diptych',
+        'upper_left',
+        'upper_right',
+        'lower_left',
+        'lower_right',
+        'margin_bottom',
+        'margin_right',
+        'full_canvas'
+      ];
+      let isV2 = (('word' in data && data.word is string && data.word.size() >= 1 && data.word.size() <= 60) ||
+                  ('published_pulse' in data && data.published_pulse is map && data.published_pulse.size() <= 50)) &&
+        (!('schema_version' in data) || (data.schema_version is string && data.schema_version.size() <= 32) || (data.schema_version is int && data.schema_version >= 0)) &&
+        (!('state_version' in data) || (data.state_version is int && data.state_version >= 0)) &&
+        (!('date' in data) || data.date == null || (data.date is string && data.date.size() <= 32)) &&
+        (!('date_utc' in data) || data.date_utc == null || (data.date_utc is string && data.date_utc.size() <= 32)) &&
+        (!('gloss' in data) || data.gloss == null || (data.gloss is string && data.gloss.size() <= 500)) &&
+        (!('commissioned_thesis' in data) || data.commissioned_thesis == null || (data.commissioned_thesis is string && data.commissioned_thesis.size() <= 2000)) &&
+        (!('visual_anchor' in data) || data.visual_anchor == null || (data.visual_anchor is string && data.visual_anchor.size() <= 500)) &&
+        (!('visual_medium' in data) || data.visual_medium == null || (data.visual_medium is string && data.visual_medium.size() <= 64)) &&
+        (!('curatorial_archetype' in data) || data.curatorial_archetype == null || (data.curatorial_archetype is string && data.curatorial_archetype in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY'])) &&
+        (!('text_quadrant' in data) || data.text_quadrant == null || (data.text_quadrant is string && data.text_quadrant in validTextQuadrants)) &&
+        (!('quietest_quadrant' in data) || data.quietest_quadrant == null || (data.quietest_quadrant is string && data.quietest_quadrant in validTextQuadrants)) &&
+        (!('primary_image_url' in data) || data.primary_image_url == null || (data.primary_image_url is string && data.primary_image_url.size() <= 2048)) &&
+        (!('fallback_image_url' in data) || data.fallback_image_url == null || (data.fallback_image_url is string && data.fallback_image_url.size() <= 2048)) &&
+        (!('image_url' in data) || data.image_url == null || (data.image_url is string && data.image_url.size() <= 2048)) &&
+        (!('fallback_webp_path' in data) || data.fallback_webp_path == null || (data.fallback_webp_path is string && data.fallback_webp_path.size() <= 512)) &&
+        (!('exif_summary' in data) || data.exif_summary == null || (data.exif_summary is string && data.exif_summary.size() <= 500) || (data.exif_summary is map && data.exif_summary.size() <= 20)) &&
+        (!('unsplash_photographer' in data) || data.unsplash_photographer == null || (data.unsplash_photographer is string && data.unsplash_photographer.size() <= 200)) &&
+        (!('unsplash_profile_url' in data) || data.unsplash_profile_url == null || (data.unsplash_profile_url is string && data.unsplash_profile_url.size() <= 2048)) &&
+        (!('flux_model' in data) || data.flux_model == null || (data.flux_model is string && data.flux_model.size() <= 120)) &&
+        (!('published_pulse' in data) || data.published_pulse == null || (data.published_pulse is map && data.published_pulse.size() <= 50)) &&
+        (!('commission' in data) || data.commission == null || (data.commission is map && data.commission.size() <= 30)) &&
+        (!('cluster_keywords' in data) || (data.cluster_keywords is list && data.cluster_keywords.size() <= 25)) &&
+        (!('silhouette_score' in data) || data.silhouette_score is number) &&
+        (!('velocity' in data) || data.velocity is number) &&
+        (!('orbit_resonance' in data) || data.orbit_resonance is number) &&
+        (!('orbit_contribution_pct' in data) || data.orbit_contribution_pct is number) &&
+        (!('macro_contribution_pct' in data) || data.macro_contribution_pct is number) &&
+        (!('orbit_sources_matched' in data) || (data.orbit_sources_matched is list && data.orbit_sources_matched.size() <= 50)) &&
+        (!('runner_up_clusters' in data) || (data.runner_up_clusters is list && data.runner_up_clusters.size() <= 20)) &&
+        (!('published_at' in data) || data.published_at == null || (data.published_at is string && data.published_at.size() <= 64) || data.published_at is timestamp) &&
+        (!('mood_votes' in data) || (data.mood_votes is map && data.mood_votes.size() <= 10)) &&
+        (!('history_words_30d' in data) || (data.history_words_30d is list && data.history_words_30d.size() <= 30)) &&
+        (!('medium_history_30d' in data) || (data.medium_history_30d is list && data.medium_history_30d.size() <= 30)) &&
+        (!('archetype_history_30d' in data) || (data.archetype_history_30d is list && data.archetype_history_30d.size() <= 30)) &&
+        (!('definition' in data) || (data.definition is string && data.definition.size() <= 1000)) &&
+        (!('insight' in data) || (data.insight is string && data.insight.size() <= 2000)) &&
+        (!('category' in data) || (data.category is string && data.category.size() <= 120)) &&
+        (!('votes' in data) || (data.votes is map && data.votes.size() <= 20)) &&
+        (!('history_words' in data) || (data.history_words is list && data.history_words.size() <= 60)) &&
+        (!('updated_at' in data) || (data.updated_at is string || data.updated_at is timestamp));
+
+      let isV1 = hasRequiredFields(['visitor_mood_tally', 'recent_words']) &&
+        isValidMoodTallyMap(data.visitor_mood_tally) &&
+        isValidBoundedStringList(data.recent_words, 30, 1, 40) &&
+        (!('analysis' in data) || (data.analysis is map && data.analysis.size() <= 20)) &&
+        (!('visual_decision' in data) || (data.visual_decision is map && data.visual_decision.size() <= 20)) &&
+        (!('telemetry' in data) || (data.telemetry is map && data.telemetry.size() <= 15)) &&
+        (!('date_iso' in data) || isValidIsoDate(data.date_iso)) &&
+        isValidOptionalNullableString('word', 1, 60) &&
+        (!('word_history' in data) || isValidList(data.word_history, 30));
+
+      return hasOnlyAllowedFields(allowedFields) && (isV2 || isV1);
+    }
+
+    // 2. Validate `profile_state/active_game` document (Section 7.1 + Table 3.1 Connect 4 + src/state_store.py)
+    function isValidActiveGameState(data) {
+      let allowedFields = [
+        'schema_version',
+        'state_version',
+        'round_id',
+        'turn',
+        'mode',
+        'status',
+        'current_turn_color',
+        'board',
+        'bitboard_p1',
+        'bitboard_p2',
+        'winning_cells',
+        'last_move',
+        'move_history',
+        'gold_moves',
+        'blue_moves',
+        'red_team',
+        'yellow_team',
+        'red_contributors',
+        'yellow_contributors',
+        'moves_this_round',
+        'last_finished_board',
+        'finisher_handle',
+        'last_elo_delta',
+        'episode_trace',
+        'last_move_epoch',
+        'game_type',
+        'updated_at',
+        'active_game',
+        'game_key',
+        'round_over',
+        'winner',
+        'last_challenger_move',
+        'last_bot_move',
+        'last_mover',
+        'last_move_timestamp',
+        'last_move_summary',
+        'move_log',
+        'past_rounds',
+        'rate_limits',
+        'swapped_at_epoch',
+        'board_state',
+        'target_word',
+        'max_attempts',
+        'guesses',
+        'candidate_words',
+        'target_id',
+        'target_concept_id',
+        'target_name',
+        'target_category',
+        'max_questions',
+        'questions_asked',
+        'qa_log',
+        'asked_questions',
+        'remaining_candidates'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        (!('schema_version' in data) || (data.schema_version is string && data.schema_version.size() <= 32) || (data.schema_version is int && data.schema_version >= 0)) &&
+        (!('state_version' in data) || (data.state_version is int && data.state_version >= 0)) &&
+        data.round_id is int && data.round_id >= 1 && data.round_id <= 1000000 &&
+        data.turn is int && data.turn >= 0 && data.turn <= 10000 &&
+        (!('mode' in data) || (data.mode is string && data.mode in ['VS_BOT', 'PVP_DUEL', 'COOP_FORUM'])) &&
+        data.status is string && data.status.size() >= 1 && data.status.size() <= 32 &&
+        (!('current_turn_color' in data) || (data.current_turn_color is string && data.current_turn_color in ['RED', 'YELLOW', 'GOLD', 'BLUE', 'TERRACOTTA', 'CHARCOAL'])) &&
+        (!('board' in data) || (data.board is list && data.board.size() <= 16)) &&
+        (!('bitboard_p1' in data) || data.bitboard_p1 is int || (data.bitboard_p1 is string && data.bitboard_p1.size() <= 32)) &&
+        (!('bitboard_p2' in data) || data.bitboard_p2 is int || (data.bitboard_p2 is string && data.bitboard_p2.size() <= 32)) &&
+        (!('winning_cells' in data) || (data.winning_cells is list && data.winning_cells.size() <= 16)) &&
+        (!('last_move' in data) || data.last_move == null || (data.last_move is map && data.last_move.size() <= 20)) &&
+        (!('move_history' in data) || (data.move_history is list && data.move_history.size() <= 100)) &&
+        (!('gold_moves' in data) || (data.gold_moves is list && data.gold_moves.size() <= 100) || (data.gold_moves is map && data.gold_moves.size() <= 100)) &&
+        (!('blue_moves' in data) || (data.blue_moves is list && data.blue_moves.size() <= 100) || (data.blue_moves is map && data.blue_moves.size() <= 100)) &&
+        (!('red_team' in data) || (data.red_team is list && data.red_team.size() <= 200) || (data.red_team is map && data.red_team.size() <= 200)) &&
+        (!('yellow_team' in data) || (data.yellow_team is list && data.yellow_team.size() <= 200) || (data.yellow_team is map && data.yellow_team.size() <= 200)) &&
+        (!('red_contributors' in data) || (data.red_contributors is list && data.red_contributors.size() <= 200) || (data.red_contributors is map && data.red_contributors.size() <= 200)) &&
+        (!('yellow_contributors' in data) || (data.yellow_contributors is list && data.yellow_contributors.size() <= 200) || (data.yellow_contributors is map && data.yellow_contributors.size() <= 200)) &&
+        (!('moves_this_round' in data) || (data.moves_this_round is int && data.moves_this_round >= 0 && data.moves_this_round <= 10000) || (data.moves_this_round is list && data.moves_this_round.size() <= 100) || (data.moves_this_round is map && data.moves_this_round.size() <= 200)) &&
+        (!('last_finished_board' in data) || data.last_finished_board == null || (data.last_finished_board is list && data.last_finished_board.size() <= 16) || (data.last_finished_board is map && data.last_finished_board.size() <= 30)) &&
+        (!('finisher_handle' in data) || data.finisher_handle == null || (data.finisher_handle is string && data.finisher_handle.size() <= 64)) &&
+        (!('last_elo_delta' in data) || data.last_elo_delta == null || data.last_elo_delta is number || (data.last_elo_delta is map && data.last_elo_delta.size() <= 20)) &&
+        (!('episode_trace' in data) || (data.episode_trace is list && data.episode_trace.size() <= 100)) &&
+        (!('last_move_epoch' in data) || data.last_move_epoch == null || data.last_move_epoch is number) &&
+        (!('game_type' in data) || (data.game_type is string && data.game_type.size() <= 32)) &&
+        (!('active_game' in data) || (data.active_game is string && data.active_game.size() <= 32)) &&
+        (!('game_key' in data) || (data.game_key is string && data.game_key.size() <= 32)) &&
+        (!('round_over' in data) || data.round_over is bool);
+    }
+
+    // 3. Validate `profile_state/orbit_roster` document (Table 3.1)
+    function isValidOrbitRosterState(data) {
+      let allowedFields = [
+        'schema_version',
+        'state_version',
+        'handles',
+        'curated_o3_cursor',
+        'updated_at'
+      ];
+      return hasRequiredFields(['handles', 'curated_o3_cursor']) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        (!('schema_version' in data) || (data.schema_version is string && data.schema_version.size() <= 32) || (data.schema_version is int && data.schema_version >= 0)) &&
+        (!('state_version' in data) || (data.state_version is int && data.state_version >= 0)) &&
+        ((data.handles is map && data.handles.size() <= 500 && data.curated_o3_cursor is int && data.curated_o3_cursor >= 0) ||
+         (data.handles is map && data.handles.size() <= 500 && data.curated_o3_cursor is map && data.curated_o3_cursor.size() <= 500)) &&
+        (!('updated_at' in data) || (data.updated_at is string || data.updated_at is timestamp));
+    }
+
+    // 4. Validate `profile_state/elo_ledger` document (Table 3.1 + src/state_store.py)
+    function isValidEloLedgerState(data) {
+      let allowedFields = [
+        'schema_version',
+        'state_version',
+        'bot_elo',
+        'players',
+        'ratings',
+        'recent_rounds',
+        'history',
+        'recent_matches',
+        'round_id',
+        'active_game_key',
+        'active_stakes',
+        'current_round_log',
+        'past_rounds',
+        'updated_at'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        (!('schema_version' in data) || (data.schema_version is string && data.schema_version.size() <= 32) || (data.schema_version is int && data.schema_version >= 0)) &&
+        (!('state_version' in data) || (data.state_version is int && data.state_version >= 0)) &&
+        'bot_elo' in data && data.bot_elo is number &&
+        (('players' in data && data.players is map && data.players.size() <= 1000) ||
+         ('ratings' in data && data.ratings is map && data.ratings.size() <= 1000)) &&
+        (!('players' in data) || (data.players is map && data.players.size() <= 1000)) &&
+        (!('ratings' in data) || (data.ratings is map && data.ratings.size() <= 1000)) &&
+        (!('recent_rounds' in data) || (data.recent_rounds is list && data.recent_rounds.size() <= 50)) &&
+        (!('history' in data) || (data.history is list && data.history.size() <= 200)) &&
+        (!('recent_matches' in data) || (data.recent_matches is list && data.recent_matches.size() <= 200)) &&
+        (!('round_id' in data) || (data.round_id is int && data.round_id >= 1)) &&
+        (!('active_game_key' in data) || (data.active_game_key is string && data.active_game_key.size() <= 32)) &&
+        (!('active_stakes' in data) || (data.active_stakes is map && data.active_stakes.size() <= 20)) &&
+        (!('current_round_log' in data) || (data.current_round_log is list && data.current_round_log.size() <= 200)) &&
+        (!('past_rounds' in data) || (data.past_rounds is list && data.past_rounds.size() <= 100)) &&
+        (!('updated_at' in data) || (data.updated_at is string || data.updated_at is timestamp));
+    }
+
+    // 5. Validate `profile_state/bot_memory` document (Table 3.1 + src/state_store.py)
+    function isValidBotMemoryState(data) {
+      let allowedFields = [
+        'schema_version',
+        'state_version',
+        'version',
+        'games_learned',
+        'games_played',
+        'states',
+        'state_values',
+        'values',
+        'updated_at'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        (!('schema_version' in data) || (data.schema_version is string && data.schema_version.size() <= 32) || (data.schema_version is int && data.schema_version >= 0)) &&
+        (!('state_version' in data) || (data.state_version is int && data.state_version >= 0)) &&
+        (!('version' in data) || (data.version is int && data.version >= 0) || (data.version is string && data.version.size() <= 32)) &&
+        (('games_learned' in data && data.games_learned is int && data.games_learned >= 0) ||
+         ('games_played' in data && data.games_played is int && data.games_played >= 0)) &&
+        (!('games_learned' in data) || (data.games_learned is int && data.games_learned >= 0)) &&
+        (!('games_played' in data) || (data.games_played is int && data.games_played >= 0)) &&
+        (('states' in data && data.states is map && data.states.size() <= 5000) ||
+         ('state_values' in data && data.state_values is map && data.state_values.size() <= 5000) ||
+         ('values' in data && data.values is map && data.values.size() <= 5000)) &&
+        (!('states' in data) || (data.states is map && data.states.size() <= 5000)) &&
+        (!('state_values' in data) || (data.state_values is map && data.state_values.size() <= 5000)) &&
+        (!('values' in data) || (data.values is map && data.values.size() <= 5000)) &&
+        (!('updated_at' in data) || (data.updated_at is string || data.updated_at is timestamp));
+    }
+
+    // 6. Validate `profile_state/game_rate_limits` document (Table 3.1 + src/state_store.py)
+    function isValidGameRateLimitsState(data) {
+      let allowedFields = [
+        'schema_version',
+        'state_version',
+        'users',
+        'cooldowns',
+        'hourly_moves',
+        'daily_games',
+        'updated_at'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        (!('schema_version' in data) || (data.schema_version is string && data.schema_version.size() <= 32) || (data.schema_version is int && data.schema_version >= 0)) &&
+        (!('state_version' in data) || (data.state_version is int && data.state_version >= 0)) &&
+        (('users' in data && data.users is map && data.users.size() <= 2000) ||
+         ('cooldowns' in data && data.cooldowns is map && data.cooldowns.size() <= 2000)) &&
+        (!('users' in data) || (data.users is map && data.users.size() <= 2000)) &&
+        (!('cooldowns' in data) || (data.cooldowns is map && data.cooldowns.size() <= 2000)) &&
+        (!('hourly_moves' in data) || (data.hourly_moves is map && data.hourly_moves.size() <= 2000)) &&
+        (!('daily_games' in data) || (data.daily_games is map && data.daily_games.size() <= 2000)) &&
+        (!('updated_at' in data) || (data.updated_at is string || data.updated_at is timestamp));
+    }
+
+    // Dispatch validator for `profile_state/{docId}`
+    function isValidProfileState(docId, data) {
+      return (docId == 'daily_pulse' && isValidDailyPulseState(data)) ||
+        (docId == 'active_game' && isValidActiveGameState(data)) ||
+        (docId == 'orbit_roster' && isValidOrbitRosterState(data)) ||
+        (docId == 'elo_ledger' && isValidEloLedgerState(data)) ||
+        (docId == 'bot_memory' && isValidBotMemoryState(data)) ||
+        (docId == 'game_rate_limits' && isValidGameRateLimitsState(data));
+    }
+
+    // 7. Validate `ingestion_cache/{dateId}` document shard (Table 3.1)
+    function isValidIngestionCacheShard(dateId, data) {
+      let allowedFields = ['date', 'items', 'updated_at'];
+      return isValidIsoDate(dateId) &&
+        hasRequiredFields(['date', 'items']) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.date is string &&
+        data.date == dateId &&
+        data.items is map && data.items.size() <= 500 &&
+        (!('updated_at' in data) || (data.updated_at is string || data.updated_at is timestamp));
+    }
+
+    // Alias for ingestion_cache validator
+    function isValidIngestionCache(dateId, data) {
+      return isValidIngestionCacheShard(dateId, data);
+    }
+
+    // 8. Validate `pulse_history/{dateId}` document (Section 7.1 + Table 3.1 + PublishedPulse.to_feed_entry() + legacy)
+    function isValidPulseHistory(dateId, data) {
+      let allowedFields = [
+        'schema_version',
+        'date',
+        'word',
+        'gloss',
+        'commissioned_thesis',
+        'visual_anchor',
+        'visual_medium',
+        'curatorial_archetype',
+        'text_quadrant',
+        'archetype_history_30d',
+        'primary_image_url',
+        'fallback_image_url',
+        'image_url',
+        'fallback_webp_path',
+        'unsplash_photographer',
+        'unsplash_profile_url',
+        'flux_model',
+        'mood_votes',
+        'cluster_keywords',
+        'orbit_contribution_pct',
+        'macro_contribution_pct',
+        'orbit_sources_matched',
+        'runner_up_clusters',
+        'silhouette_score',
+        'velocity',
+        'orbit_resonance',
+        'critic_scores',
+        'attribution',
+        'palette_hex',
+        'signal_metrics',
+        'published_at',
+        'updated_at',
+        'headline',
+        'summary',
+        '24h_shift',
+        'dominant_category',
+        'dominant_signal_type',
+        'orbit_weight_ratio',
+        'top_orbit_themes',
+        'top_macro_themes',
+        'visual_tier_used',
+        'artwork_title',
+        'artwork_artist',
+        'artwork_source',
+        'artwork_url',
+        'image_data_uri',
+        'quote',
+        'quote_attribution',
+        'window_hours',
+        'date_iso',
+        'word_of_the_day',
+        'explanation_phrase',
+        'composite_score'
+      ];
+      let validTextQuadrants = [
+        'top_left',
+        'top_right',
+        'bottom_left',
+        'bottom_right',
+        'bottom_center',
+        'margin_outside',
+        'spine_vertical',
+        'split_diptych',
+        'upper_left',
+        'upper_right',
+        'lower_left',
+        'lower_right',
+        'margin_bottom',
+        'margin_right',
+        'full_canvas'
+      ];
+      let isV2 = ('date' in data && data.date == dateId) &&
+        (('word' in data && data.word is string && data.word.size() >= 1 && data.word.size() <= 60) ||
+         ('artwork_title' in data && data.artwork_title is string && data.artwork_title.size() >= 1 && data.artwork_title.size() <= 160)) &&
+        (!('curatorial_archetype' in data) || (data.curatorial_archetype is string && data.curatorial_archetype in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY'])) &&
+        (!('text_quadrant' in data) || (data.text_quadrant is string && data.text_quadrant in validTextQuadrants)) &&
+        (!('archetype_history_30d' in data) || (data.archetype_history_30d is list && data.archetype_history_30d.size() <= 30)) &&
+        (!('cluster_keywords' in data) || (data.cluster_keywords is list && data.cluster_keywords.size() <= 25)) &&
+        (!('orbit_sources_matched' in data) || (data.orbit_sources_matched is list && data.orbit_sources_matched.size() <= 50)) &&
+        (!('runner_up_clusters' in data) || (data.runner_up_clusters is list && data.runner_up_clusters.size() <= 20)) &&
+        (!('top_orbit_themes' in data) || (data.top_orbit_themes is list && data.top_orbit_themes.size() <= 25)) &&
+        (!('top_macro_themes' in data) || (data.top_macro_themes is list && data.top_macro_themes.size() <= 25)) &&
+        (!('silhouette_score' in data) || data.silhouette_score is number) &&
+        (!('velocity' in data) || data.velocity is number) &&
+        (!('orbit_resonance' in data) || data.orbit_resonance is number) &&
+        (!('orbit_contribution_pct' in data) || data.orbit_contribution_pct is number) &&
+        (!('macro_contribution_pct' in data) || data.macro_contribution_pct is number) &&
+        (!('orbit_weight_ratio' in data) || data.orbit_weight_ratio is number) &&
+        (!('window_hours' in data) || data.window_hours is int) &&
+        (!('critic_scores' in data) || (data.critic_scores is map && data.critic_scores.size() <= 15)) &&
+        (!('attribution' in data) || (data.attribution is map && data.attribution.size() <= 15));
+
+      let isV1 = hasRequiredFields(['date_iso', 'word_of_the_day', 'explanation_phrase', 'composite_score']) &&
+        data.date_iso == dateId &&
+        validStringLength('word_of_the_day', 1, 60) &&
+        validStringLength('explanation_phrase', 0, 500) &&
+        data.composite_score is number &&
+        data.composite_score >= 0 &&
+        data.composite_score <= 100;
+
+      return isValidIsoDate(dateId) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        (!('image_data_uri' in data) || (data.image_data_uri is string && data.image_data_uri.size() <= 500 && !data.image_data_uri.matches('^data:.*'))) &&
+        (isV2 || isV1);
+    }
+
+    // 9. Validate `pulse_votes/{dateId}` document (Table 3.1)
+    function isValidPulseVotes(dateId, data) {
+      return dateId is string &&
+        dateId.size() >= 1 &&
+        dateId.size() <= 32 &&
+        isValidMoodTallyMap(data);
+    }
+
+    // 10. Validate `vote_rate_limits/{rateKey}` document (Table 3.1 + legacy compatibility)
+    function isValidVoteRateLimit(rateKey, data) {
+      let allowedFields = [
+        'date',
+        'vote_type',
+        'voted_at',
+        'date_str',
+        'voter_hmac',
+        'mood_key'
+      ];
+      let validMoods = ['spot_on', 'too_sunny', 'too_heavy'];
+      let isV2 = hasRequiredFields(['date', 'vote_type', 'voted_at']) &&
+        isValidIsoDate(data.date) &&
+        data.vote_type is string && data.vote_type in validMoods &&
+        data.voted_at is string && data.voted_at.size() >= 10 && data.voted_at.size() <= 64;
+
+      let isV1 = hasRequiredFields(['date_str', 'voter_hmac', 'mood_key']) &&
+        validStringLength('date_str', 1, 32) &&
+        validStringLength('voter_hmac', 32, 32) &&
+        data.voter_hmac.matches("^[a-f0-9]{32}") &&
+        data.mood_key is string &&
+        data.mood_key in validMoods &&
+        rateKey == data.date_str + '_' + data.voter_hmac;
+
+      return rateKey is string &&
+        rateKey.size() >= 12 &&
+        rateKey.size() <= 128 &&
+        hasOnlyAllowedFields(allowedFields) &&
+        (isV2 || isV1);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // 1. Profile State (`daily_pulse`, `active_game`, `orbit_roster`, `elo_ledger`, `bot_memory`, `game_rate_limits`)
+    // Sanitized public display documents (`daily_pulse`, `active_game`, `elo_ledger`) permit public read;
+    // private operational documents (`orbit_roster`, `bot_memory`, `game_rate_limits`) require `isPipelineAdmin()`.
+    match /profile_state/{docId} {
+      allow get, list: if (docId in ['daily_pulse', 'active_game', 'elo_ledger']) ||
+        (isPipelineAdmin() && docId in ['orbit_roster', 'bot_memory', 'game_rate_limits']);
+      allow create: if isPipelineAdmin() &&
+        docId in ['daily_pulse', 'active_game', 'orbit_roster', 'elo_ledger', 'bot_memory', 'game_rate_limits'] &&
+        isValidProfileState(docId, request.resource.data);
+      allow update: if isPipelineAdmin() &&
+        docId in ['daily_pulse', 'active_game', 'orbit_roster', 'elo_ledger', 'bot_memory', 'game_rate_limits'] &&
+        isValidProfileState(docId, request.resource.data);
+      allow delete: if false;
+    }
+
+    // 2. Date-Sharded Ingestion Cache (`ingestion_cache/{dateId}`)
+    // Strictly private/admin-only; permits authenticated service-account delete for 14-day TTL shard pruning.
+    match /ingestion_cache/{dateId} {
+      allow read: if isPipelineAdmin();
+      allow create: if isPipelineAdmin() && isValidIngestionCacheShard(dateId, request.resource.data);
+      allow update: if isPipelineAdmin() &&
+        isValidIngestionCacheShard(dateId, request.resource.data) &&
+        areImmutableFieldsUnchanged(['date']);
+      allow delete: if isPipelineAdmin();
+    }
+
+    // 3. Pulse History (`pulse_history/{dateId}`)
+    // Public read access for sanitized historical archive; writes and 365-day TTL pruning gated by `isPipelineAdmin()`.
+    match /pulse_history/{dateId} {
+      allow get, list: if true;
+      allow create: if isPipelineAdmin() && isValidPulseHistory(dateId, request.resource.data);
+      allow update: if isPipelineAdmin() &&
+        isValidPulseHistory(dateId, request.resource.data) &&
+        areImmutableFieldsUnchanged(['date', 'date_iso']);
+      allow delete: if isPipelineAdmin();
+    }
+
+    // 4. Pulse Votes (`pulse_votes/{dateId}`)
+    // Public read access for aggregated mood vote tallies; writes gated by `isPipelineAdmin()`.
+    match /pulse_votes/{dateId} {
+      allow get, list: if true;
+      allow create: if isPipelineAdmin() && isValidPulseVotes(dateId, request.resource.data);
+      allow update: if isPipelineAdmin() && isValidPulseVotes(dateId, request.resource.data);
+      allow delete: if false;
+    }
+
+    // 5. Vote Rate Limits (`vote_rate_limits/{rateKey}`)
+    // Strictly private/admin-only; permits authenticated service-account delete for 30-day TTL pruning.
+    match /vote_rate_limits/{rateKey} {
+      allow read: if isPipelineAdmin();
+      allow create: if isPipelineAdmin() && isValidVoteRateLimit(rateKey, request.resource.data);
+      allow update: if isPipelineAdmin() &&
+        isValidVoteRateLimit(rateKey, request.resource.data) &&
+        areImmutableFieldsUnchanged(['date', 'vote_type', 'voted_at', 'date_str', 'voter_hmac', 'mood_key']);
+      allow delete: if isPipelineAdmin();
+    }
+
+    // Default deny for all unmatched paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

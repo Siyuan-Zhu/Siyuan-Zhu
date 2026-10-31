@@ -1,0 +1,256 @@
+name: Community Game Move & Mood Vote
+run-name: "Game issue #${{ github.event.issue.number || inputs.recover_issue || 0 }}"
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      rebuild_only:
+        description: Rebuild the recorded canonical profile without processing an event
+        type: boolean
+        default: false
+      recover_issue:
+        description: Owner recovery of one actual unprocessed or previously accepted game Issue
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  issues: write
+  id-token: write
+
+jobs:
+  process-visitor-event:
+    concurrency:
+      group: readme-state-writer
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 5
+    if: >-
+      github.event_name == 'issues' && ((vars.COMMUNITY_GAME_ENABLED == 'true' && (
+        startsWith(github.event.issue.title, 'game:move:') ||
+        startsWith(github.event.issue.title, 'game:mode:') ||
+        startsWith(github.event.issue.title, 'connect4: drop ')
+      )) || (vars.ZEITGEIST_WRITER_ENABLED == 'true' && (
+        startsWith(github.event.issue.title, 'pulse:vote:') ||
+        startsWith(github.event.issue.title, 'orbit:')
+      )))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 with pip cache
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci.lock
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate & Apply Move or Vote + Rebuild README
+        id: visitor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          PULSE_VOTE_SALT: ${{ secrets.PULSE_VOTE_SALT }}
+          VISITOR_LOGIN: ${{ github.event.issue.user.login }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 scripts/check_runtime_configuration.py --visitor
+          python3 scripts/process_visitor_event.py --result-file "${{ runner.temp }}/visitor-result.json"
+
+      - name: Commit and Push with 3-Attempt Rebase Retry
+        id: publish
+        env:
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          VISITOR_LOGIN: ${{ github.event.issue.user.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 scripts/publish_readme.py --message "chore(game): visitor event [skip ci]"
+
+      - name: Report actual publication outcome
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: python3 scripts/complete_visitor_feedback.py --result-file "${{ runner.temp }}/visitor-result.json" --published "${{ steps.publish.outcome == 'success' }}"
+
+      - name: Preserve public publication assets when a writer fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: ignore
+          path: |
+            .publication-recovery/*/assets/
+            .publication-recovery/*/README.md
+            .publication-recovery/*/variants/
+            data/publication_reconcile.json
+
+  rebuild-recorded-profile:
+    concurrency:
+      group: readme-state-writer
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 5
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.rebuild_only == true &&
+      github.actor == 'Siyuan-Zhu' &&
+      (github.repository == 'Siyuan-Zhu/readme-live-sandbox' ||
+       github.repository == 'Siyuan-Zhu/Siyuan-Zhu')
+    permissions:
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Rebuild recorded canonical profile without a visitor event
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          PULSE_VOTE_SALT: ${{ secrets.PULSE_VOTE_SALT }}
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 scripts/check_runtime_configuration.py --visitor
+          python3 scripts/build_readme.py
+          python3 scripts/publish_readme.py --message "chore(profile): rebuild recorded state [skip ci]"
+
+  recover-one-game-issue:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.rebuild_only != true &&
+      inputs.recover_issue != '' && github.actor == 'Siyuan-Zhu' &&
+      vars.COMMUNITY_GAME_ENABLED == 'true' &&
+      (github.repository == 'Siyuan-Zhu/readme-live-sandbox' || github.repository == 'Siyuan-Zhu/Siyuan-Zhu')
+    concurrency:
+      group: readme-state-writer
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Recover one actual Issue with permanent event identity
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          PULSE_VOTE_SALT: ${{ secrets.PULSE_VOTE_SALT }}
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          RECOVER_ISSUE: ${{ inputs.recover_issue }}
+        shell: python
+        run: |
+          import os, subprocess
+          subprocess.run(["python3","scripts/check_runtime_configuration.py","--visitor"],check=True)
+          subprocess.run(["python3","scripts/recover_visitor_issue.py","--issue-number",os.environ["RECOVER_ISSUE"]],check=True)
+      - name: Publish canonical recovery
+        id: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          PULSE_VOTE_SALT: ${{ secrets.PULSE_VOTE_SALT }}
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: |
+          python3 scripts/publish_readme.py --message "chore(game): recover recorded Issue [skip ci]"
+      - name: Report actual publication outcome
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.recover_issue }}
+        run: python3 scripts/complete_visitor_feedback.py --result-file "${{ runner.temp }}/visitor-result.json" --published "${{ steps.publish.outcome == 'success' }}"
+
+
+  paused-feedback:
+    if: >-
+      github.event_name == 'issues' &&
+      (((vars.COMMUNITY_GAME_ENABLED != 'true') && (
+        startsWith(github.event.issue.title, 'game:move:') ||
+        startsWith(github.event.issue.title, 'game:mode:') ||
+        startsWith(github.event.issue.title, 'connect4: drop '))) ||
+       ((vars.ZEITGEIST_WRITER_ENABLED != 'true') && (
+        startsWith(github.event.issue.title, 'pulse:vote:') || startsWith(github.event.issue.title, 'orbit:'))))
+    permissions:
+      contents: read
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Explain unavailable commands without storage or provider access
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        shell: python
+        run: |
+          import os, subprocess
+          repo=os.environ['GITHUB_REPOSITORY']
+          if repo not in ('Siyuan-Zhu/readme-live-sandbox','Siyuan-Zhu/Siyuan-Zhu'):
+              raise SystemExit('Unrecognized repository')
+          number=os.environ['ISSUE_NUMBER']
+          if not number.isdigit(): raise SystemExit('Invalid Issue identity')
+          body='This interaction is temporarily paused. This request was not processed. Do not submit duplicates; the owner can recover this exact Issue after re-enabling the handler. Current board: https://github.com/'+repo+'#connect-four'
+          subprocess.run(['gh','issue','comment',number,'--repo',repo,'--edit-last','--create-if-none','--body',body],check=True,timeout=30)

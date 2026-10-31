@@ -1,0 +1,54 @@
+name: Report incomplete visitor workflow
+
+on:
+  workflow_run:
+    workflows: [Community Game Move & Mood Vote]
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    if: >-
+      (github.repository == 'Siyuan-Zhu/readme-live-sandbox' || github.repository == 'Siyuan-Zhu/Siyuan-Zhu') &&
+      (github.event.workflow_run.conclusion == 'failure' ||
+       github.event.workflow_run.conclusion == 'cancelled' ||
+       github.event.workflow_run.conclusion == 'timed_out')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # No checkout or upstream artifact: never execute failed/untrusted code.
+      - name: Preserve truthful feedback after cancellation or a full queue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: python
+        run: |
+          import json, os, re, subprocess
+          event=json.load(open(os.environ['GITHUB_EVENT_PATH']))
+          run=event['workflow_run']
+          repo=os.environ['GITHUB_REPOSITORY']
+          if run['repository']['full_name'] != repo: raise SystemExit('Repository mismatch')
+          if run.get('event') not in ('issues','workflow_dispatch'): raise SystemExit(0)
+          if run.get('head_repository',{}).get('full_name') != repo: raise SystemExit(0)
+          match=re.fullmatch(r'Game issue #([1-9][0-9]{0,9})',run.get('display_title',''))
+          if not match: raise SystemExit(0)
+          number=match.group(1)
+          def read(path):
+              result=subprocess.run(['gh','api',path],capture_output=True,text=True,check=True,timeout=30)
+              return json.loads(result.stdout)
+          issue=read('repos/'+repo+'/issues/'+number)
+          if ('pull_request' in issue or not issue.get('title','').startswith(('game:move:','game:mode:','connect4: drop ','pulse:vote:','orbit:'))): raise SystemExit(0)
+          page=max(1,(int(issue.get('comments',0))+99)//100)
+          comments=read('repos/'+repo+'/issues/'+number+'/comments?per_page=100&page='+str(page))
+          own=[c['body'] for c in comments if c['user']['login']=='github-actions[bot]']
+          previous=own[-1] if own else ''
+          marker='<!-- egm-incomplete-run:'+str(run['id'])+' -->'
+          if marker in previous or 'The board and history were published.' in previous: raise SystemExit(0)
+          if previous.startswith('Saved to the canonical game.'):
+              body='Run '+str(run['id'])+' did not complete. Preserve the saved move; recover publication without replaying it. A later recovery may already have succeeded; this note does not replace its acknowledgment.'
+          else:
+              body='Run '+str(run['id'])+' did not complete. Acceptance is unconfirmed by that run. A later recovery may already have succeeded. Do not submit duplicates: the owner must inspect this Issue’s permanent receipt before recovering this exact command.'
+          body+='\n\nWorkflow: '+run['html_url']+'\n'+marker
+          subprocess.run(['gh','issue','comment',number,'--repo',repo,'--body',body],check=True,timeout=30)

@@ -1,0 +1,357 @@
+name: Staging Zeitgeist Dry Run (Isolated Sandbox)
+
+on:
+  workflow_dispatch:
+    inputs:
+      photo_required:
+        description: "Require qualifying real photography; never generate an AI image"
+        required: false
+        default: false
+        type: boolean
+      editorial_note:
+        description: "Private owner editorial direction for this isolated run only"
+        required: false
+        default: ""
+        type: string
+      preflight_only:
+        description: "Read provider metadata, validate schema and probe unbilled Director admission; no actors, inference or state writes"
+        required: false
+        default: false
+        type: boolean
+      maintenance_only:
+        description: "Private accounting maintenance only: one approved conditional refresh, no generation or publication"
+        required: false
+        default: false
+        type: boolean
+      legacy_apify_audit:
+        description: "During metadata preflight only, collect private legacy run evidence without settlement or generation"
+        required: false
+        default: false
+        type: boolean
+      bfl_contract_probe:
+        description: "Private BFL routing probe: creates ONE image with an approved bounded charge; no full pipeline"
+        required: false
+        default: false
+        type: boolean
+      live_collect:
+        description: "Enable live RSS/Orbit feed ingestion during staging run"
+        required: false
+        default: false
+        type: boolean
+      live_llm:
+        description: "Enable live Gemini ADK synthesis during staging run"
+        required: false
+        default: false
+        type: boolean
+      live_unsplash:
+        description: "Enable live Unsplash photo curation during staging run"
+        required: false
+        default: false
+        type: boolean
+      live_firestore:
+        description: "Verify live Firestore read/write under isolated staging_ prefix"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  provider-metadata:
+    if: github.repository == 'Siyuan-Zhu/readme-live-sandbox' && github.event.repository.private == true && inputs.preflight_only == true && inputs.maintenance_only != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements.txt
+      - name: Inspect account metadata and validate the pinned Instagram input
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          APIFY_INSTAGRAM_BUILD: "0.0.648"
+          APIFY_INSTAGRAM_BUILD_ID: "jwxpsPozhIjbsOspW"
+        run: >-
+          python3 scripts/provider_preflight.py
+          --required-model gemini-3.8-flash
+          --required-model gemini-embedding-001
+          --output-json /tmp/provider-preflight.json
+      - name: Retain fresh metadata before independent admission diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-metadata-fresh
+          path: /tmp/provider-preflight.json
+          if-no-files-found: error
+      - name: Plan installed automatic maintenance without ledger writes
+        if: always() && vars.SPEND_POLICY_SHA256 != ''
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          APIFY_INSTAGRAM_BUILD: "0.0.648"
+          GCP_PROJECT_ID: git-readme-features
+          FIRESTORE_DATABASE_ID: "(default)"
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+        run: >-
+          python3 scripts/maintain_spend_control.py
+          --private-report /tmp/private-spend-maintenance/evidence.json
+      - name: Retain private maintenance planning evidence
+        if: always() && vars.SPEND_POLICY_SHA256 != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-spend-maintenance
+          path: /tmp/private-spend-maintenance/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Read private legacy Apify evidence without settlement
+        if: inputs.legacy_apify_audit == true
+        env:
+          GITHUB_REPOSITORY_VISIBILITY: private
+          GCP_PROJECT_ID: git-readme-features
+          FIRESTORE_DATABASE_ID: "(default)"
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+        run: >-
+          python scripts/release_audit/collect_legacy_apify.py
+          --output-json /tmp/private-legacy-apify/evidence.json
+      - name: Retain private legacy evidence
+        if: always() && inputs.legacy_apify_audit == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-legacy-apify-evidence
+          path: /tmp/private-legacy-apify/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Probe unbilled Director token admission without a reservation
+        if: always()
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GCP_PROJECT_ID: "git-readme-features"
+          FIRESTORE_DATABASE_ID: "(default)"
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+        run: >-
+          python3 scripts/probe_director_admission.py
+          --output-json /tmp/director-admission.json
+      - name: Retain sanitized metadata even when a verification gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-preflight
+          path: |
+            /tmp/provider-preflight.json
+            /tmp/director-admission.json
+          if-no-files-found: error
+  accounting-maintenance:
+    if: github.repository == 'Siyuan-Zhu/readme-live-sandbox' && github.event.repository.private == true && inputs.maintenance_only == true && inputs.preflight_only != true && inputs.bfl_contract_probe != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements.txt
+      - name: Refresh installed approved accounting once without generation
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          APIFY_INSTAGRAM_BUILD: "0.0.648"
+          GCP_PROJECT_ID: git-readme-features
+          FIRESTORE_DATABASE_ID: "(default)"
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: >-
+          python3 scripts/maintain_spend_control.py --apply
+          --private-report /tmp/private-spend-maintenance/evidence.json
+      - name: Retain private maintenance evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-spend-maintenance
+          path: /tmp/private-spend-maintenance/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+  bfl-contract-probe:
+    if: github.repository == 'Siyuan-Zhu/readme-live-sandbox' && github.event.repository.private == true && inputs.bfl_contract_probe == true && inputs.preflight_only != true && inputs.maintenance_only != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements.txt
+      - name: Run exactly one guarded BFL image contract probe
+        env:
+          GITHUB_REPOSITORY_VISIBILITY: private
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          GCP_PROJECT_ID: git-readme-features
+          FIRESTORE_DATABASE_ID: "(default)"
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+        run: >-
+          python scripts/release_audit/probe_bfl_contract.py
+          --output-json /tmp/private-bfl-contract-probe/evidence.json
+      - name: Retain private BFL contract evidence even when the adapter rejects it
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-bfl-contract-probe
+          path: /tmp/private-bfl-contract-probe/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+  isolated-staging-dryrun:
+    if: github.repository == 'Siyuan-Zhu/readme-live-sandbox' && github.event.repository.private == true && inputs.preflight_only != true && inputs.bfl_contract_probe != true && inputs.maintenance_only != true
+    runs-on: ubuntu-latest
+    env:
+      ZEITGEIST_STATE_DIR: /tmp/zeitgeist-staging-state
+      STATE_STORE_BACKEND: "json"
+      FIRESTORE_COLLECTION_PREFIX: "staging_${{ github.run_id }}_${{ github.run_attempt }}_"
+      GCP_PROJECT_ID: "git-readme-features"
+      FIRESTORE_DATABASE_ID: "(default)"
+      MAX_STAGE_RETRIES: "1"
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      APIFY_INSTAGRAM_BUILD: "0.0.648"
+      SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
+      TARGET_REPO_SLUG: ${{ github.repository }}
+      ZEITGEIST_OFFLINE_DEMO: ${{ (!inputs.live_collect && !inputs.live_llm && !inputs.live_unsplash && '1') || '0' }}
+      ZEITGEIST_LIVE_COLLECT: ${{ (inputs.live_collect && '1') || '0' }}
+      ZEITGEIST_LIVE_LLM: ${{ (inputs.live_llm && '1') || '0' }}
+      ZEITGEIST_LIVE_UNSPLASH: ${{ (inputs.live_unsplash && '1') || '0' }}
+    steps:
+      - name: Checkout repository (read-only)
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 with pip cache
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci.lock
+
+      - name: Install staging dependencies
+        run: pip install -r requirements.txt
+
+      - name: Prepare isolated staging sandbox and state directories
+        run: |
+          rm -rf /tmp/zeitgeist-staging-sandbox /tmp/zeitgeist-staging-state
+          mkdir -p /tmp/zeitgeist-staging-sandbox /tmp/zeitgeist-staging-state
+          cp -R . /tmp/zeitgeist-staging-sandbox
+
+      - name: Run full pytest suite inside isolated sandbox
+        working-directory: /tmp/zeitgeist-staging-sandbox
+        env:
+          STATE_STORE_BACKEND: "json"
+        run: pytest -q
+
+      - name: Execute Daily Zeitgeist synthesis and verify README synchronization
+        working-directory: /tmp/zeitgeist-staging-sandbox
+        env:
+          PRIVATE_EDITORIAL_NOTE: ${{ inputs.editorial_note }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          STATE_STORE_BACKEND: ${{ (inputs.live_firestore && 'firestore') || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: "staging_${{ github.run_id }}_${{ github.run_attempt }}_application_"
+        run: |
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          photo_required = ${{ inputs.photo_required && 'True' || 'False' }}
+          note = __import__('os').environ.get('PRIVATE_EDITORIAL_NOTE', '')
+          if photo_required or note:
+              path=Path('config/orbit_sources.json')
+              config=json.loads(path.read_text())
+              config['active_interjection']={'enabled':True, 'personal_note':note,
+                  **({'override_visual_mode':'photo'} if photo_required else {})}
+              path.write_text(json.dumps(config,indent=2)+'\n')
+          PYCODE
+          python3 - <<'PY'
+          import os, subprocess
+          if os.environ.get("SPEND_POLICY_SHA256") and any(os.environ.get(key) == "1" for key in ("ZEITGEIST_LIVE_LLM", "ZEITGEIST_LIVE_COLLECT")):
+              subprocess.run(["python3", "scripts/maintain_spend_control.py", "--apply", "--private-report", "/tmp/private-spend-maintenance/evidence.json"], check=True)
+          PY
+          if [[ "${{ inputs.live_firestore }}" == "true" ]]; then
+            python3 scripts/rehearse_staging_application.py --repo-root /tmp/zeitgeist-staging-sandbox --collection-prefix "staging_${{ github.run_id }}_${{ github.run_attempt }}_application_" --output-json /tmp/zeitgeist-staging-state/application.json
+          else
+            python3 scripts/run_daily_zeitgeist.py --repo-root /tmp/zeitgeist-staging-sandbox
+            python3 scripts/build_readme.py --check --repo-root /tmp/zeitgeist-staging-sandbox
+          fi
+
+      - name: Retain private application maintenance evidence
+        if: always() && (inputs.live_collect == true || inputs.live_llm == true)
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-spend-maintenance
+          path: /tmp/private-spend-maintenance/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Assert accepted move, bot response, stale rejection and vote deduplication
+        if: inputs.live_firestore != true
+        working-directory: /tmp/zeitgeist-staging-sandbox
+        run: |
+          python3 scripts/verify_staging_interactions.py --repo-root /tmp/zeitgeist-staging-sandbox --output-json /tmp/zeitgeist-staging-state/interactions.json
+
+      - name: Validate production-slug and sandbox-slug README rendering, links, and state migration dry-run
+        working-directory: /tmp/zeitgeist-staging-sandbox
+        run: |
+          python3 scripts/build_readme.py --repo-root /tmp/zeitgeist-staging-sandbox --repo-slug "Siyuan-Zhu/Siyuan-Zhu"
+          python3 scripts/validate_release_links.py --repo-root /tmp/zeitgeist-staging-sandbox --expected-repo-slug "Siyuan-Zhu/Siyuan-Zhu" --require-publication-manifest --output-json /tmp/zeitgeist-staging-state/link_audit_production_slug.json
+          python3 scripts/build_readme.py --repo-root /tmp/zeitgeist-staging-sandbox --repo-slug "${{ github.repository }}"
+          python3 scripts/validate_release_links.py --repo-root /tmp/zeitgeist-staging-sandbox --expected-repo-slug "${{ github.repository }}" --require-publication-manifest --output-json /tmp/zeitgeist-staging-state/link_audit_sandbox_slug.json
+          python3 scripts/build_readme.py --repo-root /tmp/zeitgeist-staging-sandbox --repo-slug "Siyuan-Zhu/Siyuan-Zhu"
+          python3 scripts/build_readme.py --check --repo-root /tmp/zeitgeist-staging-sandbox --repo-slug "Siyuan-Zhu/Siyuan-Zhu"
+          python3 scripts/migrate_release_state.py backup --repo-root /tmp/zeitgeist-staging-sandbox --backup-dir /tmp/private-staging-validation-backup
+          python3 scripts/migrate_release_state.py migrate --repo-root /tmp/zeitgeist-staging-sandbox --dry-run > /tmp/private-staging-migration-dry-run.json
+          python3 -c 'import json; from pathlib import Path; r=json.loads(Path("/tmp/private-staging-migration-dry-run.json").read_text()); Path("/tmp/zeitgeist-staging-state/migration_dry_run.json").write_text(json.dumps({k:r[k] for k in ("status","subcommand","applied","target_backend","plan_sha256") if k in r}, indent=2))'
+
+      - name: Rehearse unique staging Firestore migration, readback and rollback
+        if: inputs.live_firestore == true
+        working-directory: /tmp/zeitgeist-staging-sandbox
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: >-
+          python3 scripts/rehearse_staging_recovery.py
+          --repo-root /tmp/zeitgeist-staging-sandbox
+          --backup-dir /tmp/private-staging-recovery
+          --collection-prefix "staging_${{ github.run_id }}_${{ github.run_attempt }}_"
+
+      - name: Record the tested dependency versions
+        run: python3 -m pip freeze > /tmp/zeitgeist-staging-state/runtime-requirements.txt
+
+      - name: Upload isolated staging dry-run bundle artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-zeitgeist-dryrun-bundle
+          include-hidden-files: true
+          path: |
+            /tmp/zeitgeist-staging-sandbox/README.md
+            /tmp/zeitgeist-staging-sandbox/assets/
+            /tmp/zeitgeist-staging-sandbox/variants/
+            /tmp/zeitgeist-staging-sandbox/.publication-recovery/*/assets/
+            /tmp/zeitgeist-staging-sandbox/.publication-recovery/*/README.md
+            /tmp/zeitgeist-staging-sandbox/.publication-recovery/*/variants/
+            /tmp/zeitgeist-staging-state/runtime-requirements.txt
+            /tmp/zeitgeist-staging-state/application.json
+            /tmp/zeitgeist-staging-state/interactions.json
+            /tmp/zeitgeist-staging-state/link_audit_*.json
+            /tmp/zeitgeist-staging-state/migration_dry_run.json
+          if-no-files-found: error

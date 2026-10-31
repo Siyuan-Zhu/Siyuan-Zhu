@@ -1,0 +1,166 @@
+{
+  "active_game": "connect4",
+  "board": [
+    [
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      "."
+    ],
+    [
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      "."
+    ],
+    [
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      "."
+    ],
+    [
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      "."
+    ],
+    [
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      "."
+    ],
+    [
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      ".",
+      "."
+    ]
+  ],
+  "current_turn_color": "RED",
+  "episode_trace": [],
+  "finisher_handle": null,
+  "game_key": "connect4",
+  "last_bot_move": null,
+  "last_challenger_move": null,
+  "last_elo_delta": 0,
+  "last_move_epoch": 0.0,
+  "last_move_summary": "New round ready \u2014 click any column below to drop the first Terracotta disc.",
+  "last_move_timestamp": 0.0,
+  "last_mover": null,
+  "mode": "VS_BOT",
+  "move_log": [],
+  "moves_this_round": 0,
+  "past_rounds": [],
+  "rate_limits": {},
+  "red_contributors": {},
+  "round_id": 1,
+  "round_over": false,
+  "status": "ACTIVE",
+  "turn": 1,
+  "winner": null,
+  "winning_cells": [],
+  "yellow_contributors": {},
+  "board_state": {
+    "active_game": "connect4",
+    "board": [
+      [
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        "."
+      ],
+      [
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        "."
+      ],
+      [
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        "."
+      ],
+      [
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        "."
+      ],
+      [
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        "."
+      ],
+      [
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        ".",
+        "."
+      ]
+    ],
+    "current_turn_color": "RED",
+    "episode_trace": [],
+    "finisher_handle": null,
+    "game_key": "connect4",
+    "last_bot_move": null,
+    "last_challenger_move": null,
+    "last_elo_delta": 0,
+    "last_move_epoch": 0.0,
+    "last_move_summary": "New round ready \u2014 click any column below to drop the first Terracotta disc.",
+    "last_move_timestamp": 0.0,
+    "last_mover": null,
+    "mode": "VS_BOT",
+    "move_log": [],
+    "moves_this_round": 0,
+    "past_rounds": [],
+    "rate_limits": {},
+    "red_contributors": {},
+    "round_id": 1,
+    "round_over": false,
+    "status": "ACTIVE",
+    "turn": 1,
+    "winner": null,
+    "winning_cells": [],
+    "yellow_contributors": {}
+  }
+}
