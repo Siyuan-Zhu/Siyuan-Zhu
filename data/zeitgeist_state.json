@@ -1,42 +1,152 @@
 {
-  "analysis": {
-    "dominance": 60.6,
-    "is_builder_systems_day": true,
-    "dominant_keywords": "('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol', 'putin', 'bus', 'driver')",
-    "epistemic_tension": 54.5,
-    "date_iso": "2026-10-31",
-    "word_of_the_day": "Breach",
-    "valence": 57.1,
-    "personal_note": null,
-    "interjection_applied": false,
-    "visual_concrete_anchor": "A glowing filament line snapping across a field of dark glass",
-    "composite_score": 64.2,
-    "arousal": 53.4,
-    "lens_breakdown": "({'lens_id': 'personal_orbit', 'label': 'Personal Orbit (Creators, Builders, Regions & Communities)', 'weight': 0.4, 'valence': 60.5, 'arousal': 55.6, 'dominance': 66.2, 'epistemic_tension': 58.8, 'composite_index': 70.0, 'top_terms': ('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol')}, {'lens_id': 'global_macro', 'label': 'Global & Civic Macro', 'weight': 0.25, 'valence': 50.0, 'arousal': 50.0, 'dominance': 50.0, 'epistemic_tension': 50.0, 'composite_index': 50.0, 'top_terms': ()}, {'lens_id': 'markets_finops', 'label': 'Capital Markets & Real-Economy Liquidity', 'weight': 0.2, 'valence': 50.0, 'arousal': 50.0, 'dominance': 50.0, 'epistemic_tension': 50.0, 'composite_index': 60.0, 'top_terms': ('putin', 'bus', 'driver', 'genius', 'lolita')}, {'lens_id': 'ai_builders', 'label': 'Open-Source Systems & AI Engineering', 'weight': 0.15, 'valence': 69.1, 'arousal': 57.6, 'dominance': 77.6, 'epistemic_tension': 56.6, 'composite_index': 77.7, 'top_terms': ('luggage', 'caps', 'download', 'glp-', 'google')})",
-    "explanation_phrase": "A fracture in the bedrock of digital trust."
-  },
-  "updated_at": "2026-10-31T19:55:28.741947Z",
-  "text_quadrant": "margin_outside",
-  "date_iso": "2026-10-31",
-  "archetype_history_30d": [
-    "LITERARY_JOURNAL",
-    "POETIC_CINEMA"
-  ],
-  "word": "Breach",
   "schema_version": 3,
+  "visual_medium": "PHOTOGRAPHY",
+  "publication_id": "7b6d7b150f29cff0849e",
+  "visual_decision": {
+    "word_of_the_day": "Breach",
+    "rationale": "Single v3 publication; compatibility fields derived from the selected artwork",
+    "credit_url": "https://unsplash.com/photos/NeK5dKVhnig",
+    "safety_pass": true,
+    "explanation_phrase": "A fracture in the bedrock of digital trust.",
+    "selected_mode": "CURATED_PHOTO",
+    "image_url": "https://unsplash.com/photos/NeK5dKVhnig",
+    "composite_score": 0.725,
+    "minimalist_restraint": 0.725,
+    "semantic_alignment": 0.72,
+    "credit_label": "Katelyn G",
+    "local_svg_path": "assets/daily_pulse.svg"
+  },
+  "telemetry": {
+    "collection_health": {
+      "instagram_degraded": false,
+      "live_item_count": 1091,
+      "publishable": true,
+      "orbit_item_count": 184,
+      "instagram_unavailable_reasons": {},
+      "reference_time": "2026-10-31T19:54:09.406502+00:00",
+      "apify_batch_succeeded": true,
+      "curated_item_count": 1045,
+      "instagram_requested_handle_count": 8,
+      "orbit_source_count": 24,
+      "instagram_fetched_successfully": true,
+      "instagram_dataset_record_count": 39,
+      "required_coverage": {
+        "min_macro_sources": 6,
+        "required_macro_tiers": [
+          "M1",
+          "M2",
+          "M3"
+        ],
+        "min_orbit_sources": 6,
+        "required_orbit_tiers": [
+          "O1",
+          "O2",
+          "O3"
+        ]
+      },
+      "instagram_verified_collaboration_record_count": 4,
+      "instagram_unavailable_handle_count": 0,
+      "cache_item_count": 0,
+      "macro_item_count": 169,
+      "macro_source_count": 27,
+      "discarded_before_embedding_count": 738,
+      "nonsocial_macro_source_count": 25,
+      "mode": "live",
+      "instagram_item_count": 38,
+      "instagram_skipped_record_count": 0,
+      "instagram": "live",
+      "seeded": false,
+      "embedding_eligible_item_count": 353,
+      "instagram_normalized_post_count": 38,
+      "fresh_items_by_tier": {
+        "M2": 38,
+        "M4_SCOUT": 6,
+        "O3": 76,
+        "O2": 57,
+        "M3": 85,
+        "O1": 51,
+        "M1": 40
+      },
+      "nonsocial_orbit_source_count": 16
+    },
+    "adk_mode": "google-adk-live",
+    "spending_status": "unknown_pending_billing_reconciliation",
+    "estimated_output_tokens": null,
+    "estimated_monthly_cost_index": null,
+    "model_id": "gemini-3.8-flash",
+    "within_budget": false,
+    "monthly_budget_ceiling_index": 2.5,
+    "timestamp_utc": "2026-10-31T19:55:28Z",
+    "estimated_input_tokens": null
+  },
+  "analysis": {
+    "explanation_phrase": "A fracture in the bedrock of digital trust.",
+    "is_builder_systems_day": true,
+    "arousal": 53.4,
+    "word_of_the_day": "Breach",
+    "personal_note": null,
+    "date_iso": "2026-10-31",
+    "lens_breakdown": "({'lens_id': 'personal_orbit', 'label': 'Personal Orbit (Creators, Builders, Regions & Communities)', 'weight': 0.4, 'valence': 60.5, 'arousal': 55.6, 'dominance': 66.2, 'epistemic_tension': 58.8, 'composite_index': 70.0, 'top_terms': ('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol')}, {'lens_id': 'global_macro', 'label': 'Global & Civic Macro', 'weight': 0.25, 'valence': 50.0, 'arousal': 50.0, 'dominance': 50.0, 'epistemic_tension': 50.0, 'composite_index': 50.0, 'top_terms': ()}, {'lens_id': 'markets_finops', 'label': 'Capital Markets & Real-Economy Liquidity', 'weight': 0.2, 'valence': 50.0, 'arousal': 50.0, 'dominance': 50.0, 'epistemic_tension': 50.0, 'composite_index': 60.0, 'top_terms': ('putin', 'bus', 'driver', 'genius', 'lolita')}, {'lens_id': 'ai_builders', 'label': 'Open-Source Systems & AI Engineering', 'weight': 0.15, 'valence': 69.1, 'arousal': 57.6, 'dominance': 77.6, 'epistemic_tension': 56.6, 'composite_index': 77.7, 'top_terms': ('luggage', 'caps', 'download', 'glp-', 'google')})",
+    "epistemic_tension": 54.5,
+    "dominance": 60.6,
+    "valence": 57.1,
+    "visual_concrete_anchor": "A glowing filament line snapping across a field of dark glass",
+    "dominant_keywords": "('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol', 'putin', 'bus', 'driver')",
+    "composite_score": 64.2,
+    "interjection_applied": false
+  },
   "recent_words": [
     "BREACH",
     "ABSORPTION"
   ],
+  "updated_at": "2026-10-31T19:55:28.741947Z",
+  "date_iso": "2026-10-31",
+  "date": "2026-10-31",
+  "published_at": "2026-10-31T19:55:28.741947Z",
+  "word": "Breach",
+  "gloss": "A fracture in the bedrock of digital trust.",
+  "state_version": 2,
+  "text_quadrant": "margin_outside",
+  "archetype_history_30d": [
+    "LITERARY_JOURNAL",
+    "POETIC_CINEMA"
+  ],
+  "mood_votes": {
+    "spot_on": 0,
+    "too_sunny": 0,
+    "too_heavy": 0
+  },
+  "visitor_mood_tally": {
+    "spot_on": 0,
+    "too_sunny": 0,
+    "too_heavy": 0
+  },
   "published_pulse": {
+    "mood_votes": {
+      "spot_on": 0,
+      "too_sunny": 0,
+      "too_heavy": 0
+    },
+    "commissioned_thesis": "The quiet compromise of an intermediate certificate authority reveals the fragile underpinnings of collective cryptographic faith, reminding us that sovereign digital trust can quietly unravel upstream.",
     "artwork_source": "Unsplash",
-    "unsplash_photographer": "Katelyn G",
-    "schema_version": "2.0",
+    "gloss": "A fracture in the bedrock of digital trust.",
+    "visual_tier_used": "PHOTOGRAPHY",
+    "visual_medium": "PHOTOGRAPHY",
     "headline": "Breach \u2014 A fracture in the bedrock of digital trust.",
-    "window_hours": 96,
-    "artwork_url": "https://unsplash.com/photos/NeK5dKVhnig",
-    "orbit_weight_ratio": 0.62,
+    "quote_attribution": "Editorial Director Synthesis",
+    "published_at": "2026-10-31T19:55:28.741947Z",
     "date": "2026-10-31",
+    "orbit_weight_ratio": 0.62,
+    "24h_shift": 0.24,
+    "artwork_artist": "Katelyn G",
+    "dominant_signal_type": "HYBRID",
+    "macro_contribution_pct": 38.0,
+    "image_data_uri": "",
+    "artwork_title": "Breach",
+    "unsplash_profile_url": "https://unsplash.com/@katelyn_g",
+    "schema_version": "2.0",
+    "flux_model": null,
+    "artwork_url": "https://unsplash.com/photos/NeK5dKVhnig",
     "top_macro_themes": [
       "certificates",
       "emudhra",
@@ -44,32 +154,14 @@
       "emudhra intermediate",
       "certificate"
     ],
-    "runner_up_clusters": [],
-    "macro_contribution_pct": 38.0,
-    "summary": "The quiet compromise of an intermediate certificate authority reveals the fragile underpinnings of collective cryptographic faith, reminding us that sovereign digital trust can quietly unravel upstream.",
-    "dominant_signal_type": "HYBRID",
-    "updated_at": "2026-10-31T19:55:28.741947Z",
-    "gloss": "A fracture in the bedrock of digital trust.",
-    "orbit_contribution_pct": 62.0,
-    "visual_tier_used": "PHOTOGRAPHY",
-    "image_data_uri": "",
-    "dominant_category": "AI & Distributed Systems",
-    "fallback_webp_path": "assets/pulse/2026-10-31.webp",
-    "24h_shift": 0.24,
     "orbit_sources_matched": [],
-    "flux_model": null,
-    "commissioned_thesis": "The quiet compromise of an intermediate certificate authority reveals the fragile underpinnings of collective cryptographic faith, reminding us that sovereign digital trust can quietly unravel upstream.",
-    "unsplash_profile_url": "https://unsplash.com/@katelyn_g",
-    "visual_medium": "PHOTOGRAPHY",
-    "critic_scores": {
-      "composite": 0.725,
-      "semantic_alignment": 0.72
-    },
-    "mood_votes": {
-      "spot_on": 0,
-      "too_sunny": 0,
-      "too_heavy": 0
-    },
+    "unsplash_photographer": "Katelyn G",
+    "window_hours": 96,
+    "image_url": "https://unsplash.com/photos/NeK5dKVhnig",
+    "word": "Breach",
+    "updated_at": "2026-10-31T19:55:28.741947Z",
+    "runner_up_clusters": [],
+    "summary": "The quiet compromise of an intermediate certificate authority reveals the fragile underpinnings of collective cryptographic faith, reminding us that sovereign digital trust can quietly unravel upstream.",
     "top_orbit_themes": [
       "certificates",
       "emudhra",
@@ -77,13 +169,13 @@
       "emudhra intermediate",
       "certificate"
     ],
-    "artwork_artist": "Katelyn G",
-    "quote": "A fracture in the bedrock of digital trust.",
-    "quote_attribution": "Editorial Director Synthesis",
-    "artwork_title": "Breach",
-    "word": "Breach",
-    "published_at": "2026-10-31T19:55:28.741947Z",
+    "critic_scores": {
+      "semantic_alignment": 0.72,
+      "composite": 0.725
+    },
     "publication_id": "7b6d7b150f29cff0849e",
+    "fallback_webp_path": "assets/pulse/2026-10-31.webp",
+    "orbit_contribution_pct": 62.0,
     "cluster_keywords": [
       "certificates",
       "emudhra",
@@ -91,38 +183,28 @@
       "emudhra intermediate",
       "certificate"
     ],
-    "image_url": "https://unsplash.com/photos/NeK5dKVhnig"
+    "dominant_category": "AI & Distributed Systems",
+    "quote": "A fracture in the bedrock of digital trust."
   },
-  "visual_decision": {
-    "word_of_the_day": "Breach",
-    "minimalist_restraint": 0.725,
-    "image_url": "https://unsplash.com/photos/NeK5dKVhnig",
-    "rationale": "Single v3 publication; compatibility fields derived from the selected artwork",
-    "credit_url": "https://unsplash.com/photos/NeK5dKVhnig",
-    "safety_pass": true,
-    "selected_mode": "CURATED_PHOTO",
-    "local_svg_path": "assets/daily_pulse.svg",
-    "composite_score": 0.725,
-    "credit_label": "Katelyn G",
-    "semantic_alignment": 0.72,
-    "explanation_phrase": "A fracture in the bedrock of digital trust."
-  },
-  "date": "2026-10-31",
-  "published_at": "2026-10-31T19:55:28.741947Z",
+  "curatorial_archetype": "LITERARY_JOURNAL",
   "commission": {
+    "gloss": "A fracture in the bedrock of digital trust.",
+    "commissioned_thesis": "The quiet compromise of an intermediate certificate authority reveals the fragile underpinnings of collective cryptographic faith, reminding us that sovereign digital trust can quietly unravel upstream.",
+    "selected_cluster_id": "cluster_45",
+    "attempts_used": 1,
+    "visual_anchor": "A glowing filament line snapping across a field of dark glass",
     "word": "Breach",
     "fallback_used": false,
-    "gloss": "A fracture in the bedrock of digital trust.",
-    "flux_3_commission_prompts": [
-      "Editorial conceptual photography of a single glowing turquoise cryptographic filament fracturing across polished obsidian stone, subtle geometric digital noise, cinematic moody lighting, 8k resolution, minimalist depth of field. Calm negative space in upper-left quadrant, 3:2 editorial photography, 35mm film grain.",
-      "Quiet atmospheric study of A glowing filament line snapping across a field of dark glass, minimalist gallery composition, natural directional light, 3:2 aspect ratio.",
-      "Fine-art architectural monograph plate of A glowing filament line snapping across a field of dark glass, subtle tonal gradation, zero text overlay, 3:2 format."
-    ],
-    "selected_cluster_id": "cluster_45",
     "unsplash_queries": [
       "shattered dark glass",
       "glowing fractured fiber",
       "server blue shadow"
+    ],
+    "imagen_commission_prompt": "Editorial conceptual photography of a single glowing turquoise cryptographic filament fracturing across polished obsidian stone, subtle geometric digital noise, cinematic moody lighting, 8k resolution, minimalist depth of field.",
+    "flux_3_commission_prompts": [
+      "Editorial conceptual photography of a single glowing turquoise cryptographic filament fracturing across polished obsidian stone, subtle geometric digital noise, cinematic moody lighting, 8k resolution, minimalist depth of field. Calm negative space in upper-left quadrant, 3:2 editorial photography, 35mm film grain.",
+      "Quiet atmospheric study of A glowing filament line snapping across a field of dark glass, minimalist gallery composition, natural directional light, 3:2 aspect ratio.",
+      "Fine-art architectural monograph plate of A glowing filament line snapping across a field of dark glass, subtle tonal gradation, zero text overlay, 3:2 format."
     ],
     "palette_hex": [
       "#0B0F19",
@@ -130,88 +212,6 @@
       "#38BDF8",
       "#0284C7",
       "#F8FAFC"
-    ],
-    "visual_anchor": "A glowing filament line snapping across a field of dark glass",
-    "imagen_commission_prompt": "Editorial conceptual photography of a single glowing turquoise cryptographic filament fracturing across polished obsidian stone, subtle geometric digital noise, cinematic moody lighting, 8k resolution, minimalist depth of field.",
-    "commissioned_thesis": "The quiet compromise of an intermediate certificate authority reveals the fragile underpinnings of collective cryptographic faith, reminding us that sovereign digital trust can quietly unravel upstream.",
-    "attempts_used": 1
-  },
-  "mood_votes": {
-    "spot_on": 0,
-    "too_sunny": 0,
-    "too_heavy": 0
-  },
-  "publication_id": "7b6d7b150f29cff0849e",
-  "visitor_mood_tally": {
-    "spot_on": 0,
-    "too_sunny": 0,
-    "too_heavy": 0
-  },
-  "visual_medium": "PHOTOGRAPHY",
-  "curatorial_archetype": "LITERARY_JOURNAL",
-  "gloss": "A fracture in the bedrock of digital trust.",
-  "state_version": 2,
-  "telemetry": {
-    "monthly_budget_ceiling_index": 2.5,
-    "estimated_input_tokens": null,
-    "spending_status": "unknown_pending_billing_reconciliation",
-    "estimated_output_tokens": null,
-    "within_budget": false,
-    "collection_health": {
-      "apify_batch_succeeded": true,
-      "reference_time": "2026-10-31T19:54:09.406502+00:00",
-      "nonsocial_macro_source_count": 25,
-      "curated_item_count": 1045,
-      "required_coverage": {
-        "min_macro_sources": 6,
-        "min_orbit_sources": 6,
-        "required_macro_tiers": [
-          "M1",
-          "M2",
-          "M3"
-        ],
-        "required_orbit_tiers": [
-          "O1",
-          "O2",
-          "O3"
-        ]
-      },
-      "mode": "live",
-      "orbit_source_count": 24,
-      "discarded_before_embedding_count": 738,
-      "publishable": true,
-      "instagram_fetched_successfully": true,
-      "instagram_verified_collaboration_record_count": 4,
-      "instagram_degraded": false,
-      "embedding_eligible_item_count": 353,
-      "live_item_count": 1091,
-      "cache_item_count": 0,
-      "macro_item_count": 169,
-      "instagram_item_count": 38,
-      "nonsocial_orbit_source_count": 16,
-      "instagram_unavailable_handle_count": 0,
-      "instagram_requested_handle_count": 8,
-      "orbit_item_count": 184,
-      "instagram": "live",
-      "instagram_normalized_post_count": 38,
-      "fresh_items_by_tier": {
-        "M4_SCOUT": 6,
-        "O3": 76,
-        "M1": 40,
-        "O2": 57,
-        "M2": 38,
-        "O1": 51,
-        "M3": 85
-      },
-      "instagram_skipped_record_count": 0,
-      "instagram_unavailable_reasons": {},
-      "seeded": false,
-      "instagram_dataset_record_count": 39,
-      "macro_source_count": 27
-    },
-    "adk_mode": "google-adk-live",
-    "model_id": "gemini-3.8-flash",
-    "timestamp_utc": "2026-10-31T19:55:28Z",
-    "estimated_monthly_cost_index": null
+    ]
   }
 }
