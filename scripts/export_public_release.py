@@ -29,6 +29,7 @@ from scripts.validate_release_links import validate_release_bundle
 from src.editorial_typography import ASSETS as TYPOGRAPHY_ASSETS
 from src.state_store import JsonFileStateStore
 from src.zeitgeist.publication import verify_publication_bundle
+from src.zeitgeist.public_schema import photo_policy_projection, public_republication as _public_republication
 from src.zeitgeist.visual_router import update_svg_mood_vote_bar
 
 PUBLIC_SLUG = "Siyuan-Zhu/Siyuan-Zhu"
@@ -158,33 +159,11 @@ def _select(value, fields):
     return {key: copy.deepcopy(value[key]) for key in sorted(fields & value.keys())}
 
 
-def _public_republication(value):
-    fields = {'kind', 'original_publication_id', 'original_publication_date',
-              'original_published_at', 'new_inference_performed',
-              'artwork_reused_byte_exact'}
-    record = _select(value, fields)
-    if (set(record) != fields or record['kind'] != 'initial_release_republication'
-            or not isinstance(record['original_publication_id'], str)
-            or not re.fullmatch(r'[a-f0-9]{20}', record['original_publication_id'])
-            or record['new_inference_performed'] is not False
-            or record['artwork_reused_byte_exact'] is not True):
-        raise ValueError('Invalid public republication provenance')
-    from datetime import date, datetime, timedelta
-    original_date = record['original_publication_date']
-    if not isinstance(original_date, str) or date.fromisoformat(original_date).isoformat() != original_date:
-        raise ValueError('Invalid original publication date')
-    timestamp = record['original_published_at']
-    if timestamp is not None:
-        if not isinstance(timestamp, str) or len(timestamp) > 64:
-            raise ValueError('Invalid original publication timestamp')
-        parsed = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        if parsed.utcoffset() != timedelta(0) or parsed.date().isoformat() != original_date:
-            raise ValueError('Original publication timestamp must match its UTC date')
-    return record
 
 
 def _editorial(value):
     public = _select(value, EDITORIAL_FIELDS)
+    public.update(photo_policy_projection(value))
     if public.get("image_data_uri"):
         raise ValueError("Public editorial JSON cannot contain inline image payloads")
     if "attribution" in value:

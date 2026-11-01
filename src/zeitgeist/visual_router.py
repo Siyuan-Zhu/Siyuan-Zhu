@@ -518,6 +518,8 @@ class PublishedPulse:
         if self.attribution.get('selection_policy') == 'owner-approved-best-safe-photo':
             entry['photo_selection_policy'] = 'owner-approved-best-safe-photo'
             entry['photo_selection_policy_date'] = self.attribution['selection_policy_date']
+        from .public_schema import photo_policy_projection
+        photo_policy_projection(entry)
         if include_curatorial_metadata:
             entry["curatorial_archetype"] = str(self.curatorial_archetype or "POETIC_CINEMA")[:32]
             entry["text_quadrant"] = str(self.text_quadrant or "upper_left")[:24]

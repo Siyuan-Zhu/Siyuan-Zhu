@@ -654,53 +654,9 @@ def _assert_valid_vote_rate_limit(data: dict[str, Any]) -> None:
     assert data.get("mood_key") in {"spot_on", "too_sunny", "too_heavy"}
 
 
-FIRESTORE_PULSE_HISTORY_ALLOWED_FIELDS = {
-    "schema_version",
-    "date",
-    "word",
-    "gloss",
-    "commissioned_thesis",
-    "visual_medium",
-    "image_url",
-    "fallback_webp_path",
-    "unsplash_photographer",
-    "unsplash_profile_url",
-    "flux_model",
-    "cluster_keywords",
-    "orbit_contribution_pct",
-    "macro_contribution_pct",
-    "orbit_sources_matched",
-    "runner_up_clusters",
-    "mood_votes",
-    "critic_scores",
-    "published_at",
-    "updated_at",
-    "headline",
-    "summary",
-    "24h_shift",
-    "dominant_category",
-    "dominant_signal_type",
-    "orbit_weight_ratio",
-    "top_orbit_themes",
-    "top_macro_themes",
-    "visual_tier_used",
-    "artwork_title",
-    "artwork_artist",
-    "artwork_source",
-    "artwork_url",
-    "image_data_uri",
-    "quote",
-    "quote_attribution",
-    "window_hours",
-    "palette_hex",
-    "curatorial_archetype",
-    "text_quadrant",
-    "date_iso",
-    "word_of_the_day",
-    "explanation_phrase",
-    "composite_score",
-}
+from src.zeitgeist.public_schema import LEGACY_EDITORIAL_FIELDS
 
+FIRESTORE_PULSE_HISTORY_ALLOWED_FIELDS = LEGACY_EDITORIAL_FIELDS
 
 def test_firestore_state_store_all_write_methods_conform_to_firestore_rules(
     tmp_path: Path,
@@ -878,10 +834,13 @@ def test_public_json_files_match_runtime_schema_and_no_base64_bloat() -> None:
     # history DTO. Keep legacy wire/rules checks strict and validate the exact
     # typed public extension rather than accepting arbitrary new source fields.
     allowed = FIRESTORE_PULSE_HISTORY_ALLOWED_FIELDS | (
-        {"publication_id", "release_republication"} if modern else set()
+        {"publication_id", "release_republication", "photo_selection_policy",
+         "photo_selection_policy_date"} if modern else set()
     )
     assert set(pub_pulse).issubset(allowed)
     def assert_public_provenance(payload):
+        from src.zeitgeist.public_schema import photo_policy_projection
+        photo_policy_projection(payload)
         if "release_republication" in payload:
             from scripts.export_public_release import _public_republication
             record = payload["release_republication"]

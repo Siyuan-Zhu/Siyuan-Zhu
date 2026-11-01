@@ -429,6 +429,33 @@ def _render_literary_journal_plate(
     return canvas
 
 
+def _draw_studio_monograph_credit(draw, *, date_str, attribution, visual_medium):
+    """Keep regular generation and display-only correction on the same typography."""
+    font = _load_font(_MONO_FONT_CANDIDATES, 11)
+    credit = f"{date_str}  ·  {_credit_line(attribution, visual_medium).upper()}"
+    box = draw.textbbox((0, 0), credit, font=font)
+    draw.text((PLATE_WIDTH // 2 - (box[2] - box[0]) // 2, 724), credit,
+              font=font, fill=(120, 113, 108))
+
+
+def replace_studio_monograph_footer(image, *, date_str, attribution, visual_medium,
+                                    dark_mode):
+    """Correct the credit strip without decoding/recomposing the accepted hero.
+
+    Save the returned image losslessly to retain every decoded pixel outside
+    this strip, including the original word, gloss and photograph/render.
+    """
+    if image.size != (PLATE_WIDTH, PLATE_HEIGHT):
+        raise ValueError("Unexpected Studio Monograph dimensions")
+    canvas = image.convert("RGB").copy()
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((0, 716, PLATE_WIDTH - 1, 747),
+                   fill=(15, 20, 25) if dark_mode else (251, 249, 245))
+    _draw_studio_monograph_credit(draw, date_str=date_str, attribution=attribution,
+                                  visual_medium=visual_medium)
+    return canvas
+
+
 def _render_studio_monograph_plate(
     hero_img: Image.Image,
     *,
@@ -459,8 +486,6 @@ def _render_studio_monograph_plate(
 
     title_font = _load_font(_SERIF_FONT_CANDIDATES, 52.5)
     gloss_font = _load_font(_SERIF_ITALIC_CANDIDATES, 22.5)
-    mono_font = _load_font(_MONO_FONT_CANDIDATES, 11)
-
     cx = PLATE_WIDTH // 2
     w_box = draw.textbbox((0, 0), word, font=title_font)
     w_w = w_box[2] - w_box[0]
@@ -473,10 +498,8 @@ def _render_studio_monograph_plate(
     g_w = g_box[2] - g_box[0]
     draw.text((cx - g_w // 2, 672), gloss_line, font=gloss_font, fill=ink_secondary)
 
-    credit = f"PLATE {date_str}  ·  {_credit_line(attribution, visual_medium).upper()}"
-    c_box = draw.textbbox((0, 0), credit, font=mono_font)
-    c_w = c_box[2] - c_box[0]
-    draw.text((cx - c_w // 2, 724), credit, font=mono_font, fill=ink_muted)
+    _draw_studio_monograph_credit(draw, date_str=date_str, attribution=attribution,
+                                  visual_medium=visual_medium)
 
     return canvas
 

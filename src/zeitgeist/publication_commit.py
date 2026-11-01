@@ -253,6 +253,7 @@ class PublicationWorkspace:
         from scripts.build_readme import build_all_readmes, check_all_readmes
         from .publication import verify_publication_bundle
         from .visual_router import update_svg_mood_vote_bar
+        from .public_schema import validate_public_editorial
 
         data = self.path / "data"
         data.mkdir(parents=True, exist_ok=True)
@@ -263,6 +264,7 @@ class PublicationWorkspace:
             (data / filename).write_text(
                 json.dumps(payload, indent=2) + "\n", encoding="utf-8"
             )
+        validate_public_editorial(self.path)
         update_svg_mood_vote_bar(
             self.path / "assets/daily_pulse.svg", state["visitor_mood_tally"]
         )

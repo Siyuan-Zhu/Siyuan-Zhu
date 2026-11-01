@@ -2849,6 +2849,7 @@ def _rebuild_publication(root: Path, source: Path, store: FirestoreStateStore) -
     from scripts.build_readme import build_all_readmes, check_all_readmes
     from .zeitgeist.publication import verify_publication_bundle, verify_current_pulse
     from .zeitgeist.visual_router import update_svg_mood_vote_bar
+    from .zeitgeist.public_schema import validate_public_editorial
     documents = _canonical_publication_snapshot(store)
     pulse = documents["zeitgeist_state.json"]
     publication_id = pulse.get("publication_id")
@@ -2885,6 +2886,7 @@ def _rebuild_publication(root: Path, source: Path, store: FirestoreStateStore) -
     if not check_all_readmes(root, state_store=snapshot_store):
         raise ValueError("Canonical README projection did not validate")
     verify_publication_bundle(root, require_current_pulse=True)
+    validate_public_editorial(root)
     if _canonical_publication_snapshot(store) != documents:
         raise PublicationConflict("Canonical state advanced while rendering; rebuild")
 

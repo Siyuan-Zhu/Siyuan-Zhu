@@ -40,7 +40,11 @@ def queued(tmp_path,monkeypatch):
     (root/'assets/pulse/2026-10-30.webp').write_bytes((root/'assets/daily_pulse_light.webp').read_bytes())
     manifest=write_publication_manifest(root,date=pulse['date'],word=pulse['word'],gloss=pulse['gloss'],archetype=pulse['curatorial_archetype'],medium=pulse['visual_medium'],archive_path='assets/pulse/2026-10-30.webp')
     pulse['publication_id']=manifest['publication_id']
-    entry=dict(pulse,mood_votes=pulse['visitor_mood_tally'])
+    # Public entries omit canonical state bookkeeping; keep the fixture on the
+    # same DTO contract as PublishedPulse.to_feed_entry().
+    entry={key: value for key, value in pulse.items()
+           if key not in {'visitor_mood_tally', 'state_version'}}
+    entry['mood_votes']=copy.deepcopy(pulse['visitor_mood_tally'])
     (root/'data/zeitgeist_state.json').write_text(json.dumps(pulse)); (root/'data/pulse_feed.json').write_text(json.dumps({'entries':[entry]}))
     game=create_initial_game_state(); game['state_version']=1
     (root/'data/game_state.json').write_text(json.dumps(game))
@@ -165,7 +169,10 @@ def test_newer_canonical_publication_uses_its_remote_art_not_stale_event_art(que
     pulse=client.docs['profile_state/daily_pulse']; pulse['word']='LATEST'
     manifest=write_publication_manifest(remote,date=pulse['date'],word=pulse['word'],gloss=pulse['gloss'],archetype=pulse['curatorial_archetype'],medium=pulse['visual_medium'],archive_path='assets/pulse/2026-10-30.webp')
     pulse['publication_id']=manifest['publication_id']
-    entry=dict(pulse,mood_votes=dict(pulse['visitor_mood_tally'])); client.docs['pulse_history/2026-10-30']=entry
+    entry={key: value for key, value in pulse.items()
+           if key not in {'visitor_mood_tally', 'state_version'}}
+    entry['mood_votes']=dict(pulse['visitor_mood_tally'])
+    client.docs['pulse_history/2026-10-30']=entry
     (remote/'data/zeitgeist_state.json').write_text(json.dumps(pulse)); (remote/'data/pulse_feed.json').write_text(json.dumps({'entries':[entry]}))
     expected=(remote/'assets/daily_pulse_light.webp').read_bytes()
     git(remote,'add','.'); git(remote,'commit','-m','new canonical editorial art'); git(remote,'push','origin','HEAD:main')

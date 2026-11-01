@@ -15,6 +15,16 @@ on:
         required: false
         default: false
 
+      studio_footer_action:
+        description: Owner-only, provider-free correction of an exact Studio Monograph footer
+        type: choice
+        options: [none, preview, rehearse, apply]
+        default: none
+      expected_publication_id:
+        description: Exact accepted publication ID for the footer correction
+        type: string
+        required: false
+
 concurrency:
   group: readme-state-writer
   cancel-in-progress: false
@@ -67,10 +77,61 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
         run: python3 scripts/probe_profile_readiness.py
+  studio-footer:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.preflight_only != true &&
+      (inputs.studio_footer_action == 'preview' || inputs.studio_footer_action == 'rehearse' || inputs.studio_footer_action == 'apply') &&
+      github.actor == 'Siyuan-Zhu' &&
+      (github.repository == 'Siyuan-Zhu/readme-live-sandbox' || github.repository == 'Siyuan-Zhu/Siyuan-Zhu')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Correct exact accepted footer without providers
+        env:
+          FOOTER_ACTION: ${{ inputs.studio_footer_action }}
+          EXPECTED_PUBLICATION_ID: ${{ inputs.expected_publication_id }}
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        shell: python
+        run: |
+          import os
+          import subprocess
+          command = ["python3", "scripts/refresh_studio_footer.py", "--expected-publication-id", os.environ["EXPECTED_PUBLICATION_ID"]]
+          action = os.environ["FOOTER_ACTION"]
+          if action in ("apply", "rehearse"):
+              command.append("--" + action)
+          subprocess.run(command, check=True)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: studio-footer-${{ github.run_id }}
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            .footer-preview/
+            .publication-recovery/*/assets/
+            .publication-recovery/*/README.md
+            .publication-recovery/*/variants/
+            data/publication_reconcile.json
   synthesize-pulse:
     timeout-minutes: 15
     if: >-
-      (github.event_name != 'workflow_dispatch' || inputs.preflight_only != true) &&
+      (github.event_name != 'workflow_dispatch' || (inputs.preflight_only != true && (inputs.studio_footer_action == '' || inputs.studio_footer_action == 'none'))) &&
       vars.ZEITGEIST_WRITER_ENABLED == 'true' &&
       (github.event_name != 'schedule' || vars.ZEITGEIST_SCHEDULE_ENABLED == 'true')
     runs-on: ubuntu-latest

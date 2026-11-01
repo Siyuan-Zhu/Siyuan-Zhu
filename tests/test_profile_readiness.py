@@ -138,10 +138,10 @@ def test_workflow_job_truth_table(event,preflight,writer,schedule,actor,repo,exp
         # Quoted workflow variables remain strings after Boolean normalization.
         return eval(expression,{'__builtins__':{}},{
             'github':SimpleNamespace(event_name=event,actor=actor,repository=repo),
-            'inputs':SimpleNamespace(preflight_only=preflight),
+            'inputs':SimpleNamespace(preflight_only=preflight,studio_footer_action="none"),
             'vars':SimpleNamespace(ZEITGEIST_WRITER_ENABLED=str(writer),ZEITGEIST_SCHEDULE_ENABLED=str(schedule))})
     assert (condition('profile-preflight'),condition('synthesize-pulse'))==expected
-    preflight_job=text.split('  profile-preflight:\n',1)[1].split('  synthesize-pulse:',1)[0]
+    preflight_job=text.split('  profile-preflight:\n',1)[1].split('  studio-footer:',1)[0]
     assert 'contents: read' in preflight_job and 'id-token: write' in preflight_job
     assert 'probe_profile_readiness.py' in preflight_job
     assert 'upload-artifact' not in preflight_job and '--apply' not in preflight_job
