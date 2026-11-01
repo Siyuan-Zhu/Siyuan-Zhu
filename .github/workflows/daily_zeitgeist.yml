@@ -2,7 +2,7 @@ name: Daily Zeitgeist Commissioning
 
 on:
   schedule:
-    - cron: "17 4 * * *"
+    - cron: "0 2 * * *"
       timezone: "America/New_York"
   workflow_dispatch:
     inputs:

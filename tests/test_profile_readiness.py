@@ -146,5 +146,5 @@ def test_workflow_job_truth_table(event,preflight,writer,schedule,actor,repo,exp
     assert 'probe_profile_readiness.py' in preflight_job
     assert 'upload-artifact' not in preflight_job and '--apply' not in preflight_job
     assert 'run_zeitgeist.py' not in preflight_job and 'build_readme.py' not in preflight_job
-    assert 'cron: "17 4 * * *"' in text and 'timezone: "America/New_York"' in text
+    assert 'cron: "0 2 * * *"' in text and 'timezone: "America/New_York"' in text
     assert 'default: false' in text
