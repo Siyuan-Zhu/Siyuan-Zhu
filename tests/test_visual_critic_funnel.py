@@ -540,11 +540,11 @@ def test_select_and_render_pulse_assets_enforces_safety_pass_in_primary_80_20_an
     assert pulse_flux_unsafe.visual_medium == "BESPOKE_SVG"
 
 
-def test_unsplash_3_query_landscape_9_candidate_funnel_and_empty_safe_candidates_guard(
+def test_unsplash_3_query_landscape_18_candidate_funnel_and_empty_safe_candidates_guard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Verify 3-query x 3-result (9-candidate) landscape Unsplash funnel and empty safe_candidates guard in route_and_render_visual."""
+    """Verify 3-query x 6-result (18-candidate) landscape Unsplash funnel and empty safe_candidates guard in route_and_render_visual."""
     from types import SimpleNamespace
     import httpx
     import src.zeitgeist.visual_router as vr
@@ -579,7 +579,7 @@ def test_unsplash_3_query_landscape_9_candidate_funnel_and_empty_safe_candidates
                                 "links": {"html": f"https://unsplash.com/@author_{idx}"},
                             },
                         }
-                        for idx in range(3)
+                        for idx in range(6)
                     ]
                 },
             )
@@ -607,8 +607,8 @@ def test_unsplash_3_query_landscape_9_candidate_funnel_and_empty_safe_candidates
     assert len(search_calls) == 3
     for call_params in search_calls:
         assert call_params["orientation"] == "landscape"
-        assert call_params["per_page"] == 3
-    assert len(live_cands) == 9
+        assert call_params["per_page"] == 6
+    assert len(live_cands) == 18
     assert all(c.get("safety_pass") is True for c in live_cands)
 
     # Verify route_and_render_visual does not raise IndexError when safe_candidates is empty
