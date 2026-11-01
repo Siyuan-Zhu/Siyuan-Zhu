@@ -1227,7 +1227,7 @@ def public_collection_health(raw):
     reasons = raw.get("instagram_unavailable_reasons")
     if isinstance(reasons, dict):
         result["instagram_unavailable_reasons"] = {key: value for key, value in reasons.items()
-            if key == "not_found" and type(value) is int and 0 <= value <= 10**9}
+            if key in {"not_found", "no_items"} and type(value) is int and 0 <= value <= 10**9}
     tiers = raw.get("fresh_items_by_tier")
     if isinstance(tiers, dict):
         result["fresh_items_by_tier"] = {
@@ -1354,6 +1354,7 @@ def fetch_instagram_batch(
         instagram_normalized_post_count=0, instagram_verified_collaboration_record_count=0,
         instagram_degraded=False, instagram_unavailable_reasons={})
     unavailable = set()
+    unavailable_reasons = {}
     try:
         guard = spend_guard or get_spend_guard(credential_keys={"apify": token})
         def request():
@@ -1403,18 +1404,29 @@ def fetch_instagram_batch(
     def username(value):
         return value.lstrip("@").strip().lower() if isinstance(value, str) else ""
 
-    def verified_not_found(record):
-        if not isinstance(record, dict) or record.get("error") != "not_found":
-            return ""
-        handle = username(record.get("username"))
-        if handle not in seen_handles:
+    def verified_unavailable(record):
+        if (not isinstance(record, dict) or not isinstance(record.get('error'), str)
+                or record['error'] not in {"not_found", "no_items"}):
             return ""
         try:
             url = urlsplit(record.get("url") or "")
+            handle = url.path.rstrip('/').lstrip('/').lower()
+            stated_handle = username(record.get('username'))
+            if (handle not in seen_handles
+                    or (record['error'] == 'not_found' and stated_handle != handle)
+                    or (stated_handle and stated_handle != handle)):
+                return ""
             if (url.scheme != "https" or url.netloc.lower() not in {"instagram.com", "www.instagram.com"}
                     or url.path.rstrip("/").lower() != "/" + handle or url.query or url.fragment
                     or record.get("latestPosts")):
                 return ""
+            if record.get('inputUrl'):
+                original = urlsplit(record['inputUrl'])
+                if (original.scheme != 'https'
+                        or original.netloc.lower() not in {'instagram.com', 'www.instagram.com'}
+                        or original.path.rstrip('/').lower() != '/' + handle
+                        or original.query or original.fragment):
+                    return ""
         except (TypeError, ValueError):
             return ""
         return handle
@@ -1439,12 +1451,15 @@ def fetch_instagram_batch(
 
     collected: list[dict[str, Any]] = []
     for record in dataset:
-        missing = verified_not_found(record)
+        missing = verified_unavailable(record)
         if missing:
             unavailable.add(missing)
+            unavailable_reasons[missing] = record['error']
             batch_health.update(instagram_unavailable_handle_count=len(unavailable),
                 instagram_skipped_record_count=batch_health["instagram_skipped_record_count"] + 1,
-                instagram_degraded=True, instagram_unavailable_reasons={"not_found": len(unavailable)})
+                instagram_degraded=True, instagram_unavailable_reasons={
+                    reason: list(unavailable_reasons.values()).count(reason)
+                    for reason in set(unavailable_reasons.values())})
             continue
         if not isinstance(record, dict) or record.get("error") or record.get("errorDescription"):
             code = record.get("error") if isinstance(record, dict) else None

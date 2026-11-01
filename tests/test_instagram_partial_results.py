@@ -126,6 +126,36 @@ def test_known_missing_profiles_never_create_fake_posts(monkeypatch):
     assert health["instagram_normalized_post_count"] == 0
 
 
+def _no_items(handle):
+    return {"url": "https://www.instagram.com/" + handle,
+        "inputUrl": "https://www.instagram.com/" + handle,
+        "requestErrorMessages": [], "error": "no_items",
+        "errorDescription": "Empty or private data for provided input"}
+
+
+def test_observed_no_items_shape_preserves_other_requested_posts(monkeypatch):
+    health = {}
+    items = _run(monkeypatch, [_no_items('empty_profile'), _missing('missing_profile'),
+        _post('requested_a', 'valid')], ['empty_profile', 'missing_profile', 'requested_a'], health)
+    assert len(items) == 1
+    assert health['instagram_unavailable_reasons'] == {'no_items': 1, 'not_found': 1}
+    assert health['instagram_unavailable_handle_count'] == 2
+    assert health['instagram_degraded'] is True
+    assert collectors.public_collection_health(health)['instagram_unavailable_reasons'] == health['instagram_unavailable_reasons']
+
+
+@pytest.mark.parametrize('change', [
+    {'url': 'https://www.instagram.com/unrequested'},
+    {'url': 'https://www.instagram.com/empty_profile?unexpected=1'},
+    {'inputUrl': 'https://www.instagram.com/unrequested'},
+    {'username': 'unrequested'}, {'error': 'rate_limited'},
+    {'latestPosts': [_post('requested_a', 'unexpected')]},
+])
+def test_no_items_needs_exact_requested_profile_and_no_conflicting_data(monkeypatch, change):
+    with pytest.raises(collectors.IngestionUnavailable):
+        _run(monkeypatch, [_no_items('empty_profile') | change], ['empty_profile', 'requested_a'], {})
+
+
 def test_missing_profile_does_not_waive_live_fresh_instagram_coverage(
     tmp_path, monkeypatch
 ):

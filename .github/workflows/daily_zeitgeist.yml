@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: "0 2 * * *"
       timezone: "America/New_York"
+    # At most two catch-ups; canonical/public freshness is checked before spending.
+    - cron: "37 2,3 * * *"
+      timezone: "America/New_York"
   workflow_dispatch:
     inputs:
       preflight_only:
@@ -86,6 +89,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Daily Zeitgeist Pipeline & Rebuild README
+        id: digest
         env:
           COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -110,15 +114,10 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
         run: |
           python3 scripts/check_runtime_configuration.py --daily
-          python3 - <<'PY'
-          import os, subprocess
-          if os.environ.get("SPEND_POLICY_SHA256"):
-              subprocess.run(["python3", "scripts/maintain_spend_control.py", "--apply"], check=True)
-          PY
-          python3 scripts/run_zeitgeist.py
-          python3 scripts/build_readme.py
+          python3 scripts/refresh_daily_digest.py
 
       - name: Commit and Push with 3-Attempt Rebase Retry
+        if: steps.digest.outputs.publish_required == 'true'
         env:
           COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
           STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
