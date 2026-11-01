@@ -276,3 +276,50 @@ def test_strict_thumbnail_failure_does_not_become_semantic_rejection(monkeypatch
     monkeypatch.setattr('httpx.Client.get',get)
     with pytest.raises(vr.PhotoSearchUnavailable):
         vr._fetch_live_unsplash_candidates(['fixture'],access_key='fixture',strict_errors=True)
+
+
+def test_expanded_search_scores_eighteen_photos_in_two_bounded_batches(monkeypatch):
+    batches = []
+    def get(client, url, *, params=None, **kwargs):
+        if url.endswith('/search/photos'):
+            assert params['per_page'] == 6
+            return SimpleNamespace(status_code=200, json=lambda: {
+                'results': [photo(params['query'] + str(i)) for i in range(6)]})
+        return SimpleNamespace(status_code=200, content=jpeg())
+    monkeypatch.setattr('httpx.Client.get', get)
+    def judge(rows, **kwargs):
+        batches.append(len(rows))
+        return [dict(SCORES) for row in rows]
+    monkeypatch.setattr(vr, '_score_photo_batch', judge)
+    rows = vr._fetch_live_unsplash_candidates(['a', 'b', 'c'], access_key='fixture', strict_errors=True)
+    assert len(rows) == 18 and batches == [9, 9]
+    assert len({row['id'] for row in rows}) == 18
+
+
+def test_today_exception_selects_highest_safe_composite_and_keeps_real_scores(monkeypatch, tmp_path):
+    monkeypatch.setenv('ZEITGEIST_LIVE_UNSPLASH', '0')
+    monkeypatch.setenv('ZEITGEIST_BEST_SAFE_PHOTO_DATE', '2026-11-01')
+    rows = [dict(SCORES, id='unsafe', safety_pass=False, image_bytes=jpeg()),
+            dict(SCORES, id='lower', semantic_alignment=.4, image_bytes=jpeg()),
+            dict(SCORES, id='best', semantic_alignment=.6, image_bytes=jpeg())]
+    pulse = vr.select_and_render_pulse_assets({'word': 'ANCHOR', 'gloss': 'Rooted craft'},
+        repo_root=tmp_path, date_str='2026-11-01', requested_medium='photo', candidates=rows)
+    assert pulse.visual_medium == 'PHOTOGRAPHY'
+    assert pulse.semantic_alignment_score == .6
+    assert pulse.composite_critic_score == pytest.approx(.75)
+    assert pulse.attribution['selection_policy'] == 'owner-approved-best-safe-photo'
+    assert pulse.attribution['selection_policy_date'] == '2026-11-01'
+    assert pulse.to_feed_entry()['photo_selection_policy'] == 'owner-approved-best-safe-photo'
+
+
+@pytest.mark.parametrize('date,rows', [
+    ('2026-11-02', [dict(SCORES, semantic_alignment=.4)]),
+    ('2026-11-01', [dict(SCORES, safety_pass=False)]),
+    ('2026-11-01', []),
+])
+def test_best_safe_exception_expires_and_never_bypasses_safety(monkeypatch, tmp_path, date, rows):
+    monkeypatch.setenv('ZEITGEIST_LIVE_UNSPLASH', '0')
+    monkeypatch.setenv('ZEITGEIST_BEST_SAFE_PHOTO_DATE', '2026-11-01')
+    with pytest.raises(vr.PhotoSelectionUnavailable):
+        vr.select_and_render_pulse_assets({'word': 'ANCHOR', 'gloss': 'Rooted craft'},
+            repo_root=tmp_path, date_str=date, requested_medium='photo', candidates=rows)

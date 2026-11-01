@@ -515,6 +515,9 @@ class PublishedPulse:
             "quote_attribution": str(self.quote_attribution or "Editorial Director Synthesis")[:120],
             "window_hours": 96,
         }
+        if self.attribution.get('selection_policy') == 'owner-approved-best-safe-photo':
+            entry['photo_selection_policy'] = 'owner-approved-best-safe-photo'
+            entry['photo_selection_policy_date'] = self.attribution['selection_policy_date']
         if include_curatorial_metadata:
             entry["curatorial_archetype"] = str(self.curatorial_archetype or "POETIC_CINEMA")[:32]
             entry["text_quadrant"] = str(self.text_quadrant or "upper_left")[:24]
@@ -1010,9 +1013,9 @@ def fetch_curated_library_candidates(word='', *, excluded_photo_ids=()):
         return [candidate for candidate in pool.map(fetch, ids) if candidate]
 
 
-def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=3, word='', gloss='', thesis='',
+def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=6, word='', gloss='', thesis='',
         gemini_api_key=None, excluded_photo_ids=(), judge_model="gemini-3.8-flash", strict_errors=False):
-    """Fetch unique small thumbnails concurrently; judge all candidates in one request."""
+    """Fetch up to 18 unique thumbnails; judge in bounded batches of nine."""
     import httpx
     key = (access_key or os.environ.get('UNSPLASH_ACCESS_KEY', '')).strip()
     if not key:
@@ -1023,11 +1026,11 @@ def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=3, wor
         def search(query):
             try:
                 response = client.get('https://api.unsplash.com/search/photos', headers=headers,
-                    params={'query': query, 'per_page': min(3, max(1, int(per_page))),
+                    params={'query': query, 'per_page': min(6, max(1, int(per_page))),
                             'orientation': 'landscape', 'content_filter': 'high'})
                 if strict_errors and response.status_code != 200:
                     raise PhotoSearchUnavailable('Unsplash search unavailable')
-                return (response.json().get('results') or [])[:3] if response.status_code == 200 else []
+                return (response.json().get('results') or [])[:6] if response.status_code == 200 else []
             except (SpendBlocked, PhotoSearchUnavailable):
                 raise
             except Exception:
@@ -1058,8 +1061,11 @@ def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=3, wor
                     raise PhotoSearchUnavailable('Photo thumbnail unavailable') from None
                 return None
         with ThreadPoolExecutor(max_workers=9) as pool:
-            candidates = [candidate for candidate in pool.map(thumbnail, list(unique.values())[:9]) if candidate]
-    scores = _score_photo_batch(candidates, word=word, gloss=gloss, thesis=thesis, gemini_api_key=gemini_api_key, model_name=judge_model, strict_errors=strict_errors)
+            candidates = [candidate for candidate in pool.map(thumbnail, list(unique.values())[:18]) if candidate]
+    scores = []
+    for offset in range(0, len(candidates), 9):
+        scores.extend(_score_photo_batch(candidates[offset:offset + 9], word=word, gloss=gloss,
+            thesis=thesis, gemini_api_key=gemini_api_key, model_name=judge_model, strict_errors=strict_errors))
     return [dict(candidate, **score, _vision_verified=True) for candidate, score in zip(candidates, scores)]
 
 
@@ -1489,6 +1495,15 @@ def select_and_render_pulse_assets(
     scored_candidates = score_photos(effective_candidates)
     passing_candidates = [row for row in scored_candidates if row['safety_pass'] is True
         and row['semantic_alignment'] >= .70 and row['composite_score'] >= .68]
+    # Owner-approved exception is bound to one publication date, never safety.
+    best_safe_exception = False
+    if (requested_medium == 'photo' and not passing_candidates
+            and os.environ.get('ZEITGEIST_BEST_SAFE_PHOTO_DATE') == resolved_date):
+        passing_candidates = [row for row in scored_candidates if row['safety_pass'] is True]
+        best_safe_exception = bool(passing_candidates)
+        if best_safe_exception:
+            logger.warning('Owner-authorized best-safe photo selection: date=%s candidates=%d safe=%d',
+                           resolved_date, len(scored_candidates), len(passing_candidates))
     if requested_medium == 'photo' and not passing_candidates:
         logger.warning(
             'Photo selection rejected: candidates=%d safe=%d best_semantic=%.3f best_composite=%.3f',
@@ -1532,6 +1547,8 @@ def select_and_render_pulse_assets(
 
     if visual_medium == 'PHOTOGRAPHY' and chosen_cand is not None:
         selected_idx = int(chosen_cand['index'])
+        logger.warning('Selected photo: semantic=%.3f composite=%.3f best_safe_exception=%s',
+                       chosen_cand['semantic_alignment'], chosen_cand['composite_score'], best_safe_exception)
         composite_critic_score = float(chosen_cand['composite_score'])
         semantic_alignment_score = float(chosen_cand['semantic_alignment'])
         if chosen_cand.get('photo_id'):
@@ -1546,6 +1563,10 @@ def select_and_render_pulse_assets(
                 hero_img = Image.open(BytesIO(raw_bytes)).convert('RGB')
             elif isinstance(chosen_cand.get('pil_image'), Image.Image):
                 hero_img = chosen_cand['pil_image'].convert('RGB')
+
+    if best_safe_exception:
+        attribution['selection_policy'] = 'owner-approved-best-safe-photo'
+        attribution['selection_policy_date'] = resolved_date
 
     if requested_medium == "photo" and hero_img is None:
         raise ValueError("Accepted photograph has no decodable image; retain last publication")

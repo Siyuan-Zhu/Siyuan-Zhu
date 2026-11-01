@@ -54,6 +54,8 @@ jobs:
           ZEITGEIST_LIVE_LLM: "1"
           ZEITGEIST_LIVE_COLLECT: "1"
           ZEITGEIST_LIVE_UNSPLASH: "1"
+          # Owner-approved quality exception expires after this edition; safety remains mandatory.
+          ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-01"
           TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
           STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
           FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
@@ -102,6 +104,8 @@ jobs:
           ZEITGEIST_LIVE_LLM: "1"
           ZEITGEIST_LIVE_COLLECT: "1"
           ZEITGEIST_LIVE_UNSPLASH: "1"
+          # Owner-approved quality exception expires after this edition; safety remains mandatory.
+          ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-01"
           TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
           STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
           FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
