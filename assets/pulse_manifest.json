@@ -6,10 +6,10 @@
   "archetype": "STUDIO_MONOGRAPH",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "bbe03234db92ba1afb51393f838735e2b2d1012070eef3bd7daf01b5604d33e4",
-    "assets/daily_pulse_dark.webp": "4682e11072d02e576539e9e6175ec2f78db13f106886cee78de94f2ebcc92d23",
-    "assets/daily_pulse.svg": "0f3b772da89086f173fad398cf922da700483d7368ede16edea1cb585d43cec0",
+    "assets/daily_pulse_light.webp": "73116db809da244d1f3343127d828a3e727f0b5552e39d438bb26f23ed3bce52",
+    "assets/daily_pulse_dark.webp": "bfe196090b61336b00894d80a0f63bd55cc305a4acb32e0f0782ab1225f2a5ae",
+    "assets/daily_pulse.svg": "8ddbd49826b7872b6cb3775e6decf5bcf074dd557b151d44a82f1c882bef84db",
     "assets/pulse/2026-11-01.webp": "c7ff60cfae913b9c065e79b992066e8b238a438fc55ce023dca0a79a003f3ec3"
   },
-  "publication_id": "0003c118b83c22889ffa"
+  "publication_id": "15c81bf657ff79988af4"
 }
