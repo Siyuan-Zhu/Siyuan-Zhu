@@ -1490,6 +1490,12 @@ def select_and_render_pulse_assets(
     passing_candidates = [row for row in scored_candidates if row['safety_pass'] is True
         and row['semantic_alignment'] >= .70 and row['composite_score'] >= .68]
     if requested_medium == 'photo' and not passing_candidates:
+        logger.warning(
+            'Photo selection rejected: candidates=%d safe=%d best_semantic=%.3f best_composite=%.3f',
+            len(scored_candidates), sum(row['safety_pass'] is True for row in scored_candidates),
+            max((row['semantic_alignment'] for row in scored_candidates), default=0.0),
+            max((row['composite_score'] for row in scored_candidates), default=0.0),
+        )
         raise PhotoSelectionUnavailable('No safe, semantically accepted photograph available')
     chosen_cand = None
     visual_medium = 'BESPOKE_SVG'

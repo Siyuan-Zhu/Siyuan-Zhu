@@ -30,6 +30,22 @@ def photo(photo_id):
 SCORES = {'semantic_alignment': .9, 'compositional_clarity': .9, 'editorial_memorability': .9, 'safety_pass': True}
 
 
+@pytest.mark.parametrize('rows,expected', [
+    ([], 'candidates=0 safe=0 best_semantic=0.000'),
+    ([dict(SCORES, semantic_alignment=.4)], 'candidates=1 safe=1 best_semantic=0.400'),
+    ([dict(SCORES, safety_pass=False)], 'candidates=1 safe=0 best_semantic=0.000'),
+])
+def test_failed_photo_selection_reports_only_numeric_diagnostics(tmp_path, monkeypatch, caplog, rows, expected):
+    monkeypatch.setenv('ZEITGEIST_LIVE_UNSPLASH', '0')
+    with pytest.raises(vr.PhotoSelectionUnavailable):
+        vr.select_and_render_pulse_assets(
+            {'word': 'PRIVATE_WORD', 'gloss': 'PRIVATE_GLOSS'}, repo_root=tmp_path,
+            medium_history_30d=[], archetype_history_30d=[], candidates=rows,
+            requested_medium='photo', photo_history_30d=[])
+    assert expected in caplog.text
+    assert 'PRIVATE_WORD' not in caplog.text and 'PRIVATE_GLOSS' not in caplog.text
+
+
 def test_parallel_small_thumbnails_dedup_history_before_one_batch_judgment(monkeypatch):
     requests, batches = [], []
     active, maximum = 0, 0

@@ -1,5 +1,8 @@
 """Bounded editorial recovery; photographs first and guarded AI exceptions."""
+import logging
 from .visual_router import PhotoSelectionUnavailable
+
+logger = logging.getLogger(__name__)
 
 PHOTO_MEDIA = frozenset({'PHOTOGRAPHY','CURATED_PHOTO'})
 
@@ -30,10 +33,13 @@ def recover_visual(commission, *, render, revise, history, photo_required=False)
             return current, result, trace
         except PhotoSelectionUnavailable:
             trace.append({'phase':phase,'status':'no_qualifying_photo'})
+            logger.warning('Photo recovery phase=%s status=no_qualifying_photo', phase)
     if not photo_required and ai_exception_allowed(history):
         result = render(current, photo_only=False)
         trace.append({'phase':'bounded_ai_exception','status':'accepted'})
         return current, result, trace
+    logger.warning('Photo recovery exhausted: photo_required=%s ai_exception_allowed=%s history_count=%d',
+                   photo_required, ai_exception_allowed(history), len(history))
     raise PhotoSelectionUnavailable('Bounded photography and same-story revision attempts exhausted; no new publication')
 
 
