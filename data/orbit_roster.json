@@ -1,428 +1,428 @@
 {
-  "rss_o3_cursor": 2,
-  "updated_at": "2026-10-31T19:54:09.406502+00:00",
-  "state_version": 1,
+  "curated_o3_cursor": 4,
+  "rss_o3_cursor": 4,
+  "state_version": 5,
   "handles": {
-    "trinityjoyqueen": {
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "parent_sources": [
-        "o3_ig_christian_huff"
-      ],
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_remention_bonus_date": "2026-10-31",
-      "vitality_score": 0.5,
+    "benjamindane": {
       "status": "ACTIVE_O4_SCOUT",
-      "handle": "trinityjoyqueen",
-      "promoted": true,
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
       "decayed_score": 0.5,
-      "tier": "O4_SCOUT",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
+      "handle": "benjamindane",
+      "distinct_parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "promoted": true,
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "last_remention_bonus_date": "2026-11-01",
       "mention_count": 1,
-      "last_vitality_decay_date": "2026-10-31",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o3_ig_christian_huff"
-      ]
-    },
-    "brycecrawford": {
       "tier": "O4_SCOUT",
-      "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
+      "parent_sources": [
+        "o3_ig_kinfolk"
       ],
       "vitality_score": 0.5,
-      "last_vitality_decay_date": "2026-10-31",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "promoted": true,
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "status": "ACTIVE_O4_SCOUT",
-      "handle": "brycecrawford",
-      "last_remention_bonus_date": "2026-10-31",
-      "mention_count": 1,
-      "decayed_score": 0.5
-    },
-    "dsfaccini": {
-      "tier": "O4_SCOUT",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_vitality_decay_date": "2026-10-31",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "mention_count": 1,
-      "last_remention_bonus_date": "2026-10-31",
-      "parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "decayed_score": 0.5,
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "promoted": true,
-      "status": "ACTIVE_O4_SCOUT",
-      "handle": "dsfaccini",
-      "vitality_score": 0.5
-    },
-    "mekanbaymyradov": {
-      "vitality_score": 0.5,
-      "status": "ACTIVE_O4_SCOUT",
-      "distinct_parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "decayed_score": 0.5,
-      "handle": "mekanbaymyradov",
-      "last_vitality_decay_date": "2026-10-31",
-      "mention_count": 1,
-      "promoted": true,
-      "tier": "O4_SCOUT",
-      "parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_remention_bonus_date": "2026-10-31",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00"
-    },
-    "dafyy321": {
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "vitality_score": 0.5,
-      "last_vitality_decay_date": "2026-10-31",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "last_remention_bonus_date": "2026-10-31",
-      "parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "decayed_score": 0.5,
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "tier": "O4_SCOUT",
-      "mention_count": 1,
-      "handle": "dafyy321",
-      "promoted": true,
-      "status": "ACTIVE_O4_SCOUT"
-    },
-    "abercrombielacy": {
-      "handle": "abercrombielacy",
-      "last_remention_bonus_date": "2026-10-31",
-      "status": "ACTIVE_O4_SCOUT",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "tier": "O4_SCOUT",
-      "promoted": true,
-      "vitality_score": 0.5,
-      "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "mention_count": 1,
-      "last_vitality_decay_date": "2026-10-31",
-      "decayed_score": 0.5
-    },
-    "entertainmenttonight": {
-      "mention_count": 1,
-      "last_remention_bonus_date": "2026-10-31",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "decayed_score": 0.5,
-      "promoted": true,
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "tier": "O4_SCOUT",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "handle": "entertainmenttonight",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "status": "ACTIVE_O4_SCOUT",
-      "vitality_score": 0.5,
-      "last_vitality_decay_date": "2026-10-31",
-      "parent_sources": [
-        "o3_ig_legitsadierob"
-      ]
-    },
-    "douwem": {
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_remention_bonus_date": "2026-10-31",
-      "distinct_parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "last_vitality_decay_date": "2026-10-31",
-      "mention_count": 1,
-      "tier": "O4_SCOUT",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "status": "ACTIVE_O4_SCOUT",
-      "handle": "douwem",
-      "decayed_score": 0.5,
-      "vitality_score": 0.5,
-      "promoted": true,
-      "parent_sources": [
-        "o1_pydantic_releases"
-      ]
-    },
-    "whoathatsgoodpodcast": {
-      "last_vitality_decay_date": "2026-10-31",
-      "mention_count": 1,
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "decayed_score": 0.5,
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "promoted": true,
-      "tier": "O4_SCOUT",
-      "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "handle": "whoathatsgoodpodcast",
-      "status": "ACTIVE_O4_SCOUT",
-      "last_remention_bonus_date": "2026-10-31",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "vitality_score": 0.5
-    },
-    "josiahqueenmusic": {
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "vitality_score": 0.5,
-      "last_vitality_decay_date": "2026-10-31",
-      "tier": "O4_SCOUT",
-      "last_remention_bonus_date": "2026-10-31",
-      "promoted": true,
-      "status": "ACTIVE_O4_SCOUT",
-      "distinct_parent_sources": [
-        "o3_ig_christian_huff"
-      ],
-      "parent_sources": [
-        "o3_ig_christian_huff"
-      ],
-      "handle": "josiahqueenmusic",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "decayed_score": 0.5,
-      "mention_count": 1,
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00"
-    },
-    "tomfoxcatalog": {
-      "tier": "O4_SCOUT",
-      "last_remention_bonus_date": "2026-10-31",
-      "vitality_score": 0.5,
-      "parent_sources": [
-        "o2_dwarkesh_patel"
-      ],
-      "decayed_score": 0.5,
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "mention_count": 1,
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "promoted": true,
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o2_dwarkesh_patel"
-      ],
-      "last_vitality_decay_date": "2026-10-31",
-      "status": "ACTIVE_O4_SCOUT",
-      "handle": "tomfoxcatalog"
-    },
-    "mpfaffenberger": {
-      "status": "ACTIVE_O4_SCOUT",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "promoted": true,
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "handle": "mpfaffenberger",
-      "tier": "O4_SCOUT",
-      "last_vitality_decay_date": "2026-10-31",
-      "decayed_score": 0.5,
-      "vitality_score": 0.5,
-      "mention_count": 1,
-      "parent_sources": [
-        "o1_pydantic_releases"
-      ],
-      "last_remention_bonus_date": "2026-10-31",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00"
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01"
     },
     "dancingwiththestars": {
+      "last_mentioned_at": "2026-11-01T13:22:59.275650+00:00",
+      "decayed_score": 0.5,
+      "promoted": true,
+      "last_seen_utc": "2026-11-01T13:22:59.275650+00:00",
+      "status": "ACTIVE_O4_SCOUT",
+      "last_remention_bonus_date": "2026-11-01",
+      "distinct_parent_sources": [
+        "o3_ig_christian_huff"
+      ],
+      "handle": "dancingwiththestars",
+      "tier": "O4_SCOUT",
+      "first_seen_utc": "2026-11-01T13:22:59.275650+00:00",
+      "vitality_score": 0.5,
       "parent_sources": [
         "o3_ig_christian_huff"
       ],
-      "last_remention_bonus_date": "2026-10-31",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "vitality_score": 0.5,
-      "mention_count": 1,
-      "decayed_score": 0.5,
-      "distinct_parent_sources": [
-        "o3_ig_christian_huff"
-      ],
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "status": "ACTIVE_O4_SCOUT",
-      "promoted": true,
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "last_vitality_decay_date": "2026-10-31",
-      "tier": "O4_SCOUT",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "handle": "dancingwiththestars"
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "mention_count": 1
     },
-    "girlsgonebible": {
+    "camilla_greenwell": {
+      "last_vitality_decay_date": "2026-11-01",
+      "promoted": true,
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "mention_count": 1,
       "tier": "O4_SCOUT",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "distinct_parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "handle": "camilla_greenwell",
       "decayed_score": 0.5,
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "mention_count": 1,
-      "last_remention_bonus_date": "2026-10-31",
-      "promoted": true,
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "vitality_score": 0.5,
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_vitality_decay_date": "2026-10-31",
-      "status": "ACTIVE_O4_SCOUT",
-      "handle": "girlsgonebible",
       "parent_sources": [
-        "o3_ig_legitsadierob"
+        "o3_ig_kinfolk"
       ],
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00"
+      "status": "ACTIVE_O4_SCOUT",
+      "vitality_score": 0.5,
+      "last_remention_bonus_date": "2026-11-01",
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00"
     },
-    "realwilliebosshog": {
-      "promoted": true,
-      "last_vitality_decay_date": "2026-10-31",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
+    "child.studio": {
       "mention_count": 1,
+      "tier": "O4_SCOUT",
+      "promoted": true,
+      "last_vitality_decay_date": "2026-11-01",
+      "handle": "child.studio",
       "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
+        "o3_ig_kinfolk"
       ],
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "status": "ACTIVE_O4_SCOUT",
+      "vitality_score": 0.5,
+      "parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_remention_bonus_date": "2026-11-01",
       "decayed_score": 0.5,
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "last_remention_bonus_date": "2026-10-31",
-      "tier": "O4_SCOUT",
-      "handle": "realwilliebosshog",
-      "status": "ACTIVE_O4_SCOUT",
-      "vitality_score": 0.5,
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00"
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00"
     },
-    "stef.bare": {
+    "dsfaccini": {
+      "mention_count": 2,
       "tier": "O4_SCOUT",
-      "status": "ACTIVE_O4_SCOUT",
-      "handle": "stef.bare",
-      "last_remention_bonus_date": "2026-10-31",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_vitality_decay_date": "2026-10-31",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
       "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
-      ],
-      "parent_sources": [
-        "o3_ig_legitsadierob"
+        "o1_pydantic_releases"
       ],
       "promoted": true,
-      "mention_count": 1,
-      "vitality_score": 0.5,
-      "decayed_score": 0.5
+      "last_remention_bonus_date": "2026-11-01",
+      "status": "ACTIVE_O4_SCOUT",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "handle": "dsfaccini",
+      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "decayed_score": 0.5,
+      "parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "vitality_score": 0.63
     },
     "modelcontextprotocol": {
-      "decayed_score": 0.5,
-      "vitality_score": 0.5,
-      "last_vitality_decay_date": "2026-10-31",
-      "mention_count": 1,
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "distinct_parent_sources": [
-        "o1_mcp_releases"
-      ],
-      "parent_sources": [
-        "o1_mcp_releases"
-      ],
-      "last_remention_bonus_date": "2026-10-31",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
       "promoted": true,
+      "mention_count": 2,
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "status": "ACTIVE_O4_SCOUT",
       "handle": "modelcontextprotocol",
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "traegergrills": {
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "status": "ACTIVE_O4_SCOUT",
-      "promoted": true,
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "tier": "O4_SCOUT",
-      "handle": "traegergrills",
-      "last_remention_bonus_date": "2026-10-31",
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "mention_count": 1,
-      "decayed_score": 0.5,
-      "parent_sources": [
-        "o3_ig_christian_huff"
-      ],
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "last_vitality_decay_date": "2026-10-31",
       "distinct_parent_sources": [
-        "o3_ig_christian_huff"
+        "o1_mcp_releases"
       ],
-      "vitality_score": 0.5
-    },
-    "nickbarefitness": {
-      "decayed_score": 0.5,
+      "last_remention_bonus_date": "2026-11-01",
       "tier": "O4_SCOUT",
-      "mention_count": 1,
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "promoted": true,
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_vitality_decay_date": "2026-10-31",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
+      "vitality_score": 0.63,
       "parent_sources": [
-        "o3_ig_legitsadierob"
+        "o1_mcp_releases"
       ],
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "decayed_score": 0.5,
+      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00"
+    },
+    "arazytik": {
+      "status": "ACTIVE_O4_SCOUT",
+      "handle": "arazytik",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "decayed_score": 0.5,
+      "promoted": true,
+      "distinct_parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_remention_bonus_date": "2026-11-01",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
       "vitality_score": 0.5,
-      "handle": "nickbarefitness",
-      "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
+      "parent_sources": [
+        "o3_ig_kinfolk"
       ],
-      "last_remention_bonus_date": "2026-10-31",
+      "tier": "O4_SCOUT",
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "mention_count": 1
+    },
+    "josiahqueenmusic": {
+      "last_mentioned_at": "2026-11-01T13:22:59.275650+00:00",
+      "first_seen_utc": "2026-11-01T13:22:59.275650+00:00",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "vitality_score": 0.5,
+      "decayed_score": 0.5,
+      "distinct_parent_sources": [
+        "o3_ig_christian_huff"
+      ],
+      "last_seen_utc": "2026-11-01T13:22:59.275650+00:00",
+      "tier": "O4_SCOUT",
+      "parent_sources": [
+        "o3_ig_christian_huff"
+      ],
+      "last_remention_bonus_date": "2026-11-01",
+      "promoted": true,
+      "last_vitality_decay_date": "2026-11-01",
+      "handle": "josiahqueenmusic",
+      "mention_count": 1,
       "status": "ACTIVE_O4_SCOUT"
     },
-    "korie.robertson": {
-      "last_vitality_decay_date": "2026-10-31",
+    "emilyjaynemay": {
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "distinct_parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "decayed_score": 0.5,
+      "promoted": true,
+      "handle": "emilyjaynemay",
+      "vitality_score": 0.5,
+      "parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "last_remention_bonus_date": "2026-11-01",
+      "status": "ACTIVE_O4_SCOUT",
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "mention_count": 1,
+      "tier": "O4_SCOUT"
+    },
+    "mpfaffenberger": {
+      "tier": "O4_SCOUT",
+      "last_remention_bonus_date": "2026-11-01",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "decayed_score": 0.5,
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "distinct_parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "last_vitality_decay_date": "2026-11-01",
+      "promoted": true,
+      "vitality_score": 0.63,
+      "parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "status": "ACTIVE_O4_SCOUT",
+      "mention_count": 2,
+      "handle": "mpfaffenberger",
+      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00"
+    },
+    "douwem": {
+      "last_vitality_decay_date": "2026-11-01",
+      "decayed_score": 0.5,
+      "tier": "O4_SCOUT",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "promoted": true,
+      "last_remention_bonus_date": "2026-11-01",
+      "distinct_parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "vitality_score": 0.63,
+      "parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
+      "status": "ACTIVE_O4_SCOUT",
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "handle": "douwem",
+      "mention_count": 2
+    },
+    "tomfoxcatalog": {
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "distinct_parent_sources": [
+        "o2_dwarkesh_patel"
+      ],
+      "decayed_score": 0.5,
+      "last_remention_bonus_date": "2026-11-01",
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "handle": "tomfoxcatalog",
+      "status": "ACTIVE_O4_SCOUT",
+      "promoted": true,
+      "parent_sources": [
+        "o2_dwarkesh_patel"
+      ],
+      "vitality_score": 0.63,
+      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
+      "tier": "O4_SCOUT",
+      "mention_count": 2,
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00"
+    },
+    "abercrombielacy": {
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "tier": "O4_SCOUT",
+      "last_vitality_decay_date": "2026-11-01",
+      "decayed_score": 0.5,
+      "last_seen_utc": "2026-11-01T13:22:59.275650+00:00",
+      "handle": "abercrombielacy",
+      "last_mentioned_at": "2026-11-01T13:22:59.275650+00:00",
+      "status": "ACTIVE_O4_SCOUT",
+      "distinct_parent_sources": [
+        "o3_ig_legitsadierob"
+      ],
+      "mention_count": 1,
+      "vitality_score": 0.5,
+      "promoted": true,
       "parent_sources": [
         "o3_ig_legitsadierob"
       ],
-      "last_updated_utc": "2026-10-31T19:54:09.406502+00:00",
-      "tier": "O4_SCOUT",
-      "decayed_score": 0.5,
-      "promoted": true,
-      "status": "ACTIVE_O4_SCOUT",
-      "last_mentioned_at": "2026-10-31T19:54:09.406502+00:00",
-      "mention_count": 1,
-      "vitality_score": 0.5,
-      "handle": "korie.robertson",
-      "last_remention_bonus_date": "2026-10-31",
-      "last_seen_utc": "2026-10-31T19:54:09.406502+00:00",
-      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
+      "last_remention_bonus_date": "2026-11-01",
+      "first_seen_utc": "2026-11-01T13:22:59.275650+00:00"
+    },
+    "mekanbaymyradov": {
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "mention_count": 2,
       "distinct_parent_sources": [
-        "o3_ig_legitsadierob"
+        "o1_pydantic_releases"
+      ],
+      "promoted": true,
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "vitality_score": 0.63,
+      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
+      "last_remention_bonus_date": "2026-11-01",
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT",
+      "handle": "mekanbaymyradov",
+      "decayed_score": 0.5,
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00"
+    },
+    "alixelay": {
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "last_remention_bonus_date": "2026-11-01",
+      "decayed_score": 0.5,
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "promoted": true,
+      "vitality_score": 0.5,
+      "status": "ACTIVE_O4_SCOUT",
+      "parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "handle": "alixelay",
+      "mention_count": 1,
+      "distinct_parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "tier": "O4_SCOUT"
+    },
+    "clubkidmovie": {
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "decayed_score": 0.5,
+      "handle": "clubkidmovie",
+      "last_remention_bonus_date": "2026-11-01",
+      "status": "ACTIVE_O4_SCOUT",
+      "promoted": true,
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "vitality_score": 0.5,
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "parent_sources": [
+        "o3_ig_a24"
+      ],
+      "distinct_parent_sources": [
+        "o3_ig_a24"
+      ],
+      "tier": "O4_SCOUT",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "mention_count": 1,
+      "last_vitality_decay_date": "2026-11-01"
+    },
+    "dafyy321": {
+      "decayed_score": 0.5,
+      "tier": "O4_SCOUT",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "last_remention_bonus_date": "2026-11-01",
+      "distinct_parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "status": "ACTIVE_O4_SCOUT",
+      "first_seen_utc": "2026-10-31T19:54:09.406502+00:00",
+      "mention_count": 2,
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "handle": "dafyy321",
+      "parent_sources": [
+        "o1_pydantic_releases"
+      ],
+      "vitality_score": 0.63,
+      "promoted": true
+    },
+    "changyhao": {
+      "tier": "O4_SCOUT",
+      "last_vitality_decay_date": "2026-11-01",
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "status": "ACTIVE_O4_SCOUT",
+      "last_remention_bonus_date": "2026-11-01",
+      "decayed_score": 0.5,
+      "handle": "changyhao",
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "vitality_score": 0.5,
+      "parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "mention_count": 1,
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "promoted": true,
+      "distinct_parent_sources": [
+        "o3_ig_kinfolk"
       ]
+    },
+    "ali__morris__writes": {
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "tier": "O4_SCOUT",
+      "mention_count": 1,
+      "last_remention_bonus_date": "2026-11-01",
+      "decayed_score": 0.5,
+      "distinct_parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_vitality_decay_date": "2026-11-01",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "parent_sources": [
+        "o3_ig_kinfolk"
+      ],
+      "vitality_score": 0.5,
+      "status": "ACTIVE_O4_SCOUT",
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "promoted": true,
+      "handle": "ali__morris__writes"
+    },
+    "caradelevingne": {
+      "status": "ACTIVE_O4_SCOUT",
+      "handle": "caradelevingne",
+      "last_remention_bonus_date": "2026-11-01",
+      "promoted": true,
+      "last_vitality_decay_date": "2026-11-01",
+      "parent_sources": [
+        "o3_ig_a24"
+      ],
+      "decayed_score": 0.5,
+      "distinct_parent_sources": [
+        "o3_ig_a24"
+      ],
+      "vitality_score": 0.5,
+      "last_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "last_updated_utc": "2026-11-01T13:42:52.717886+00:00",
+      "first_seen_utc": "2026-11-01T12:41:46.816033+00:00",
+      "mention_count": 1,
+      "last_mentioned_at": "2026-11-01T12:41:46.816033+00:00",
+      "tier": "O4_SCOUT"
     }
   },
-  "curated_o3_cursor": 8
+  "updated_at": "2026-11-01T13:42:52.717886+00:00"
 }

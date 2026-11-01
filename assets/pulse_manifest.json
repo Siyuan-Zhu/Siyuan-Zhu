@@ -1,15 +1,15 @@
 {
   "version": 1,
-  "date": "2026-10-31",
-  "word": "Breach",
-  "gloss": "A fracture in the bedrock of digital trust.",
-  "archetype": "LITERARY_JOURNAL",
+  "date": "2026-11-01",
+  "word": "Insinuation",
+  "gloss": "Silent infiltration of trusted synthetic minds.",
+  "archetype": "STUDIO_MONOGRAPH",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "9d53e03a44edcfe77a720ba4fc51fc3a1615bcb4b0453614baf49e303b97a655",
-    "assets/daily_pulse_dark.webp": "207ce8de01139684df6aa5521aaeffb33b9c572507737255f5a7b4f6da564e93",
-    "assets/daily_pulse.svg": "8deaade7e595a2a0b165eab4b9c67386bc41c978e0c3226ed678b0bc91c94d3b",
-    "assets/pulse/2026-10-31.webp": "0151d06a215b994935aa4b2073a4ac67a71f700cbaf44e9e99b7bea82be85246"
+    "assets/daily_pulse_light.webp": "bbe03234db92ba1afb51393f838735e2b2d1012070eef3bd7daf01b5604d33e4",
+    "assets/daily_pulse_dark.webp": "4682e11072d02e576539e9e6175ec2f78db13f106886cee78de94f2ebcc92d23",
+    "assets/daily_pulse.svg": "0f3b772da89086f173fad398cf922da700483d7368ede16edea1cb585d43cec0",
+    "assets/pulse/2026-11-01.webp": "c7ff60cfae913b9c065e79b992066e8b238a438fc55ce023dca0a79a003f3ec3"
   },
-  "publication_id": "7b6d7b150f29cff0849e"
+  "publication_id": "0003c118b83c22889ffa"
 }

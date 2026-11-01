@@ -1,6 +1,6 @@
 {
-  "state_version": 0,
   "games_learned": 0,
-  "schema_version": 3,
-  "states": {}
+  "states": {},
+  "state_version": 0,
+  "schema_version": 3
 }
