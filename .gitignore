@@ -12,3 +12,6 @@ work/
 
 # Prepared publication recovery bytes (operator-only, never public).
 .publication-recovery/
+
+# Sanitized workflow observations are artifacts, not public profile state.
+.daily-outcomes/

@@ -24,6 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.build_readme import build_all_readmes
 from src.state_store import get_state_store
 from src.zeitgeist.adk_pipeline import run_daily_zeitgeist
+from src.zeitgeist.daily_outcomes import record_generation_failure
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -62,15 +63,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else datetime.now(timezone.utc).strftime("%Y-%m-%d")
     )
 
-    store = get_state_store(repo_root=target_root)
-    if hasattr(store, "reconcile_to_git"):
-        store.reconcile_to_git()
-
-    result = run_daily_zeitgeist(
-        repo_root=target_root,
-        date_iso=resolved_date,
-        prefer_visual_mode=args.prefer_visual_mode,
-    )
+    try:
+        store = get_state_store(repo_root=target_root)
+        if hasattr(store, "reconcile_to_git"):
+            store.reconcile_to_git()
+        result = run_daily_zeitgeist(
+            repo_root=target_root,
+            date_iso=resolved_date,
+            prefer_visual_mode=args.prefer_visual_mode,
+        )
+    except BaseException as error:
+        try:
+            record_generation_failure(target_root, error, os.environ)
+        except Exception:
+            pass  # Preserve the actual generation failure if observation fails.
+        raise
 
     # The orchestrator validates all README surfaces before canonical persistence.
 

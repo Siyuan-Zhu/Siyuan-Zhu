@@ -154,6 +154,7 @@ jobs:
       - name: Run Daily Zeitgeist Pipeline & Rebuild README
         id: digest
         env:
+          DAILY_TRIGGER_SCHEDULE: ${{ github.event.schedule }}
           COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
@@ -182,6 +183,7 @@ jobs:
           python3 scripts/refresh_daily_digest.py
 
       - name: Commit and Push with 3-Attempt Rebase Retry
+        id: publish
         if: steps.digest.outputs.publish_required == 'true'
         env:
           COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
@@ -197,8 +199,16 @@ jobs:
         run: |
           python3 scripts/publish_readme.py --message "chore(pulse): daily zeitgeist synthesis [skip ci]"
 
-      - name: Preserve public publication assets when a writer fails
-        if: failure()
+      - name: Finalize actual daily and Git publication outcomes
+        if: always()
+        env:
+          DAILY_TRIGGER_SCHEDULE: ${{ github.event.schedule }}
+          DAILY_DIGEST_OUTCOME: ${{ steps.digest.outcome }}
+          DAILY_PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: python3 scripts/complete_daily_outcome.py
+
+      - name: Preserve daily outcome and any publication recovery assets
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: publication-recovery-${{ github.run_id }}-${{ github.run_attempt }}
@@ -206,6 +216,7 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           path: |
+            .daily-outcomes/attempt.json
             .publication-recovery/*/assets/
             .publication-recovery/*/README.md
             .publication-recovery/*/variants/

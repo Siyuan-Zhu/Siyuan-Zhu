@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.state_store import get_state_store
+from src.zeitgeist.daily_outcomes import new_outcome, receipt_path, save_outcome, record_failure, observe_committed_publication
 from src.zeitgeist.publication import verify_current_pulse, verify_publication_bundle
 
 
@@ -44,29 +45,57 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
     if now.tzinfo is None:
         raise ValueError('An aware clock is required')
     target_date = now.astimezone(ZoneInfo('America/New_York')).date()
-    store = store if store is not None else get_state_store(
-        repo_root=root, backend='firestore',
-        collection_prefix=env.get('FIRESTORE_COLLECTION_PREFIX', ''))
-    due = publication_due(root, store, target_date)
+    outcome = new_outcome(env, now, target_date)
+    receipt = receipt_path(root, env)
+    save_outcome(receipt, outcome)
     output = env.get('GITHUB_OUTPUT')
-    # Default deny publication, including failures before generation completes.
+    # Deny publication even if readiness fails before generation starts.
     if output:
         with open(output, 'a', encoding='utf-8') as stream:
             stream.write('publish_required=false\n')
-    if not due:
-        print(json.dumps({'status': 'already_current', 'date': str(target_date),
-                          'generation_calls': 0}))
-        return False
-    if env.get('SPEND_POLICY_SHA256'):
-        runner([sys.executable, 'scripts/maintain_spend_control.py', '--apply'],
+    try:
+        store = store if store is not None else get_state_store(
+            repo_root=root, backend='firestore',
+            collection_prefix=env.get('FIRESTORE_COLLECTION_PREFIX', ''))
+        due = publication_due(root, store, target_date)
+        identity = json.loads((Path(root) / 'assets/pulse_manifest.json').read_text())['publication_id']
+        outcome.update(publication_id=identity, previous_publication_id=identity)
+        if not due:
+            outcome.update(status='already_current', canonical_commit='not_required',
+                           git_publication='not_required', recovery_action='none')
+            save_outcome(receipt, outcome)
+            print(json.dumps({'status': 'already_current', 'date': str(target_date),
+                              'generation_calls': 0}))
+            return False
+        if env.get('SPEND_POLICY_SHA256'):
+            outcome['stage'] = 'spend_maintenance'
+            save_outcome(receipt, outcome)
+            runner([sys.executable, 'scripts/maintain_spend_control.py', '--apply'],
+                   cwd=root, check=True)
+        outcome['stage'] = 'generation'
+        save_outcome(receipt, outcome)
+        runner([sys.executable, 'scripts/run_zeitgeist.py', '--date', str(target_date)],
                cwd=root, check=True)
-    runner([sys.executable, 'scripts/run_zeitgeist.py', '--date', str(target_date)],
-           cwd=root, check=True)
-    runner([sys.executable, 'scripts/build_readme.py'], cwd=root, check=True)
-    if output:
-        with open(output, 'a', encoding='utf-8') as stream:
-            stream.write('publish_required=true\n')
-    return True
+        observe_committed_publication(root, store, outcome)
+        outcome['stage'] = 'readme_build'
+        save_outcome(receipt, outcome)
+        runner([sys.executable, 'scripts/build_readme.py'], cwd=root, check=True)
+        outcome.update(stage='publication', status='awaiting_publication',
+                       recovery_action='reconcile_retained_publication'
+                       if outcome['canonical_commit'] == 'committed' else 'inspect_canonical_outcome')
+        outcome['publication_id'] = json.loads(
+            (Path(root) / 'assets/pulse_manifest.json').read_text())['publication_id']
+        save_outcome(receipt, outcome)
+        if output:
+            with open(output, 'a', encoding='utf-8') as stream:
+                stream.write('publish_required=true\n')
+        return True
+    except BaseException as error:
+        try:
+            record_failure(root, receipt, outcome, error, store=store)
+        except Exception:
+            pass  # A failed observer must not replace the actual failure.
+        raise
 
 
 if __name__ == '__main__':
