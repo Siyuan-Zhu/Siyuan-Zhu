@@ -24,13 +24,21 @@ def accepted(tmp_path, monkeypatch):
         shutil.copytree(ROOT / name, tmp_path / name)
     for name in ('README.md', 'PROJECTS.md'):
         shutil.copy2(ROOT / name, tmp_path / name)
-    entry = json.loads((ROOT / 'data/zeitgeist_state.json').read_text())['published_pulse']
-    entry.update(date='2026-11-01', word='Still', gloss='A quieter signal.',
-                 visual_medium='PHOTOGRAPHY', curatorial_archetype='STUDIO_MONOGRAPH',
+    # Author one complete legacy photography edition; live publications may
+    # carry a different medium and unrelated correction/provenance metadata.
+    entry = dict(schema_version='2.0', date='2026-11-01', word='Still', gloss='A quieter signal.',
+                 visual_medium='PHOTOGRAPHY', visual_tier_used='PHOTOGRAPHY',
+                 curatorial_archetype='STUDIO_MONOGRAPH',
                  fallback_webp_path='assets/pulse/2026-11-01.webp',
-                 unsplash_photographer='Fixture', artwork_artist='Fixture',
+                 unsplash_photographer='Fixture', artwork_artist='Fixture', artwork_source='Unsplash',
+                 image_url='https://example.com/fixture-photo', artwork_url='https://example.com/fixture-photo',
+                 unsplash_profile_url='https://example.com/fixture-photographer',
                  photo_selection_policy='owner-approved-best-safe-photo',
-                 photo_selection_policy_date='2026-11-01')
+                 photo_selection_policy_date='2026-11-01',
+                 published_at='2026-11-01T09:00:00Z', updated_at='2026-11-01T09:00:00Z',
+                 mood_votes={'spot_on':2,'too_sunny':0,'too_heavy':0})
+    Image.new('RGB', (1200, 800), 'blue').save(
+        tmp_path / entry['fallback_webp_path'], format='WEBP', quality=85)
     for theme in ('light', 'dark'):
         image = compositor._render_studio_monograph_plate(Image.new('RGB', (1200, 800), 'blue'),
             word=entry['word'], gloss=entry['gloss'], date_str=entry['date'],

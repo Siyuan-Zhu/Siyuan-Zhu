@@ -152,6 +152,29 @@ def test_same_day_accepted_art_change_refreshes_all_daily_image_urls(tmp_path):
     from PIL import Image
     from src.zeitgeist.publication import write_publication_manifest
     root, store = _accepted_publication(tmp_path)
+    # This cache-identity case owns a complete synthetic edition, independent
+    # of the current publication's medium and optional provenance/corrections.
+    entry = dict(schema_version='2.0', date='2026-11-01', word='Still', gloss='A quieter signal.',
+                 visual_medium='PHOTOGRAPHY', visual_tier_used='PHOTOGRAPHY',
+                 curatorial_archetype='STUDIO_MONOGRAPH',
+                 fallback_webp_path='assets/pulse/2026-11-01.webp',
+                 published_at='2026-11-01T09:00:00Z', updated_at='2026-11-01T09:00:00Z',
+                 mood_votes={'spot_on':2,'too_sunny':0,'too_heavy':0})
+    for path in ('assets/daily_pulse_light.webp', 'assets/daily_pulse_dark.webp', entry['fallback_webp_path']):
+        Image.new('RGB', (1200, 800), 'blue').save(root / path, format='WEBP', quality=85)
+    (root / 'assets/daily_pulse.svg').write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" data-publication-layout="curatorial">'
+        '<metadata id="mood-votes">{}</metadata><rect width="1200" height="800" fill="blue"/></svg>')
+    fixture = write_publication_manifest(root, date=entry['date'], word=entry['word'],
+        gloss=entry['gloss'], archetype=entry['curatorial_archetype'], medium=entry['visual_medium'],
+        archive_path=entry['fallback_webp_path'])
+    entry['publication_id'] = fixture['publication_id']
+    (root / 'data/zeitgeist_state.json').write_text(json.dumps(dict(
+        date=entry['date'], word=entry['word'], gloss=entry['gloss'],
+        visual_medium=entry['visual_medium'], curatorial_archetype=entry['curatorial_archetype'],
+        publication_id=entry['publication_id'], published_pulse=entry,
+        visitor_mood_tally=entry['mood_votes'])))
+    (root / 'data/pulse_feed.json').write_text(json.dumps({'entries':[entry]}))
     written = build_readme.build_all_readmes(root, state_store=store)
     before = {}
     for name, path in written.items():
