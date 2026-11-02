@@ -1,111 +1,31 @@
 {
-  "visitor_mood_tally": {
+  "curatorial_archetype": "STUDIO_MONOGRAPH",
+  "published_at": "2026-11-01T13:43:36.796507Z",
+  "visual_medium": "PHOTOGRAPHY",
+  "schema_version": 3,
+  "archetype_history_30d": [
+    "STUDIO_MONOGRAPH",
+    "LITERARY_JOURNAL",
+    "POETIC_CINEMA"
+  ],
+  "mood_votes": {
     "spot_on": 0,
     "too_sunny": 0,
     "too_heavy": 0
   },
-  "published_pulse": {
-    "gloss": "Silent infiltration of trusted synthetic minds.",
-    "commissioned_thesis": "Security researchers demonstrate that a harmless shared link can silently commandeer authenticated AI sessions, turning familiar generative conversational interfaces into unwitting vectors of systemic infiltration.",
-    "24h_shift": 0.24,
-    "word": "Insinuation",
-    "published_at": "2026-11-01T13:43:36.796507Z",
-    "date": "2026-11-01",
-    "artwork_title": "Insinuation",
-    "unsplash_profile_url": "https://unsplash.com/@ricvath",
-    "headline": "Insinuation \u2014 Silent infiltration of trusted synthetic minds.",
-    "runner_up_clusters": [],
-    "mood_votes": {
-      "spot_on": 0,
-      "too_sunny": 0,
-      "too_heavy": 0
-    },
-    "visual_medium": "PHOTOGRAPHY",
-    "summary": "Security researchers demonstrate that a harmless shared link can silently commandeer authenticated AI sessions, turning familiar generative conversational interfaces into unwitting vectors of systemic infiltration.",
-    "window_hours": 96,
-    "artwork_source": "Unsplash",
-    "photo_selection_policy": "owner-approved-best-safe-photo",
-    "fallback_webp_path": "assets/pulse/2026-11-01.webp",
-    "quote": "Silent infiltration of trusted synthetic minds.",
-    "orbit_sources_matched": [],
-    "macro_contribution_pct": 38.0,
-    "top_orbit_themes": [
-      "chatgpt",
-      "openai",
-      "hacker",
-      "code",
-      "code logged-in"
-    ],
-    "artwork_url": "https://unsplash.com/photos/WOA3QKFjlo8",
-    "publication_id": "15c81bf657ff79988af4",
-    "unsplash_photographer": "Richard Horvath",
-    "schema_version": "2.0",
-    "image_data_uri": "",
-    "quote_attribution": "Editorial Director Synthesis",
-    "orbit_contribution_pct": 62.0,
-    "top_macro_themes": [
-      "chatgpt",
-      "openai",
-      "hacker",
-      "code",
-      "code logged-in"
-    ],
-    "dominant_category": "AI & Distributed Systems",
-    "critic_scores": {
-      "semantic_alignment": 0.68,
-      "composite": 0.679
-    },
-    "image_url": "https://unsplash.com/photos/WOA3QKFjlo8",
-    "photo_selection_policy_date": "2026-11-01",
-    "flux_model": null,
-    "orbit_weight_ratio": 0.62,
-    "updated_at": "2026-11-01T13:43:36.796507Z",
-    "cluster_keywords": [
-      "chatgpt",
-      "openai",
-      "hacker",
-      "code",
-      "code logged-in"
-    ],
-    "artwork_artist": "Richard Horvath",
-    "visual_tier_used": "PHOTOGRAPHY",
-    "dominant_signal_type": "HYBRID"
-  },
-  "analysis": {
-    "valence": 60.4,
-    "explanation_phrase": "Silent infiltration of trusted synthetic minds.",
-    "is_builder_systems_day": true,
-    "date_iso": "2026-11-01",
-    "composite_score": 66.8,
-    "dominant_keywords": "('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol', 'putin', 'pool', 'protests')",
-    "epistemic_tension": 54.9,
-    "interjection_applied": false,
-    "visual_concrete_anchor": "A glowing spectral filament subtly weaving through dark, translucent circuit glass",
-    "dominance": 64.0,
-    "word_of_the_day": "Insinuation",
-    "arousal": 53.0,
-    "lens_breakdown": "({'lens_id': 'personal_orbit', 'label': 'Personal Orbit (Creators, Builders, Regions & Communities)', 'weight': 0.4, 'valence': 60.4, 'arousal': 55.7, 'dominance': 66.1, 'epistemic_tension': 58.9, 'composite_index': 69.9, 'top_terms': ('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol')}, {'lens_id': 'global_macro', 'label': 'Global & Civic Macro', 'weight': 0.25, 'valence': 50.0, 'arousal': 50.0, 'dominance': 50.0, 'epistemic_tension': 50.0, 'composite_index': 50.0, 'top_terms': ()}, {'lens_id': 'markets_finops', 'label': 'Capital Markets & Real-Economy Liquidity', 'weight': 0.2, 'valence': 67.1, 'arousal': 48.1, 'dominance': 67.1, 'epistemic_tension': 51.9, 'composite_index': 73.5, 'top_terms': ('putin', 'pool', 'protests', 'europe', 'bus')}, {'lens_id': 'ai_builders', 'label': 'Open-Source Systems & AI Engineering', 'weight': 0.15, 'valence': 69.1, 'arousal': 57.6, 'dominance': 77.6, 'epistemic_tension': 56.6, 'composite_index': 77.7, 'top_terms': ('luggage', 'caps', 'binance', 'comments', 'glp-')})",
-    "personal_note": null
-  },
-  "word": "Insinuation",
-  "gloss": "Silent infiltration of trusted synthetic minds.",
-  "text_quadrant": "margin_bottom",
   "commission": {
-    "fallback_used": false,
-    "imagen_commission_prompt": "Cinematic macro shot of an intricate dark obsidian glass monolith being threaded through by a delicate, venomous emerald light filament, high tech surveillance abstraction, minimalist, 8k, moody lighting, editorial tech aesthetics",
-    "visual_anchor": "A glowing spectral filament subtly weaving through dark, translucent circuit glass",
-    "unsplash_queries": [
-      "dark glass refraction",
-      "cyber security abstract",
-      "glowing digital thread"
-    ],
-    "gloss": "Silent infiltration of trusted synthetic minds.",
     "flux_3_commission_prompts": [
       "Cinematic macro shot of an intricate dark obsidian glass monolith being threaded through by a delicate, venomous emerald light filament, high tech surveillance abstraction, minimalist, 8k, moody lighting, editorial tech aesthetics. Calm negative space in upper-left quadrant, 3:2 editorial photography, 35mm film grain.",
       "Quiet atmospheric study of A glowing spectral filament subtly weaving through dark, translucent circuit glass, minimalist gallery composition, natural directional light, 3:2 aspect ratio.",
       "Fine-art architectural monograph plate of A glowing spectral filament subtly weaving through dark, translucent circuit glass, subtle tonal gradation, zero text overlay, 3:2 format."
     ],
-    "commissioned_thesis": "Security researchers demonstrate that a harmless shared link can silently commandeer authenticated AI sessions, turning familiar generative conversational interfaces into unwitting vectors of systemic infiltration.",
+    "unsplash_queries": [
+      "dark glass refraction",
+      "cyber security abstract",
+      "glowing digital thread"
+    ],
+    "visual_anchor": "A glowing spectral filament subtly weaving through dark, translucent circuit glass",
+    "word": "Insinuation",
     "palette_hex": [
       "#0B0E14",
       "#16222F",
@@ -113,113 +33,193 @@
       "#38EF7D",
       "#E2E8F0"
     ],
-    "selected_cluster_id": "cluster_15",
+    "imagen_commission_prompt": "Cinematic macro shot of an intricate dark obsidian glass monolith being threaded through by a delicate, venomous emerald light filament, high tech surveillance abstraction, minimalist, 8k, moody lighting, editorial tech aesthetics",
+    "commissioned_thesis": "Security researchers demonstrate that a harmless shared link can silently commandeer authenticated AI sessions, turning familiar generative conversational interfaces into unwitting vectors of systemic infiltration.",
     "attempts_used": 1,
-    "word": "Insinuation"
+    "fallback_used": false,
+    "selected_cluster_id": "cluster_15",
+    "gloss": "Silent infiltration of trusted synthetic minds."
   },
-  "schema_version": 3,
-  "archetype_history_30d": [
-    "STUDIO_MONOGRAPH",
-    "LITERARY_JOURNAL",
-    "POETIC_CINEMA"
-  ],
-  "curatorial_archetype": "STUDIO_MONOGRAPH",
-  "telemetry": {
-    "model_id": "gemini-3.8-flash",
-    "estimated_output_tokens": null,
-    "collection_health": {
-      "live_item_count": 1096,
-      "cache_item_count": 405,
-      "instagram_normalized_post_count": 31,
-      "orbit_source_count": 33,
-      "mode": "live",
-      "reference_time": "2026-11-01T13:42:52.717886+00:00",
-      "required_coverage": {
-        "min_orbit_sources": 6,
-        "required_orbit_tiers": [
-          "O1",
-          "O2",
-          "O3"
-        ],
-        "min_macro_sources": 6,
-        "required_macro_tiers": [
-          "M1",
-          "M2",
-          "M3"
-        ]
-      },
-      "instagram_item_count": 70,
-      "macro_item_count": 187,
-      "fresh_items_by_tier": {
-        "O2": 57,
-        "O3": 93,
-        "M2": 58,
-        "M3": 77,
-        "M4_SCOUT": 15,
-        "O4_SCOUT": 18,
-        "O1": 52,
-        "M1": 37
-      },
-      "embedding_eligible_item_count": 407,
-      "instagram_unavailable_reasons": {
-        "not_found": 2,
-        "no_items": 7
-      },
-      "nonsocial_macro_source_count": 25,
-      "instagram": "live",
-      "orbit_item_count": 220,
-      "instagram_verified_collaboration_record_count": 4,
-      "publishable": true,
-      "instagram_fetched_successfully": true,
-      "instagram_unavailable_handle_count": 9,
-      "nonsocial_orbit_source_count": 17,
-      "curated_item_count": 1056,
-      "discarded_before_embedding_count": 756,
-      "instagram_requested_handle_count": 16,
-      "macro_source_count": 27,
-      "instagram_degraded": true,
-      "seeded": false,
-      "apify_batch_succeeded": true,
-      "instagram_skipped_record_count": 9,
-      "instagram_dataset_record_count": 41
-    },
-    "estimated_input_tokens": null,
-    "within_budget": false,
-    "timestamp_utc": "2026-11-01T13:43:36Z",
-    "estimated_monthly_cost_index": null,
-    "spending_status": "unknown_pending_billing_reconciliation",
-    "monthly_budget_ceiling_index": 2.5,
-    "adk_mode": "google-adk-live"
-  },
-  "publication_id": "15c81bf657ff79988af4",
+  "date_iso": "2026-11-01",
+  "text_quadrant": "margin_bottom",
   "date": "2026-11-01",
-  "mood_votes": {
+  "published_pulse": {
+    "artwork_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "top_orbit_themes": [
+      "chatgpt",
+      "openai",
+      "hacker",
+      "code",
+      "code logged-in"
+    ],
+    "commissioned_thesis": "Security researchers demonstrate that a harmless shared link can silently commandeer authenticated AI sessions, turning familiar generative conversational interfaces into unwitting vectors of systemic infiltration.",
+    "window_hours": 96,
+    "dominant_category": "AI & Distributed Systems",
+    "fallback_webp_path": "assets/pulse/2026-11-01.webp",
+    "mood_votes": {
+      "spot_on": 0,
+      "too_sunny": 0,
+      "too_heavy": 0
+    },
+    "artwork_artist": "Richard Horvath",
+    "photo_selection_policy": "owner-approved-best-safe-photo",
+    "top_macro_themes": [
+      "chatgpt",
+      "openai",
+      "hacker",
+      "code",
+      "code logged-in"
+    ],
+    "summary": "Security researchers demonstrate that a harmless shared link can silently commandeer authenticated AI sessions, turning familiar generative conversational interfaces into unwitting vectors of systemic infiltration.",
+    "flux_model": null,
+    "image_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "artwork_title": "Insinuation",
+    "visual_tier_used": "PHOTOGRAPHY",
+    "date": "2026-11-01",
+    "artwork_source": "Unsplash",
+    "orbit_weight_ratio": 0.62,
+    "photo_selection_policy_date": "2026-11-01",
+    "image_data_uri": "",
+    "orbit_contribution_pct": 62.0,
+    "orbit_sources_matched": [],
+    "updated_at": "2026-11-01T13:43:36.796507Z",
+    "headline": "Insinuation \u2014 Silent infiltration of trusted synthetic minds.",
+    "gloss": "Silent infiltration of trusted synthetic minds.",
+    "publication_id": "15c81bf657ff79988af4",
+    "schema_version": "2.0",
+    "macro_contribution_pct": 38.0,
+    "dominant_signal_type": "HYBRID",
+    "unsplash_photographer": "Richard Horvath",
+    "quote_attribution": "Editorial Director Synthesis",
+    "word": "Insinuation",
+    "quote": "Silent infiltration of trusted synthetic minds.",
+    "24h_shift": 0.24,
+    "runner_up_clusters": [],
+    "unsplash_profile_url": "https://unsplash.com/@ricvath",
+    "published_at": "2026-11-01T13:43:36.796507Z",
+    "visual_medium": "PHOTOGRAPHY",
+    "cluster_keywords": [
+      "chatgpt",
+      "openai",
+      "hacker",
+      "code",
+      "code logged-in"
+    ],
+    "critic_scores": {
+      "semantic_alignment": 0.68,
+      "composite": 0.679
+    }
+  },
+  "visitor_mood_tally": {
     "spot_on": 0,
     "too_sunny": 0,
     "too_heavy": 0
   },
+  "word": "Insinuation",
   "recent_words": [
     "INSINUATION",
     "BREACH",
     "ABSORPTION"
   ],
-  "updated_at": "2026-11-01T13:43:36.796507Z",
-  "state_version": 4,
-  "visual_decision": {
+  "publication_id": "15c81bf657ff79988af4",
+  "telemetry": {
+    "estimated_input_tokens": null,
+    "adk_mode": "google-adk-live",
+    "collection_health": {
+      "live_item_count": 1096,
+      "seeded": false,
+      "instagram_fetched_successfully": true,
+      "instagram": "live",
+      "nonsocial_macro_source_count": 25,
+      "discarded_before_embedding_count": 756,
+      "instagram_skipped_record_count": 9,
+      "instagram_item_count": 70,
+      "instagram_dataset_record_count": 41,
+      "orbit_item_count": 220,
+      "fresh_items_by_tier": {
+        "O4_SCOUT": 18,
+        "M4_SCOUT": 15,
+        "O2": 57,
+        "O3": 93,
+        "M3": 77,
+        "M1": 37,
+        "O1": 52,
+        "M2": 58
+      },
+      "macro_item_count": 187,
+      "instagram_degraded": true,
+      "mode": "live",
+      "macro_source_count": 27,
+      "instagram_unavailable_handle_count": 9,
+      "reference_time": "2026-11-01T13:42:52.717886+00:00",
+      "cache_item_count": 405,
+      "instagram_requested_handle_count": 16,
+      "orbit_source_count": 33,
+      "embedding_eligible_item_count": 407,
+      "instagram_verified_collaboration_record_count": 4,
+      "instagram_normalized_post_count": 31,
+      "publishable": true,
+      "curated_item_count": 1056,
+      "apify_batch_succeeded": true,
+      "nonsocial_orbit_source_count": 17,
+      "instagram_unavailable_reasons": {
+        "no_items": 7,
+        "not_found": 2
+      },
+      "required_coverage": {
+        "min_orbit_sources": 6,
+        "required_macro_tiers": [
+          "M1",
+          "M2",
+          "M3"
+        ],
+        "required_orbit_tiers": [
+          "O1",
+          "O2",
+          "O3"
+        ],
+        "min_macro_sources": 6
+      }
+    },
+    "monthly_budget_ceiling_index": 2.5,
+    "timestamp_utc": "2026-11-01T13:43:36Z",
+    "model_id": "gemini-3.8-flash",
+    "estimated_output_tokens": null,
+    "estimated_monthly_cost_index": null,
+    "within_budget": false,
+    "spending_status": "unknown_pending_billing_reconciliation"
+  },
+  "analysis": {
+    "epistemic_tension": 54.9,
+    "arousal": 53.0,
+    "dominance": 64.0,
+    "composite_score": 66.8,
+    "lens_breakdown": "({'lens_id': 'personal_orbit', 'label': 'Personal Orbit (Creators, Builders, Regions & Communities)', 'weight': 0.4, 'valence': 60.4, 'arousal': 55.7, 'dominance': 66.1, 'epistemic_tension': 58.9, 'composite_index': 69.9, 'top_terms': ('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol')}, {'lens_id': 'global_macro', 'label': 'Global & Civic Macro', 'weight': 0.25, 'valence': 50.0, 'arousal': 50.0, 'dominance': 50.0, 'epistemic_tension': 50.0, 'composite_index': 50.0, 'top_terms': ()}, {'lens_id': 'markets_finops', 'label': 'Capital Markets & Real-Economy Liquidity', 'weight': 0.2, 'valence': 67.1, 'arousal': 48.1, 'dominance': 67.1, 'epistemic_tension': 51.9, 'composite_index': 73.5, 'top_terms': ('putin', 'pool', 'protests', 'europe', 'bus')}, {'lens_id': 'ai_builders', 'label': 'Open-Source Systems & AI Engineering', 'weight': 0.15, 'valence': 69.1, 'arousal': 57.6, 'dominance': 77.6, 'epistemic_tension': 56.6, 'composite_index': 77.7, 'top_terms': ('luggage', 'caps', 'binance', 'comments', 'glp-')})",
     "explanation_phrase": "Silent infiltration of trusted synthetic minds.",
-    "composite_score": 0.679,
-    "credit_url": "https://unsplash.com/photos/WOA3QKFjlo8",
-    "semantic_alignment": 0.68,
-    "selected_mode": "CURATED_PHOTO",
-    "safety_pass": true,
+    "date_iso": "2026-11-01",
+    "is_builder_systems_day": true,
+    "visual_concrete_anchor": "A glowing spectral filament subtly weaving through dark, translucent circuit glass",
+    "valence": 60.4,
+    "dominant_keywords": "('langgraph', 'sdk-py', 'bit', 'http', 'modelcontextprotocol', 'putin', 'pool', 'protests')",
+    "word_of_the_day": "Insinuation",
+    "personal_note": null,
+    "interjection_applied": false
+  },
+  "visual_decision": {
     "image_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "explanation_phrase": "Silent infiltration of trusted synthetic minds.",
+    "word_of_the_day": "Insinuation",
+    "semantic_alignment": 0.68,
+    "safety_pass": true,
     "local_svg_path": "assets/daily_pulse.svg",
     "rationale": "Single v3 publication; compatibility fields derived from the selected artwork",
+    "composite_score": 0.679,
+    "credit_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "selected_mode": "CURATED_PHOTO",
     "credit_label": "Richard Horvath",
-    "minimalist_restraint": 0.679,
-    "word_of_the_day": "Insinuation"
+    "minimalist_restraint": 0.679
   },
-  "published_at": "2026-11-01T13:43:36.796507Z",
-  "visual_medium": "PHOTOGRAPHY",
-  "date_iso": "2026-11-01"
+  "state_version": 4,
+  "gloss": "Silent infiltration of trusted synthetic minds.",
+  "updated_at": "2026-11-01T13:43:36.796507Z"
 }
