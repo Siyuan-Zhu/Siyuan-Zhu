@@ -10,14 +10,12 @@ from src.zeitgeist.public_schema import validate_editorial_entry
 from src.zeitgeist.publication_commit import publish_bundle
 from tests.test_firestore_store import _RecordingFirestoreClient
 from tests.test_public_editorial_contract import current_entry
+from tests.test_publication_atomic_commit import WireFirestore
 
 
-@pytest.mark.parametrize('old_medium,new_medium', [
-    ('DIGITAL_ARTWORK', 'PHOTOGRAPHY'),
-    ('PHOTOGRAPHY', 'PHOTOGRAPHY'),
-    ('PHOTOGRAPHY', 'UNVERIFIED_IMAGE'),
-])
-def test_new_edition_replaces_scoped_metadata_after_firestore_merge(old_medium, new_medium):
+@pytest.mark.parametrize('old_medium', ['PHOTOGRAPHY', 'DIGITAL_ARTWORK', 'UNVERIFIED_IMAGE'])
+@pytest.mark.parametrize('new_medium', ['PHOTOGRAPHY', 'DIGITAL_ARTWORK', 'UNVERIFIED_IMAGE'])
+def test_new_edition_replaces_scoped_metadata_after_firestore_merge(monkeypatch, old_medium, new_medium):
     old = current_entry()
     if old_medium == 'DIGITAL_ARTWORK':
         old.update(visual_medium=old_medium,
@@ -25,22 +23,42 @@ def test_new_edition_replaces_scoped_metadata_after_firestore_merge(old_medium, 
             media_correction={'kind':'source_medium_correction',
                 'original_publication_id':'11111111111111111111',
                 'original_visual_medium':'PHOTOGRAPHY'})
+    elif old_medium == 'UNVERIFIED_IMAGE':
+        old.update(visual_medium=old_medium,
+            media_provenance=unsplash_evidence({'id':'fixture-uncertain'}))
+        old.pop('photo_selection_policy')
+        old.pop('photo_selection_policy_date')
+    old['release_republication'] = {
+        'kind':'initial_release_republication',
+        'original_publication_id':'33333333333333333333',
+        'original_publication_date':'2026-10-31',
+        'original_published_at':'2026-10-31T00:00:00Z',
+        'new_inference_performed':False, 'artwork_reused_byte_exact':True}
     validate_editorial_entry(old)
     previous = dict(copy.deepcopy(old), published_pulse=copy.deepcopy(old),
         visitor_mood_tally=copy.deepcopy(old['mood_votes']),
         retained_private_evidence={'keep':'private evidence is not an edition label'})
-    client = _RecordingFirestoreClient()
-    client.docs.update({'profile_state/daily_pulse':previous,
+    # Exercise the real REST adapter and its updateMask/CAS request. The wire
+    # fixture applies partial updates, preserving omitted fields as Firestore does.
+    wire = WireFirestore(monkeypatch, {'profile_state/daily_pulse':previous,
         'pulse_history/2026-11-01':copy.deepcopy(old),
         'pulse_feed/v1':{'entries':[copy.deepcopy(old)]}})
-    store = FirestoreStateStore(client=client, canonical_only=True)
+    store = FirestoreStateStore(client=wire.client, canonical_only=True)
     entry = current_entry()
     for key in ('photo_selection_policy','photo_selection_policy_date'):
         entry.pop(key)
     entry.update(date='2026-11-02', publication_id='22222222222222222222',
-        visual_medium=new_medium)
-    entry['media_provenance'] = unsplash_evidence({'id':'fixture-next',
-        'exif':{'make':'Canon','model':'EOS R5'}} if new_medium=='PHOTOGRAPHY' else {'id':'fixture-next'})
+        visual_medium=new_medium, word='Confluence',
+        fallback_webp_path='assets/pulse/2026-11-02.webp',
+        published_at='2026-11-02T00:00:00Z', updated_at='2026-11-02T00:00:00Z')
+    detail = {'id':'fixture-next'}
+    if new_medium == 'PHOTOGRAPHY':
+        detail['exif'] = {'make':'Canon','model':'EOS R5'}
+    elif new_medium == 'DIGITAL_ARTWORK':
+        detail['description'] = '3D render'
+    entry['media_provenance'] = unsplash_evidence(detail)
+    entry.update(image_url=entry['media_provenance']['source_url'],
+                 artwork_url=entry['media_provenance']['source_url'])
     validate_editorial_entry(entry)
     payload = {'date_iso':entry['date'], 'publication_id':entry['publication_id'],
         'published_pulse':copy.deepcopy(entry)}
@@ -53,11 +71,13 @@ def test_new_edition_replaces_scoped_metadata_after_firestore_merge(old_medium, 
     assert projected['published_pulse']==entry
     for key in ('media_correction','photo_selection_policy','photo_selection_policy_date','release_republication'):
         assert key not in projected
+        assert key in actual and actual[key] is None
     assert actual['retained_private_evidence']==previous['retained_private_evidence']
     assert 'retained_private_evidence' not in projected
-    assert client.docs['pulse_history/2026-11-01']==old
+    assert wire.docs['pulse_history/2026-11-01']==old
     assert prepared[0]['media_provenance']==entry['media_provenance']
-    assert client.docs['pulse_feed/v1']['entries'][1]==old
+    assert wire.docs['pulse_feed/v1']['entries'][1]==old
+    assert len(wire.commits)==1
 
 
 def test_nullable_clear_is_not_allowed_in_a_public_entry():
