@@ -21,6 +21,7 @@ Implements `src/game_engine.py` following `/codebase-design`:
 from __future__ import annotations
 
 import copy
+from functools import lru_cache
 import time
 from src.game_records import outcome_text, display_bot_copy
 from dataclasses import dataclass
@@ -498,6 +499,9 @@ def choose_bot_move(
     )
     has_td_states = bool(states_dict)
     tt: dict[tuple[int, int], tuple[int, int, float, int]] = {}
+    # Candidate positions recur across plies and iterative depths. Cache only
+    # this pure win check for this search; keep its storage bounded like the TT.
+    win_check = lru_cache(maxsize=_TT_MAX_ENTRIES)(has_won_bitboard)
 
     def _negamax(
         b_me: int,
@@ -538,7 +542,7 @@ def choose_bot_move(
 
         # Check immediate 1-ply win for active player
         for c in playable:
-            if has_won_bitboard(b_me | (1 << heights[c])):
+            if win_check(b_me | (1 << heights[c])):
                 return 100000.0 + rem_depth * 1000.0
 
         if rem_depth <= 0:
@@ -555,7 +559,7 @@ def choose_bot_move(
         # Forced-block check: if opponent threatens an immediate win on their next turn
         forced_col = -1
         for c in playable:
-            if has_won_bitboard(b_opp | (1 << heights[c])):
+            if win_check(b_opp | (1 << heights[c])):
                 if forced_col != -1:
                     # Double threat: opponent has >=2 immediate winning columns -> unavoidable loss next ply
                     return -(100000.0 + (rem_depth - 1) * 1000.0)
@@ -631,6 +635,7 @@ def choose_bot_move(
             break
         best_root_col = iteration_col
         completed_depth = search_depth
+    win_check.cache_clear()
     return finish(best_root_col)
 
 
