@@ -1796,6 +1796,12 @@ class FirestoreStateStore:
         """Write confirmed canonical data only; never merge or read checkout JSON."""
         if self._mirror_store is None:
             return
+        if filename == "zeitgeist_state.json":
+            from scripts.export_public_release import public_editorial_state
+            payload = public_editorial_state(payload)
+        elif filename == "orbit_roster.json":
+            from scripts.export_public_release import public_orbit_roster
+            payload = public_orbit_roster(payload)
         path = self._mirror_store.repo_root / "data" / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
@@ -2843,7 +2849,7 @@ def _canonical_publication_snapshot(store: FirestoreStateStore) -> dict:
     return documents
 
 
-def _rebuild_publication(root: Path, source: Path, store: FirestoreStateStore) -> None:
+def _rebuild_publication(root: Path, source: Path, store: FirestoreStateStore, *, expected_publication_id: str | None = None) -> None:
     """Render a frozen canonical projection; reuse validated art, never infer/seed."""
     import shutil
     from scripts.build_readme import build_all_readmes, check_all_readmes
@@ -2853,6 +2859,8 @@ def _rebuild_publication(root: Path, source: Path, store: FirestoreStateStore) -
     documents = _canonical_publication_snapshot(store)
     pulse = documents["zeitgeist_state.json"]
     publication_id = pulse.get("publication_id")
+    if expected_publication_id is not None and publication_id != expected_publication_id:
+        raise ValueError("Exact publication is no longer the canonical successor")
     if not isinstance(publication_id, str) or not re.fullmatch(r"[a-f0-9]{20}", publication_id):
         raise ValueError("Canonical publication identity unavailable")
     selected = None
@@ -2876,7 +2884,8 @@ def _rebuild_publication(root: Path, source: Path, store: FirestoreStateStore) -
             shutil.copy2(candidate / relative, destination)
     data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
-    for name, payload in documents.items():
+    from scripts.export_public_release import public_display_documents
+    for name, payload in public_display_documents(documents).items():
         (data / name).write_text(json.dumps(_encode_json_safe(payload), indent=2) + "\n")
     # Source history/feed and current pulse must identify the same accepted art.
     verify_publication_bundle(root, require_current_pulse=True)
@@ -2892,7 +2901,7 @@ def _rebuild_publication(root: Path, source: Path, store: FirestoreStateStore) -
 
 
 def _publish_canonical_git(root: Path, store: FirestoreStateStore, message: str,
-                           attempts: int, sleep_fn: Any) -> bool:
+                           attempts: int, sleep_fn: Any, *, expected_publication_id: str | None = None) -> bool:
     """Build atop fetched remote HEAD, never rebase conflicting generated snapshots."""
     branch = (os.environ.get("GITHUB_REF_NAME") or "main").strip() or "main"
     def run(args, *, cwd=root, **kwargs):
@@ -2923,7 +2932,7 @@ def _publish_canonical_git(root: Path, store: FirestoreStateStore, message: str,
                                          input=patch.stdout, text=True, capture_output=True).returncode != 0:
                     return False  # Never overwrite a concurrent owner/source edit.
                 try:
-                    _rebuild_publication(checkout, root, store)
+                    _rebuild_publication(checkout, root, store, expected_publication_id=expected_publication_id)
                 except PublicationConflict:
                     continue
                 except Exception as exc:
@@ -2958,6 +2967,7 @@ def git_commit_and_push_with_retry(
     max_attempts: int = 3,
     store: StateStore | None = None,
     sleep_fn: Any = time.sleep,
+    expected_publication_id: str | None = None,
 ) -> bool:
     """Publish explicit public paths; canonical writers rebuild on current remote HEAD."""
     root = Path(repo_root) if repo_root is not None else REPO_ROOT
@@ -2968,6 +2978,11 @@ def git_commit_and_push_with_retry(
         return False
 
     resolved_store = store if store is not None else get_state_store(repo_root=root)
+    if expected_publication_id is not None:
+        if not re.fullmatch(r"[a-f0-9]{20}",expected_publication_id):
+            raise ValueError("Exact publication ID required")
+        if paths is not None or not isinstance(resolved_store,FirestoreStateStore) or not resolved_store.canonical_only:
+            return publication_failed()
     stage_targets = paths if paths is not None else _public_publication_paths(root)
     subprocess.run(
         ["git", "config", "user.name", "github-actions[bot]"],
@@ -2985,7 +3000,7 @@ def git_commit_and_push_with_retry(
         check=False,
     )
     if paths is None and isinstance(resolved_store, FirestoreStateStore) and resolved_store.canonical_only:
-        if _publish_canonical_git(root, resolved_store, commit_message, max_attempts, sleep_fn):
+        if _publish_canonical_git(root, resolved_store, commit_message, max_attempts, sleep_fn, expected_publication_id=expected_publication_id):
             return True
         return publication_failed()
     existing_targets = [

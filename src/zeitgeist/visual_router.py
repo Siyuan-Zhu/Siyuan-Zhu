@@ -437,7 +437,7 @@ class PublishedPulse:
         artist_name = str(
             self.attribution.get("photographer_name") or "Bespoke Geometric Study"
         )[:120]
-        if self.visual_medium == "PHOTOGRAPHY":
+        if self.attribution.get("unsplash_url"):
             art_source = "Unsplash"
         elif self.visual_medium == "FLUX_PRO":
             art_source = "Black Forest Labs FLUX"
@@ -518,6 +518,12 @@ class PublishedPulse:
         if self.attribution.get('selection_policy') == 'owner-approved-best-safe-photo':
             entry['photo_selection_policy'] = 'owner-approved-best-safe-photo'
             entry['photo_selection_policy_date'] = self.attribution['selection_policy_date']
+        if self.attribution.get('media_provenance'):
+            from .media_provenance import public_media_provenance
+            entry['media_provenance'] = public_media_provenance(self.attribution['media_provenance'], medium=self.visual_medium)
+        if self.attribution.get('media_correction'):
+            from .media_provenance import public_media_correction
+            entry['media_correction'] = public_media_correction(self.attribution['media_correction'])
         from .public_schema import photo_policy_projection
         photo_policy_projection(entry)
         if include_curatorial_metadata:
@@ -960,6 +966,7 @@ def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, 
 
 
 def _candidate_from_unsplash(item, thumb_bytes):
+    from .media_provenance import unsplash_evidence
     photo_id = str(item.get('id') or '')
     urls, links, user = item.get('urls') or {}, item.get('links') or {}, item.get('user') or {}
     if not photo_id or not urls.get('raw'):
@@ -968,7 +975,9 @@ def _candidate_from_unsplash(item, thumb_bytes):
         'thumb_bytes': thumb_bytes, 'photographer_name': str(user.get('name') or ''),
         'photographer_url': str((user.get('links') or {}).get('html') or ''),
         'unsplash_url': f'https://unsplash.com/photos/{photo_id}',
-        'download_location': str(links.get('download_location') or ''), '_requires_critic': True}
+        'download_location': str(links.get('download_location') or ''), '_requires_critic': True,
+        '_source_detail': item if 'exif' in item else None,
+        'media_provenance': unsplash_evidence(item)}
 
 
 def _photo_history_ids(entries):
@@ -1075,15 +1084,18 @@ def _download_winning_unsplash_photo(candidate, *, access_key=None):
     """Download only the accepted winner, from raw Imgix with real detail metadata."""
     import httpx
     key = (access_key or os.environ.get('UNSPLASH_ACCESS_KEY', '')).strip()
+    from .media_provenance import unsplash_evidence
     photo_id = str(candidate.get('photo_id') or '')
     if not key or not photo_id:
         raise ValueError('Winning photograph requires verified API identity and credentials')
     with httpx.Client(timeout=15, follow_redirects=True) as client:
-        response = client.get('https://api.unsplash.com/photos/' + quote(photo_id, safe=''),
-            headers={'Authorization': f'Client-ID {key}', 'Accept-Version': 'v1'})
-        if response.status_code != 200:
-            raise ValueError('Winning photograph metadata unavailable; retain last publication')
-        detail = response.json()
+        detail = candidate.get('_source_detail')
+        if detail is None:
+            response = client.get('https://api.unsplash.com/photos/' + quote(photo_id, safe=''),
+                headers={'Authorization': f'Client-ID {key}', 'Accept-Version': 'v1'})
+            if response.status_code != 200:
+                raise ValueError('Winning photograph metadata unavailable; retain last publication')
+            detail = response.json()
         raw = urlsplit(str((detail.get('urls') or {}).get('raw') or ''))
         user, links = detail.get('user') or {}, detail.get('links') or {}
         profile = str((user.get('links') or {}).get('html') or '')
@@ -1103,7 +1115,8 @@ def _download_winning_unsplash_photo(candidate, *, access_key=None):
         return hero, {'photo_id': photo_id, 'photographer_name': str(user['name']), 'photographer_url': profile,
             'unsplash_url': f'https://unsplash.com/photos/{photo_id}', 'download_location': download,
             'download_location_triggered': False, 'raw_crop_url': crop_url,
-            'exif': detail.get('exif') if isinstance(detail.get('exif'), dict) else {}}
+            'exif': detail.get('exif') if isinstance(detail.get('exif'), dict) else {},
+            'media_provenance': unsplash_evidence(detail)}
 
 
 def confirm_published_photo_download(pulse, *, callback=None):
@@ -1112,8 +1125,12 @@ def confirm_published_photo_download(pulse, *, callback=None):
     if callback is None:
         callback = getattr(pulse, '_download_ping_callback', None)
     url = str(attribution.get('download_location') or '')
-    if pulse.visual_medium != 'PHOTOGRAPHY' or not url or attribution.get('download_location_triggered'):
+    if not url or attribution.get('download_location_triggered'):
         return
+    parsed = urlsplit(url)
+    if (parsed.scheme != 'https' or parsed.netloc != 'api.unsplash.com'
+            or not re.fullmatch(r'/photos/[A-Za-z0-9_-]+/download', parsed.path)):
+        raise ValueError('Invalid Unsplash acknowledgment source')
     if callback is None and os.environ.get('ZEITGEIST_LIVE_UNSPLASH') != '1':
         return
     success = callback(url) if callback is not None else _ping_unsplash_download_location(url)
@@ -1366,7 +1383,11 @@ class PhotoSearchUnavailable(ValueError):
 
 
 class PhotoSelectionUnavailable(ValueError):
-    """No photograph passed strict safety/fit checks; bounded re-query is permitted."""
+    """No photograph passed strict evidence/fit checks; bounded re-query is permitted."""
+
+    def __init__(self, message, *, exception_candidates=()):
+        super().__init__(message)
+        self.exception_candidates = list(exception_candidates)[:3]
 
 
 def select_and_render_pulse_assets(
@@ -1396,6 +1417,7 @@ def select_and_render_pulse_assets(
     photo_history_30d: Sequence[Dict[str, Any]] | None = None,
     judge_model: str = "gemini-3.8-flash",
     strict_photo_errors: bool = False,
+    offline_demo: bool = False,
 ) -> PublishedPulse:
     """Run Multimodal Visual Critic Funnel, enforce 80/20 medium budget, and render 3:2 curatorial + 16:9 WebP + SVG."""
     import os
@@ -1432,24 +1454,18 @@ def select_and_render_pulse_assets(
         or ["#0F172A", "#1E293B", "#38BDF8", "#10B981", "#F8FAFC"]
     )
 
-    if isinstance(medium_history_30d, int):
-        non_photo_days_30d = medium_history_30d
-    else:
-        non_photo_days_30d = sum(
-            1
-            for m in medium_history_30d
-            if str(m).strip().upper() not in {"PHOTOGRAPHY", "CURATED_PHOTO"}
-        )
-
     if photo_history_30d is None:
         history_path = root / 'data/pulse_feed.json'
         history = json.loads(history_path.read_text()).get('entries', []) if history_path.exists() else []
     else:
         history = photo_history_30d
     excluded_ids = _photo_history_ids(history)
+    from .media_provenance import publication_media_history
+    eligible_history = (publication_media_history(history, replacing_date=resolved_date) if history
+        else medium_history_30d if not isinstance(medium_history_30d, int) else ())
 
     effective_candidates = [] if requested_medium == "blueprint" else (candidates if candidates is not None else unsplash_candidates)
-    live_unsplash_enabled = os.environ.get("ZEITGEIST_LIVE_UNSPLASH", "1").strip() != "0"
+    live_unsplash_enabled = not offline_demo and os.environ.get("ZEITGEIST_LIVE_UNSPLASH", "1").strip() != "0"
     unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY", "").strip() if live_unsplash_enabled else ""
     if effective_candidates is None:
         unsplash_key = (
@@ -1506,30 +1522,45 @@ def select_and_render_pulse_assets(
         if best_safe_exception:
             logger.warning('Owner-authorized best-safe photo selection: date=%s candidates=%d safe=%d',
                            resolved_date, len(scored_candidates), len(passing_candidates))
-    if requested_medium == 'photo' and not passing_candidates:
-        logger.warning(
-            'Photo selection rejected: candidates=%d safe=%d best_semantic=%.3f best_composite=%.3f',
+    from .media_provenance import exception_allowed, unsplash_evidence
+    reviewed = sorted(passing_candidates,
+        key=lambda row: (-row['composite_score'], -row['semantic_alignment'], row['index']))[:3]
+    # At most three additional detail lookups per phase. Never convert a transport
+    # failure into unknown provenance or weaker image-quality requirements.
+    for row in reviewed:
+        detail = row.get('_source_detail')
+        if row.get('photo_id') and detail is None:
+            if not unsplash_key or offline_demo:
+                raise PhotoSearchUnavailable('Source detail requires active Unsplash credentials')
+            import httpx
+            try:
+                with httpx.Client(timeout=10, follow_redirects=False) as client:
+                    response = client.get('https://api.unsplash.com/photos/' + quote(str(row['photo_id']), safe=''),
+                        headers={'Authorization': f'Client-ID {unsplash_key}', 'Accept-Version': 'v1'})
+                    if response.status_code != 200:
+                        raise PhotoSearchUnavailable('Source detail unavailable')
+                    detail = response.json()
+            except PhotoSearchUnavailable:
+                raise
+            except Exception:
+                raise PhotoSearchUnavailable('Source detail unavailable') from None
+            if not isinstance(detail, dict) or detail.get('id') != row['photo_id']:
+                raise PhotoSearchUnavailable('Source detail identity mismatch')
+            row['_source_detail'] = detail
+        row['media_provenance'] = unsplash_evidence(detail or row)
+    photos = [row for row in reviewed if row['media_provenance']['classification'] == 'PHOTOGRAPHY']
+    exceptions = [row for row in reviewed if row['media_provenance']['classification'] != 'PHOTOGRAPHY']
+    chosen_cand = photos[0] if photos else (exceptions[0]
+        if requested_medium != 'photo' and exception_allowed(eligible_history) and exceptions else None)
+    if requested_medium == 'photo' and chosen_cand is None:
+        logger.warning('Photo selection rejected: candidates=%d safe=%d best_semantic=%.3f best_composite=%.3f',
             len(scored_candidates), sum(row['safety_pass'] is True for row in scored_candidates),
             max((row['semantic_alignment'] for row in scored_candidates), default=0.0),
-            max((row['composite_score'] for row in scored_candidates), default=0.0),
-        )
-        raise PhotoSelectionUnavailable('No safe, semantically accepted photograph available')
-    chosen_cand = None
-    visual_medium = 'BESPOKE_SVG'
-    if passing_candidates:
-        chosen_cand = max(passing_candidates, key=lambda row: (row['composite_score'], row['semantic_alignment'], -row['index']))
-    elif non_photo_days_30d >= 6 and requested_medium != 'blueprint':
-        safe_floor = [row for row in scored_candidates if row['safety_pass'] is True
-            and row['composite_score'] >= .55 and not require_semantic_rescore]
-        if not safe_floor and live_unsplash_enabled:
-            library = fetch_curated_library_candidates(word=word, excluded_photo_ids=excluded_ids)
-            safe_floor = [row for row in score_photos(library) if row['safety_pass'] is True
-                and row['composite_score'] >= .55 and (not require_semantic_rescore or row['semantic_alignment'] >= .70)]
-        if not safe_floor:
-            raise ValueError('Photography cadence requires an accepted real photograph; retain last publication')
-        chosen_cand = max(safe_floor, key=lambda row: (row['semantic_alignment'], row['composite_score'], -row['index']))
-    if chosen_cand is not None:
-        visual_medium = 'PHOTOGRAPHY'
+            max((row['composite_score'] for row in scored_candidates), default=0.0))
+        raise PhotoSelectionUnavailable('No safe, evidenced photograph available', exception_candidates=exceptions)
+    if reviewed and chosen_cand is None:
+        raise PhotoSelectionUnavailable('Shared media allowance does not permit the accepted source')
+    visual_medium = chosen_cand['media_provenance']['classification'] if chosen_cand else 'BESPOKE_SVG'
 
     hero_img: Optional[Image.Image] = None
     attribution: Dict[str, Any] = {
@@ -1542,12 +1573,20 @@ def select_and_render_pulse_assets(
     semantic_alignment_score = 0.0
     selected_idx: Optional[int] = None
 
+    # Offline demos are explicit deterministic fixtures, not live publication
+    # evidence. Every live route shares this guard before any generation call.
+    offline_fixture = offline_demo or (os.environ.get('ZEITGEIST_OFFLINE_DEMO') == '1'
+        and os.environ.get('ZEITGEIST_LIVE_LLM') != '1'
+        and os.environ.get('ZEITGEIST_LIVE_UNSPLASH', '1') == '0')
+    if chosen_cand is None and not exception_allowed(eligible_history) and not offline_fixture:
+        raise PhotoSelectionUnavailable('Photography cadence requires an accepted real photograph; retain last publication')
+
     if requested_medium == "blueprint":
         hero_img = render_bespoke_canvas_image(palette, size=(1200, 800))
         visual_medium = "BESPOKE_SVG"
         curatorial_archetype_override = "CONCRETE_POETRY"
 
-    if visual_medium == 'PHOTOGRAPHY' and chosen_cand is not None:
+    if chosen_cand is not None:
         selected_idx = int(chosen_cand['index'])
         logger.warning('Selected photo: semantic=%.3f composite=%.3f best_safe_exception=%s',
                        chosen_cand['semantic_alignment'], chosen_cand['composite_score'], best_safe_exception)
@@ -1555,11 +1594,13 @@ def select_and_render_pulse_assets(
         semantic_alignment_score = float(chosen_cand['semantic_alignment'])
         if chosen_cand.get('photo_id'):
             hero_img, attribution = _download_winning_unsplash_photo(chosen_cand, access_key=unsplash_key)
+            visual_medium = attribution['media_provenance']['classification']
         else:
             # Explicit supplied image fixtures remain usable without a provider.
             attribution = {key: chosen_cand.get(key) for key in (
                 'photographer_name', 'photographer_url', 'unsplash_url', 'download_location')}
             attribution['download_location_triggered'] = False
+            attribution['media_provenance'] = chosen_cand['media_provenance']
             raw_bytes = chosen_cand.get('image_bytes')
             if isinstance(raw_bytes, (bytes, bytearray)):
                 hero_img = Image.open(BytesIO(raw_bytes)).convert('RGB')
@@ -1570,8 +1611,8 @@ def select_and_render_pulse_assets(
         attribution['selection_policy'] = 'owner-approved-best-safe-photo'
         attribution['selection_policy_date'] = resolved_date
 
-    if requested_medium == "photo" and hero_img is None:
-        raise ValueError("Accepted photograph has no decodable image; retain last publication")
+    if (chosen_cand is not None or requested_medium == "photo") and hero_img is None:
+        raise ValueError("Accepted source has no decodable image; retain last publication")
 
     if hero_img is None:
         if visual_medium != "PHOTOGRAPHY":
@@ -1583,7 +1624,7 @@ def select_and_render_pulse_assets(
                     raise
                 except Exception:
                     hero_img = None
-            elif imagen_generator is not None:
+            elif imagen_generator is not None and not offline_demo:
                 try:
                     gen_bytes = imagen_generator(imagen_prompt)
                     hero_img = Image.open(BytesIO(gen_bytes)).convert("RGB")
@@ -1598,7 +1639,7 @@ def select_and_render_pulse_assets(
                     if bfl_api_key is not None
                     else (
                         os.environ.get("BFL_API_KEY", "").strip()
-                        if os.environ.get("ZEITGEIST_LIVE_LLM") == "1"
+                        if not offline_demo and os.environ.get("ZEITGEIST_LIVE_LLM") == "1"
                         else ""
                     )
                 )
@@ -1610,7 +1651,7 @@ def select_and_render_pulse_assets(
                     )
                     or [imagen_prompt]
                 )
-                if flux_generator is not None or effective_bfl_key:
+                if not offline_demo and (flux_generator is not None or effective_bfl_key):
                     if len(flux_prompts) >= 2:
                         live_flux_bytes = run_flux_3_tournament(
                             flux_prompts,
@@ -1652,7 +1693,7 @@ def select_and_render_pulse_assets(
                             logger.warning(
                                 "Generated FLUX candidate failed Gemini Vision safety gate; falling back."
                             )
-                if hero_img is None and os.environ.get("GEMINI_API_KEY", "").strip():
+                if hero_img is None and not offline_demo and os.environ.get("GEMINI_API_KEY", "").strip():
                     live_imagen_bytes = _generate_live_imagen3_bytes(imagen_prompt)
                     if live_imagen_bytes:
                         imagen_scores = _score_candidate_with_gemini_vision(
@@ -1680,6 +1721,10 @@ def select_and_render_pulse_assets(
             visual_medium = "BESPOKE_SVG"
             attribution = {"photographer_name": None, "photographer_url": None,
                            "unsplash_url": None, "download_location_triggered": False}
+
+    if visual_medium not in {'PHOTOGRAPHY', 'DIGITAL_ARTWORK', 'UNVERIFIED_IMAGE'}:
+        from .media_provenance import generated_evidence
+        attribution['media_provenance'] = generated_evidence(visual_medium)
 
     # 0. Compute quietest quadrant, select curatorial archetype, and render 1200x800 dual-mode 3:2 WebP plates
     raw_quadrant, min_edge_density, _quad_lum = compute_quietest_quadrant(hero_img)
@@ -1800,6 +1845,8 @@ def select_and_render_pulse_assets(
     write_publication_manifest(
         root, date=resolved_date, word=word, gloss=gloss, archetype=chosen_archetype,
         medium=visual_medium, archive_path=webp_rel_path,
+        media_provenance=attribution.get('media_provenance'),
+        media_correction=attribution.get('media_correction'),
     )
     return published
 

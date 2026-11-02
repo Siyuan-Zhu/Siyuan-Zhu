@@ -139,7 +139,7 @@ def test_curated_candidates_cannot_supply_unverified_critic_scores(monkeypatch, 
         batches.append(candidates) or [dict(vr._FAIL_CLOSED_VISION_SCORES) for _ in candidates])
     with pytest.raises(ValueError, match='Photography cadence'):
         vr.select_and_render_pulse_assets({'word': 'ANCHOR', 'gloss': 'Rooted craft'}, repo_root=tmp_path,
-            date_str='2026-10-30', candidates=[], medium_history_30d=6)
+            date_str='2026-10-30', candidates=None, medium_history_30d=6)
     assert len(batches) == 1
 
 
@@ -200,24 +200,38 @@ def test_nine_image_critic_requires_explicit_verified_budget_policy(monkeypatch,
 
 
 @pytest.mark.parametrize('tracking_success', [True, False])
-def test_orchestrator_tracks_only_after_commit_and_install_and_retains_failed_followup(monkeypatch, tmp_path, tracking_success):
+@pytest.mark.parametrize('source_evidence, expected_medium', [
+    ({'exif': {'make': 'Fixture Camera'}}, 'PHOTOGRAPHY'),
+    ({'description': 'The artwork is a 3D particle system.'}, 'DIGITAL_ARTWORK'),
+    ({}, 'UNVERIFIED_IMAGE'),
+])
+def test_orchestrator_tracks_only_after_commit_and_install_and_retains_failed_followup(monkeypatch, tmp_path, tracking_success, source_evidence, expected_medium):
     from tests.test_publication_atomic_commit import _publication_fixture
     from src.zeitgeist import adk_pipeline as pipeline
     from src.zeitgeist.publication_commit import PublicationMirrorError
     wire, store = _publication_fixture(tmp_path, monkeypatch)
+    # Four prior accepted photographs make one exception eligible. The fixture
+    # wire is the external canonical transport, not a replacement policy helper.
+    import copy
+    template = wire.docs['staging_pulse_history/2026-10-29']
+    for day in ('2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29'):
+        key = 'staging_pulse_history/' + day
+        wire.docs[key] = dict(copy.deepcopy(template), date=day, visual_medium='PHOTOGRAPHY', visual_tier_used='PHOTOGRAPHY')
+        wire.versions[key] = 1
     original = vr.select_and_render_pulse_assets
     def render(*args, **kwargs):
-        kwargs.update(candidates=[dict(SCORES, id='winner', image_bytes=jpeg(),
+        kwargs.update(candidates=[dict(SCORES, **source_evidence, id='winner', image_bytes=jpeg(),
             photographer_name='Actual Photographer', photographer_url='https://unsplash.com/@actual',
             unsplash_url='https://unsplash.com/photos/winner',
             download_location='https://api.unsplash.com/photos/winner/download')],
-            requested_medium='photo', require_semantic_rescore=False)
+            requested_medium='auto', require_semantic_rescore=False)
         return original(*args, **kwargs)
     monkeypatch.setattr(pipeline, 'select_and_render_pulse_assets', render)
     monkeypatch.setenv('ZEITGEIST_LIVE_UNSPLASH', '1')
     acknowledgments = []
     def acknowledge(url, **kwargs):
         assert wire.docs['staging_profile_state/daily_pulse']['date'] == '2026-10-30'
+        assert wire.docs['staging_profile_state/daily_pulse']['published_pulse']['visual_medium'] == expected_medium
         assert json.loads((tmp_path / 'data/zeitgeist_state.json').read_text())['date'] == '2026-10-30'
         acknowledgments.append(url)
         return tracking_success
@@ -235,6 +249,9 @@ def test_orchestrator_tracks_only_after_commit_and_install_and_retains_failed_fo
         with pytest.raises(RuntimeError, match='pending canonical publication reconciliation'):
             orchestrator.run('2026-10-31', offline_demo=True)
     assert len(acknowledgments) == 1
+    assert "commission" in wire.docs["staging_profile_state/daily_pulse"]
+    public_state=json.loads((tmp_path/"data/zeitgeist_state.json").read_text())
+    assert "commission" not in public_state and "telemetry" not in public_state
 
 
 def test_live_critic_top_level_list_preserves_strict_verified_photo_scores(monkeypatch):
@@ -299,9 +316,9 @@ def test_expanded_search_scores_eighteen_photos_in_two_bounded_batches(monkeypat
 def test_today_exception_selects_highest_safe_composite_and_keeps_real_scores(monkeypatch, tmp_path):
     monkeypatch.setenv('ZEITGEIST_LIVE_UNSPLASH', '0')
     monkeypatch.setenv('ZEITGEIST_BEST_SAFE_PHOTO_DATE', '2026-11-01')
-    rows = [dict(SCORES, id='unsafe', safety_pass=False, image_bytes=jpeg()),
-            dict(SCORES, id='lower', semantic_alignment=.4, image_bytes=jpeg()),
-            dict(SCORES, id='best', semantic_alignment=.6, image_bytes=jpeg())]
+    rows = [dict(SCORES, id='unsafe', exif={'make': 'Fixture Camera'}, safety_pass=False, image_bytes=jpeg()),
+            dict(SCORES, id='lower', exif={'make': 'Fixture Camera'}, semantic_alignment=.4, image_bytes=jpeg()),
+            dict(SCORES, id='best', exif={'make': 'Fixture Camera'}, semantic_alignment=.6, image_bytes=jpeg())]
     pulse = vr.select_and_render_pulse_assets({'word': 'ANCHOR', 'gloss': 'Rooted craft'},
         repo_root=tmp_path, date_str='2026-11-01', requested_medium='photo', candidates=rows)
     assert pulse.visual_medium == 'PHOTOGRAPHY'

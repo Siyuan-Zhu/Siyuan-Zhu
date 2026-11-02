@@ -91,6 +91,7 @@ def publish_bundle(
     expected: dict,
     local_feed: dict,
     prepare: Callable[[dict, dict, dict], None],
+    validate_current: Callable[[list], None] | None = None,
 ) -> dict:
     """Validate a merged snapshot, then CAS profile/history/feed/votes together.
 
@@ -113,6 +114,8 @@ def publish_bundle(
         ]
         for _attempt in range(5):
             snaps = [client.collection(col).document(doc).get() for col, doc in paths]
+            if validate_current is not None:
+                validate_current(snaps)
             existing = snaps[0].to_dict() if snaps[0].exists else {}
             if editorial_revision(existing) != editorial_revision(expected):
                 raise PublicationConflict(
@@ -144,6 +147,8 @@ def publish_bundle(
         raise PublicationConflict(
             "Concurrent votes prevented a stable publication; retry later"
         )
+    if validate_current is not None:
+        raise RuntimeError("Exact snapshot validation requires canonical Firestore")
     existing = store.load_pulse_state()
     if editorial_revision(existing) != editorial_revision(expected):
         raise PublicationConflict(
@@ -180,8 +185,9 @@ class PublicationWorkspace:
         for name in ("assets", "data", "state", "config", "variants"):
             if (self.root / name).is_dir():
                 shutil.copytree(self.root / name, self.path / name)
-        for name in ("README.md", "PROJECTS.md"):
+        for name in ("README.md", "PROJECTS.md", "docs/resonance.md"):
             if (self.root / name).is_file():
+                (self.path / name).parent.mkdir(parents=True,exist_ok=True)
                 shutil.copy2(self.root / name, self.path / name)
 
     def close(self):
@@ -255,15 +261,20 @@ class PublicationWorkspace:
         from .visual_router import update_svg_mood_vote_bar
         from .public_schema import validate_public_editorial
 
+        from scripts.export_public_release import public_editorial_state,public_editorial_feed
         data = self.path / "data"
         data.mkdir(parents=True, exist_ok=True)
         for filename, payload in (
-            ("zeitgeist_state.json", state),
-            ("pulse_feed.json", feed),
+            ("zeitgeist_state.json", public_editorial_state(state)),
+            ("pulse_feed.json", public_editorial_feed(feed)),
         ):
             (data / filename).write_text(
                 json.dumps(payload, indent=2) + "\n", encoding="utf-8"
             )
+        roster = data / "orbit_roster.json"
+        if roster.is_file():
+            from scripts.export_public_release import public_orbit_roster
+            roster.write_text(json.dumps(public_orbit_roster(json.loads(roster.read_text())),indent=2)+"\n")
         validate_public_editorial(self.path)
         update_svg_mood_vote_bar(
             self.path / "assets/daily_pulse.svg", state["visitor_mood_tally"]

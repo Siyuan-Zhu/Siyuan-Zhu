@@ -18,10 +18,14 @@ on:
       studio_footer_action:
         description: Owner-only, provider-free correction of an exact Studio Monograph footer
         type: choice
-        options: [none, preview, rehearse, apply]
+        options: [none, preview, rehearse, apply, media-preview, media-rehearse, media-apply, media-reconcile]
         default: none
       expected_publication_id:
         description: Exact accepted publication ID for the footer correction
+        type: string
+        required: false
+      expected_media_plan_sha256:
+        description: Exact reviewed canonical plan hash for media-apply or media-reconcile
         type: string
         required: false
 
@@ -81,7 +85,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       inputs.preflight_only != true &&
-      (inputs.studio_footer_action == 'preview' || inputs.studio_footer_action == 'rehearse' || inputs.studio_footer_action == 'apply') &&
+      (inputs.studio_footer_action == 'preview' || inputs.studio_footer_action == 'rehearse' || inputs.studio_footer_action == 'apply' || startsWith(inputs.studio_footer_action, 'media-')) &&
       github.actor == 'Siyuan-Zhu' &&
       (github.repository == 'Siyuan-Zhu/readme-live-sandbox' || github.repository == 'Siyuan-Zhu/Siyuan-Zhu')
     runs-on: ubuntu-latest
@@ -96,6 +100,7 @@ jobs:
         env:
           FOOTER_ACTION: ${{ inputs.studio_footer_action }}
           EXPECTED_PUBLICATION_ID: ${{ inputs.expected_publication_id }}
+          EXPECTED_MEDIA_PLAN_SHA256: ${{ inputs.expected_media_plan_sha256 }}
           TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
           STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
           FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
@@ -112,7 +117,14 @@ jobs:
           import subprocess
           command = ["python3", "scripts/refresh_studio_footer.py", "--expected-publication-id", os.environ["EXPECTED_PUBLICATION_ID"]]
           action = os.environ["FOOTER_ACTION"]
-          if action in ("apply", "rehearse"):
+          if action.startswith("media-"):
+              command.append("--correct-media")
+              action = action.removeprefix("media-")
+              if action in ("apply", "reconcile"):
+                  command.extend(["--expected-plan-sha256", os.environ["EXPECTED_MEDIA_PLAN_SHA256"]])
+              if action == "preview":
+                  command.append("--canonical-preview")
+          if action in ("apply", "rehearse", "reconcile"):
               command.append("--" + action)
           subprocess.run(command, check=True)
       - uses: actions/upload-artifact@v4
@@ -124,9 +136,15 @@ jobs:
           if-no-files-found: ignore
           path: |
             .footer-preview/
+            .media-correction-preview/
             .publication-recovery/*/assets/
             .publication-recovery/*/README.md
             .publication-recovery/*/variants/
+            .publication-recovery/*/data/
+            .publication-recovery/*/correction-plan.json
+            .publication-recovery/*/correction-receipt.json
+            .publication-recovery/*/PROJECTS.md
+            .publication-recovery/*/docs/resonance.md
             data/publication_reconcile.json
   synthesize-pulse:
     timeout-minutes: 15
@@ -220,4 +238,9 @@ jobs:
             .publication-recovery/*/assets/
             .publication-recovery/*/README.md
             .publication-recovery/*/variants/
+            .publication-recovery/*/data/
+            .publication-recovery/*/correction-plan.json
+            .publication-recovery/*/correction-receipt.json
+            .publication-recovery/*/PROJECTS.md
+            .publication-recovery/*/docs/resonance.md
             data/publication_reconcile.json

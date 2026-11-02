@@ -226,9 +226,10 @@ def resolve_effective_quadrant(archetype: str, detected_quadrant: str) -> str:
 
 def _credit_line(attribution: Mapping[str, Any], visual_medium: str) -> str:
     medium = str(visual_medium or "PHOTOGRAPHY").upper()
-    if medium == "PHOTOGRAPHY":
+    if medium in {"PHOTOGRAPHY", "DIGITAL_ARTWORK", "UNVERIFIED_IMAGE"}:
         photographer = str(attribution.get("photographer_name") or "Unsplash").strip()
-        return f"Photograph · {photographer} / Unsplash"
+        label = {"DIGITAL_ARTWORK": "Digital artwork", "UNVERIFIED_IMAGE": "Image"}.get(medium, "Photograph")
+        return f"{label} · {photographer} / Unsplash"
     if medium == "FLUX_PRO":
         return "Commissioned Plate · FLUX Editorial Synthesis"
     if medium == "IMAGEN_3":

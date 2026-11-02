@@ -4,16 +4,12 @@ from .visual_router import PhotoSelectionUnavailable
 
 logger = logging.getLogger(__name__)
 
-PHOTO_MEDIA = frozenset({'PHOTOGRAPHY','CURATED_PHOTO'})
+from .media_provenance import PHOTO_MEDIA, exception_allowed
 
 
 def ai_exception_allowed(history):
-    """Include the proposed publication in the <=20% rolling mix; never consecutive."""
-    recent = [str(value).upper() for value in list(history)[:29]]
-    if not recent or recent[0] not in PHOTO_MEDIA:
-        return False
-    nonphoto = sum(value not in PHOTO_MEDIA for value in recent)
-    return (nonphoto + 1) * 5 <= len(recent) + 1
+    """Compatibility name for the shared non-photo/uncertainty allowance."""
+    return exception_allowed(history)
 
 
 def recover_visual(commission, *, render, revise, history, photo_required=False):
@@ -36,7 +32,7 @@ def recover_visual(commission, *, render, revise, history, photo_required=False)
             logger.warning('Photo recovery phase=%s status=no_qualifying_photo', phase)
     if not photo_required and ai_exception_allowed(history):
         result = render(current, photo_only=False)
-        trace.append({'phase':'bounded_ai_exception','status':'accepted'})
+        trace.append({'phase':'bounded_visual_exception','status':'accepted'})
         return current, result, trace
     logger.warning('Photo recovery exhausted: photo_required=%s ai_exception_allowed=%s history_count=%d',
                    photo_required, ai_exception_allowed(history), len(history))

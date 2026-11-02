@@ -77,14 +77,14 @@ def test_photo_download_failure_never_becomes_synthetic_unsplash(monkeypatch, tm
     client.__enter__.return_value.get.return_value.status_code = 404
     monkeypatch.setattr("httpx.Client", lambda **kwargs: client)
     assert fetch_curated_library_candidates("Counterpoise") == []
-    pulse = select_and_render_pulse_assets(
-        commission={"word": "Counterpoise", "gloss": "A steady balance."},
-        medium_history_30d=[], repo_root=tmp_path, date_str="2026-10-29",
-        candidates=[{"id": "missing", "semantic_alignment": .9, "compositional_clarity": .9,
-                     "editorial_memorability": .9, "safety_pass": True}],
-    )
-    assert pulse.visual_medium == "BESPOKE_SVG"
-    assert not pulse.attribution.get("unsplash_url")
+    from src.zeitgeist.visual_router import PhotoSelectionUnavailable
+    with pytest.raises(PhotoSelectionUnavailable):
+        select_and_render_pulse_assets(
+            commission={"word": "Counterpoise", "gloss": "A steady balance."},
+            medium_history_30d=[], repo_root=tmp_path, date_str="2026-10-29",
+            candidates=[{"id": "missing", "semantic_alignment": .9, "compositional_clarity": .9,
+                         "editorial_memorability": .9, "safety_pass": True}])
+    assert not (tmp_path / 'assets/pulse_manifest.json').exists()
 
 
 def test_budget_denial_propagates_before_bfl_request_and_through_tournament(monkeypatch):
@@ -116,7 +116,7 @@ def test_budget_denial_never_becomes_a_generated_fallback(monkeypatch, tmp_path)
     with pytest.raises(SpendBlocked, match="Monthly cap"):
         select_and_render_pulse_assets(
             commission={"word": "Counterpoise", "gloss": "A steady balance."},
-            medium_history_30d=[], repo_root=tmp_path, date_str="2026-10-29", candidates=[],
+            medium_history_30d=["PHOTOGRAPHY"] * 4, repo_root=tmp_path, date_str="2026-10-29", candidates=[],
         )
     assert not (tmp_path / "assets/pulse_manifest.json").exists()
 

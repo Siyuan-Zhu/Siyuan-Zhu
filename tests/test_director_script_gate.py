@@ -217,6 +217,8 @@ def test_adk_orchestrator_v2_end_to_end_and_run_zeitgeist_cli(tmp_path) -> None:
     import shutil
     from scripts.run_zeitgeist import main as run_zeitgeist_main
     from src.zeitgeist.adk_pipeline import ZeitgeistADKOrchestrator
+    from src.zeitgeist.public_schema import validate_editorial_entry
+    from src.zeitgeist.publication import verify_publication_bundle
 
     repo_src = Path(__file__).resolve().parents[1]
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
@@ -241,8 +243,17 @@ def test_adk_orchestrator_v2_end_to_end_and_run_zeitgeist_cli(tmp_path) -> None:
     feed_payload = json.loads((tmp_path / "data" / "pulse_feed.json").read_text(encoding="utf-8"))
     assert len(feed_payload["entries"]) == 1
     entry = feed_payload["entries"][0]
-    assert len(entry.keys()) == 38
-    assert entry["publication_id"] == json.loads((tmp_path / "assets/pulse_manifest.json").read_text())["publication_id"]
+    validate_editorial_entry(entry)
+    manifest = verify_publication_bundle(tmp_path, require_current_pulse=True)
+    assert entry["publication_id"] == manifest["publication_id"]
+    assert entry["date"] == manifest["date"] == "2026-10-27"
+    assert entry["visual_medium"] == manifest["medium"] == "BESPOKE_SVG"
+    evidence = entry["media_provenance"]
+    assert evidence == manifest["media_provenance"]
+    assert evidence["classification"] == "PROCEDURAL_ARTWORK"
+    assert evidence["basis"] == "generator_known"
+    assert evidence["provider"] == "egm"
+    assert evidence["allowance_exception"] is True
     assert set(entry["mood_votes"].keys()) == {"spot_on", "too_sunny", "too_heavy"}
     assert entry["window_hours"] == 96
     assert entry["schema_version"] == "2.0"

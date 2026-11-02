@@ -164,6 +164,12 @@ def _select(value, fields):
 def _editorial(value):
     public = _select(value, EDITORIAL_FIELDS)
     public.update(photo_policy_projection(value))
+    if 'media_provenance' in value:
+        from src.zeitgeist.media_provenance import public_media_provenance
+        public['media_provenance'] = public_media_provenance(value['media_provenance'], medium=value.get('visual_medium'))
+    if 'media_correction' in value:
+        from src.zeitgeist.media_provenance import public_media_correction
+        public['media_correction'] = public_media_correction(value['media_correction'])
     if public.get("image_data_uri"):
         raise ValueError("Public editorial JSON cannot contain inline image payloads")
     if "attribution" in value:
@@ -173,45 +179,62 @@ def _editorial(value):
     return public
 
 
+def public_editorial_state(original):
+    """The closed display state; canonical commission/telemetry stay private."""
+    pulse = _editorial(original)
+    if "analysis" in original:
+        pulse["analysis"] = _select(original["analysis"], ANALYSIS_FIELDS)
+    if "visual_decision" in original:
+        pulse["visual_decision"] = _select(original["visual_decision"], VISUAL_FIELDS)
+        pulse["visual_decision"]["local_svg_path"] = "assets/daily_pulse.svg"
+    if "published_pulse" in original:
+        pulse["published_pulse"] = _editorial(original["published_pulse"])
+    return pulse
+
+
+def public_editorial_feed(original):
+    feed = _select(original, {"version", "schema_version", "entries", "updated_at"})
+    feed["entries"] = [_editorial(item) for item in feed["entries"]]
+    if "updated_at" not in feed and feed["entries"] and "updated_at" in feed["entries"][0]:
+        feed["updated_at"] = feed["entries"][0]["updated_at"]
+    return feed
+
+
+def public_orbit_roster(roster):
+    public_roster = _select(roster, {"state_version", "curated_o3_cursor", "rss_o3_cursor", "updated_at"})
+    public_roster["handles"] = {
+        handle: _select(record, {"tier", "status", "weight", "first_seen", "last_seen", "empty_runs"})
+        for handle, record in roster.get("handles", {}).items()
+    }
+    return public_roster
+
+
+def public_display_documents(documents):
+    """Reuse the public export contract for an existing accepted publication."""
+    return {
+        "game_state.json": copy.deepcopy(documents["game_state.json"]),
+        "zeitgeist_state.json": public_editorial_state(documents["zeitgeist_state.json"]),
+        "hall_of_records.json": copy.deepcopy(documents["hall_of_records.json"]),
+        "bot_brain.json": copy.deepcopy(documents["bot_brain.json"]),
+        "pulse_feed.json": public_editorial_feed(documents["pulse_feed.json"]),
+        "orbit_roster.json": public_orbit_roster(documents["orbit_roster.json"]),
+    }
+
+
 def public_projections(envelope):
     """Project the approved plan's fresh state; this never changes canonical data."""
     plan = promotion._validate_plan(envelope)
     if plan.get("game_policy") != "fresh":
         raise ValueError("Initial public export requires reviewed fresh policy")
     after = plan["after"]
-    pulse = _editorial(after["profile_state/daily_pulse"])
-    original = after["profile_state/daily_pulse"]
-    if "analysis" in original:
-        pulse["analysis"] = _select(original["analysis"], ANALYSIS_FIELDS)
-    if "visual_decision" in original:
-        pulse["visual_decision"] = _select(original["visual_decision"], VISUAL_FIELDS)
-        pulse["visual_decision"]["local_svg_path"] = "assets/daily_pulse.svg"
-    pulse["published_pulse"] = _editorial(original["published_pulse"])
-    feed = copy.deepcopy(after["pulse_feed/v1"])
-    feed["entries"] = [_editorial(item) for item in feed["entries"]]
-    if "updated_at" not in feed:
-        feed["updated_at"] = feed["entries"][0]["updated_at"]
-    # The public roster contains rotation state and public handles, never source
-    # payloads or server-only discovery evidence. Full roster remains canonical.
-    roster = after["profile_state/orbit_roster"]
-    public_roster = _select(
-        roster, {"state_version", "curated_o3_cursor", "rss_o3_cursor", "updated_at"}
-    )
-    public_roster["handles"] = {
-        handle: _select(
-            record,
-            {"tier", "status", "weight", "first_seen", "last_seen", "empty_runs"},
-        )
-        for handle, record in roster.get("handles", {}).items()
-    }
-    return {
-        "data/game_state.json": copy.deepcopy(after["profile_state/active_game"]),
-        "data/zeitgeist_state.json": pulse,
-        "data/hall_of_records.json": copy.deepcopy(after["profile_state/elo_ledger"]),
-        "data/bot_brain.json": copy.deepcopy(after["profile_state/bot_memory"]),
-        "data/pulse_feed.json": feed,
-        "data/orbit_roster.json": public_roster,
-    }
+    documents = {filename: after[path] for filename,path in (
+        ("game_state.json", "profile_state/active_game"),
+        ("zeitgeist_state.json", "profile_state/daily_pulse"),
+        ("hall_of_records.json", "profile_state/elo_ledger"),
+        ("bot_brain.json", "profile_state/bot_memory"),
+        ("pulse_feed.json", "pulse_feed/v1"),
+        ("orbit_roster.json", "profile_state/orbit_roster"))}
+    return {"data/" + name: value for name,value in public_display_documents(documents).items()}
 
 
 def _audit_public_text(path, raw):

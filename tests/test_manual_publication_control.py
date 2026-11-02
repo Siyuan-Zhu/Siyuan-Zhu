@@ -70,7 +70,7 @@ def _grounded_director(monkeypatch):
 def _photo():
     out = BytesIO()
     Image.new("RGB", (1200, 800), (90, 110, 120)).save(out, format="JPEG")
-    return {"id": "fixture", "image_bytes": out.getvalue(), "semantic_alignment": .9,
+    return {"id": "fixture", "exif": {"make": "Fixture Camera", "model": "Fixture model"}, "image_bytes": out.getvalue(), "semantic_alignment": .9,
             "compositional_clarity": .9, "editorial_memorability": .9, "safety_pass": True,
             "photographer_name": "Test fixture", "unsplash_url": "https://unsplash.com/photos/fixture"}
 
@@ -93,7 +93,8 @@ def test_phone_override_is_commissioned_before_all_representations(mode, medium,
     assert manifest["word"] == state["analysis"]["word_of_the_day"] == "ANCHORED"
     assert manifest["medium"] == medium
     assert manifest["date"] == datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    assert state["commission"]["visual_anchor"].startswith("Weathered iron anchor")
+    assert state["analysis"]["visual_concrete_anchor"].startswith("Weathered iron anchor")
+    assert "commission" not in state and "telemetry" not in state
     assert "ANCHORED" in (root / "README.md").read_text()
     assert "Steady craft across shifting currents." in (root / "README.md").read_text()
 

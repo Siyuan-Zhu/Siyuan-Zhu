@@ -161,7 +161,8 @@ def _visual_credit_html(visual_decision: dict, published_pulse: dict | None = No
     def link(url, label):
         return f'<a href="{escape(url, quote=True)}">{escape(label)}</a>'
 
-    if mode in {"CURATED_PHOTO", "CURATED_PHOTO_LIBRARY", "PHOTOGRAPHY", "UNSPLASH_PHOTO"}:
+    if mode in {"CURATED_PHOTO", "CURATED_PHOTO_LIBRARY", "PHOTOGRAPHY", "UNSPLASH_PHOTO", "DIGITAL_ARTWORK", "UNVERIFIED_IMAGE"}:
+        label = {"DIGITAL_ARTWORK": "Digital artwork", "UNVERIFIED_IMAGE": "Image"}.get(mode, "Photo")
         source = next((url for value in (
             attribution.get("unsplash_url"), published.get("artwork_url"),
             visual_decision.get("source_page_url"), visual_decision.get("credit_url")
@@ -171,11 +172,11 @@ def _visual_credit_html(visual_decision: dict, published_pulse: dict | None = No
         if profile and not urlsplit(profile).path.startswith("/@"):
             profile = ""
         if profile and (not name or name in {"Unsplash Contributor", "Bespoke Geometric Study"}):
-            return f'Photo by {link(profile, "Photographer")} on {link(source, "Unsplash")}'
+            return f'{label} by {link(profile, "Contributor" if mode != "PHOTOGRAPHY" else "Photographer")} on {link(source, "Unsplash")}'
         if name and name not in {"Unsplash Contributor", "Bespoke Geometric Study"}:
             photographer = link(profile, name) if profile else escape(name)
-            return f'Photo by {photographer} on {link(source, "Unsplash")}'
-        return link(source, "Photo via Unsplash")
+            return f'{label} by {photographer} on {link(source, "Unsplash")}'
+        return link(source, label + " via Unsplash")
     flux_model = str(published.get("flux_model") or attribution.get("flux_model") or "").lower()
     if mode == "FLUX_3" or (mode == "FLUX_PRO" and "flux-3" in flux_model):
         return "Visual · FLUX 3 editorial synthesis"

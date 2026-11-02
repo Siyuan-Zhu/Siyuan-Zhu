@@ -29,6 +29,8 @@ def write_publication_manifest(
     archetype: str,
     medium: str,
     archive_path: str,
+    media_provenance: dict | None = None,
+    media_correction: dict | None = None,
 ) -> dict:
     files = [
         "assets/daily_pulse_light.webp",
@@ -45,6 +47,12 @@ def write_publication_manifest(
         "medium": medium,
         "files": {p: _asset_digest(root / p) for p in files},
     }
+    if media_provenance is not None:
+        from .media_provenance import public_media_provenance
+        manifest['media_provenance'] = public_media_provenance(media_provenance, medium=medium)
+    if media_correction is not None:
+        from .media_provenance import public_media_correction
+        manifest['media_correction'] = public_media_correction(media_correction)
     manifest["publication_id"] = hashlib.sha256(
         json.dumps(manifest, sort_keys=True).encode("utf-8")
     ).hexdigest()[:20]
@@ -129,6 +137,16 @@ def verify_publication_bundle(
         and entry["curatorial_archetype"] != manifest["archetype"]
     ):
         raise ValueError("Publication feed archetype mismatch")
+    for field in ('media_provenance', 'media_correction'):
+        if field in manifest or field in entry:
+            if field not in manifest or entry.get(field) != manifest[field]:
+                raise ValueError('Publication provenance mismatch')
+    if 'media_provenance' in manifest:
+        from .media_provenance import public_media_provenance
+        public_media_provenance(manifest['media_provenance'], medium=manifest['medium'])
+    if 'media_correction' in manifest:
+        from .media_provenance import public_media_correction
+        public_media_correction(manifest['media_correction'])
     if require_current_pulse:
         state_path = root / "data/zeitgeist_state.json"
         if not state_path.is_file():
@@ -142,6 +160,10 @@ def verify_publication_bundle(
 
 def verify_current_pulse(state: dict, manifest: dict) -> None:
     """Reject divergent supplied state projections, not just one preferred copy."""
+    for field in ('media_provenance', 'media_correction'):
+        current = state.get('published_pulse')
+        if field in manifest and (not isinstance(current, dict) or current.get(field) != manifest[field]):
+            raise ValueError('Current pulse provenance mismatch')
     projections = [state]
     for key in ("published_pulse", "analysis", "visual_decision"):
         if isinstance(state.get(key), dict):

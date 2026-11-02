@@ -143,16 +143,18 @@ def test_real_photography_priority_and_all_archetype_compatibility(tmp_path: Pat
     )
     assert len(commission.flux_3_commission_prompts) == 3
 
-    # Even with borderline candidate scores, when 6 non-photo days occurred in 30d (80% cap), PHOTOGRAPHY wins
+    # A camera-supported photograph meeting normal fit wins across all rotations. No lower-fit waiver.
     candidates = [
         {
+            "id": "bluff-1",
+            "exif": {"make": "Fixture Camera", "model": "Fixture Camera Model"},
             "photographer_name": "Elena Rostova",
             "photographer_url": "https://unsplash.com/@erostova",
             "unsplash_url": "https://unsplash.com/photos/bluff-1",
             "download_location": "https://api.unsplash.com/photos/bluff-1/download",
-            "semantic_alignment": 0.69,
-            "compositional_clarity": 0.66,
-            "editorial_memorability": 0.65,
+            "semantic_alignment": 0.75,
+            "compositional_clarity": 0.72,
+            "editorial_memorability": 0.70,
             "safety_pass": True,
             "image_bytes": photo_bytes,
         }
@@ -181,10 +183,8 @@ def test_real_photography_priority_and_all_archetype_compatibility(tmp_path: Pat
     with Image.open(tmp_path / published.webp_asset_path) as im_archive:
         assert im_archive.size == (1200, 800)
 
-    # Canonical 37-key v2 feed entry by default, 39-key when curatorial metadata is requested
-    assert len(published.to_feed_entry()) == 37
+    assert published.to_feed_entry()["media_provenance"]["basis"] == "camera_reported"
     enriched_entry = published.to_feed_entry(include_curatorial_metadata=True)
-    assert len(enriched_entry) == 39
     assert enriched_entry["curatorial_archetype"] == "POETIC_CINEMA"
     assert enriched_entry["text_quadrant"] == "upper_right"
 

@@ -15,7 +15,7 @@ artwork_source artwork_url image_data_uri quote quote_attribution window_hours p
 curatorial_archetype text_quadrant date_iso word_of_the_day explanation_phrase composite_score'''.split())
 PHOTO_POLICY_FIELDS = frozenset({'photo_selection_policy', 'photo_selection_policy_date'})
 PUBLIC_EDITORIAL_FIELDS = LEGACY_EDITORIAL_FIELDS | PHOTO_POLICY_FIELDS | {
-    'publication_id', 'release_republication'}
+    'publication_id', 'release_republication', 'media_provenance', 'media_correction'}
 
 
 def public_republication(value):
@@ -56,9 +56,13 @@ def photo_policy_projection(payload):
         valid_date = isinstance(value, str) and date.fromisoformat(value).isoformat() == value
     except (TypeError, ValueError):
         valid_date = False
+    selected_medium = payload.get('visual_medium')
+    if 'media_correction' in payload:
+        from .media_provenance import public_media_correction
+        selected_medium = public_media_correction(payload['media_correction'])['original_visual_medium']
     if (payload['photo_selection_policy'] != 'owner-approved-best-safe-photo'
             or not valid_date or value != str(payload.get('date', ''))[:10]
-            or payload.get('visual_medium') != 'PHOTOGRAPHY'):
+            or selected_medium != 'PHOTOGRAPHY'):
         raise ValueError('Invalid public photo-selection provenance')
     return {key: payload[key] for key in PHOTO_POLICY_FIELDS}
 
@@ -71,6 +75,14 @@ def validate_editorial_entry(payload):
     if payload.get('image_data_uri'):
         raise ValueError('Public editorial JSON cannot contain inline image payloads')
     photo_policy_projection(payload)
+    if 'media_provenance' in payload:
+        from .media_provenance import public_media_provenance
+        public_media_provenance(payload['media_provenance'], medium=payload.get('visual_medium'))
+    if 'media_correction' in payload:
+        from .media_provenance import public_media_correction
+        public_media_correction(payload['media_correction'])
+        if 'media_provenance' not in payload:
+            raise ValueError('Media correction requires source evidence')
     if 'release_republication' in payload:
         # Existing release provenance remains its own strict, reviewed contract.
         record = payload['release_republication']

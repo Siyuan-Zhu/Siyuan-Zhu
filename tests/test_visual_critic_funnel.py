@@ -56,6 +56,7 @@ def test_critic_selects_photography_when_semantic_and_composite_pass_thresholds(
             "photographer_url": "https://unsplash.com/@alexrivera",
             "unsplash_url": "https://unsplash.com/photos/photo_low",
             "download_location": "https://api.unsplash.com/photos/photo_low/download",
+            "exif": {"make": "Fixture Camera", "model": "Fixture camera model"},
             "image_bytes": _make_test_photo_bytes((40, 50, 60)),
             "semantic_alignment": 0.72,
             "compositional_clarity": 0.65,
@@ -69,6 +70,7 @@ def test_critic_selects_photography_when_semantic_and_composite_pass_thresholds(
             "photographer_url": "https://unsplash.com/@elenarostova",
             "unsplash_url": "https://unsplash.com/photos/photo_winner",
             "download_location": "https://api.unsplash.com/photos/photo_winner/download",
+            "exif": {"make": "Fixture Camera", "model": "Fixture camera model"},
             "image_bytes": _make_test_photo_bytes((24, 90, 140)),
             "semantic_alignment": 0.84,
             "compositional_clarity": 0.80,
@@ -182,6 +184,7 @@ def test_critic_selects_photography_when_semantic_and_composite_pass_thresholds(
         "quote",
         "quote_attribution",
         "window_hours",
+        "media_provenance",
     ]
     assert list(entry.keys()) == expected_keys
     assert entry["artwork_title"] == "Cantilever"
@@ -204,6 +207,7 @@ def test_critic_routes_to_commissioned_art_when_below_threshold_and_budget_avail
             "photographer_url": "https://unsplash.com/@samlee",
             "unsplash_url": "https://unsplash.com/photos/weak_1",
             "download_location": "https://api.unsplash.com/photos/weak_1/download",
+            "exif": {"make": "Fixture Camera", "model": "Fixture camera model"},
             "image_bytes": _make_test_photo_bytes(),
             "semantic_alignment": 0.55,  # < 0.70 threshold
             "compositional_clarity": 0.80,
@@ -231,9 +235,10 @@ def test_critic_routes_to_commissioned_art_when_below_threshold_and_budget_avail
 
 
 def test_critic_enforces_80_20_cap_when_6_non_photo_days_already_used(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When non-photo days in 30d >= 6, force PHOTOGRAPHY using highest semantic_alignment candidate."""
+    """An exhausted allowance cannot silently weaken photo-fit thresholds."""
+    monkeypatch.setenv("ZEITGEIST_OFFLINE_DEMO", "0")
     commission = _make_sample_commission()
     weak_candidates = [
         {
@@ -242,6 +247,7 @@ def test_critic_enforces_80_20_cap_when_6_non_photo_days_already_used(
             "photographer_url": "https://unsplash.com/@jordankim",
             "unsplash_url": "https://unsplash.com/photos/weak_a",
             "download_location": "https://api.unsplash.com/photos/weak_a/download",
+            "exif": {"make": "Fixture Camera", "model": "Fixture camera model"},
             "image_bytes": _make_test_photo_bytes((50, 60, 70)),
             "semantic_alignment": 0.58,
             "compositional_clarity": 0.70,
@@ -254,6 +260,7 @@ def test_critic_enforces_80_20_cap_when_6_non_photo_days_already_used(
             "photographer_url": "https://unsplash.com/@morganvance",
             "unsplash_url": "https://unsplash.com/photos/weak_b_best_sem",
             "download_location": "https://api.unsplash.com/photos/weak_b_best_sem/download",
+            "exif": {"make": "Fixture Camera", "model": "Fixture camera model"},
             "image_bytes": _make_test_photo_bytes((70, 80, 90)),
             "semantic_alignment": 0.66,  # Below 0.70, but highest semantic_alignment
             "compositional_clarity": 0.60,
@@ -263,7 +270,7 @@ def test_critic_enforces_80_20_cap_when_6_non_photo_days_already_used(
     ]
 
     # 6 non-photo days already used in last 30 days -> budget exhausted!
-    history_30d = ["PHOTOGRAPHY"] * 24 + [
+    history_30d = ["PHOTOGRAPHY"] * 23 + [
         "IMAGEN_3",
         "BESPOKE_SVG",
         "IMAGEN_3",
@@ -272,17 +279,11 @@ def test_critic_enforces_80_20_cap_when_6_non_photo_days_already_used(
         "BESPOKE_SVG",
     ]
 
-    pulse = select_and_render_pulse_assets(
-        commission=commission,
-        medium_history_30d=history_30d,
-        repo_root=tmp_path,
-        date_str="2026-10-27",
-        candidates=weak_candidates,
-    )
-
-    assert pulse.visual_medium == "PHOTOGRAPHY"
-    assert pulse.attribution["photographer_name"] == "Morgan Vance"
-    assert pulse.semantic_alignment_score == pytest.approx(0.66, abs=1e-4)
+    with pytest.raises(ValueError, match="Photography cadence"):
+        select_and_render_pulse_assets(
+            commission=commission, medium_history_30d=history_30d,
+            repo_root=tmp_path, date_str="2026-10-27", candidates=weak_candidates)
+    assert not (tmp_path / 'assets/pulse_manifest.json').exists()
 
 
 def test_update_svg_mood_vote_bar_surgically_patches_svg_and_preserves_valid_xml(
@@ -491,13 +492,14 @@ def test_select_and_render_pulse_assets_enforces_safety_pass_in_primary_80_20_an
     pulse_primary = select_and_render_pulse_assets(
         commission=commission,
         medium_history_30d=["PHOTOGRAPHY"] * 10,
-        repo_root=tmp_path,
+        repo_root=tmp_path / "primary",
         date_str="2026-10-27",
         candidates=[unsafe_high_cand],
     )
     assert pulse_primary.visual_medium == "BESPOKE_SVG"
     assert pulse_primary.attribution["photographer_name"] != "Unsafe Photographer"
 
+    monkeypatch.setenv("ZEITGEIST_OFFLINE_DEMO", "0")
     # 2. Unscored candidate with missing GEMINI_API_KEY fails closed even under 80/20 cap (non_photo_days_30d >= 6)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     unscored_live_cand = {
@@ -512,7 +514,7 @@ def test_select_and_render_pulse_assets_enforces_safety_pass_in_primary_80_20_an
         select_and_render_pulse_assets(
             commission=commission,
             medium_history_30d=["BESPOKE_SVG"] * 6 + ["PHOTOGRAPHY"] * 24,
-            repo_root=tmp_path, date_str="2026-10-27", candidates=[unscored_live_cand],
+            repo_root=tmp_path / "unscored", date_str="2026-10-27", candidates=[unscored_live_cand],
         )
 
     # 3. Live FLUX candidate rejected when Vision Critic returns safety_pass=False
@@ -531,7 +533,7 @@ def test_select_and_render_pulse_assets_enforces_safety_pass_in_primary_80_20_an
     pulse_flux_unsafe = select_and_render_pulse_assets(
         commission=commission,
         medium_history_30d=["PHOTOGRAPHY"] * 10,
-        repo_root=tmp_path,
+        repo_root=tmp_path / "flux",
         date_str="2026-10-27",
         candidates=[],
         bfl_api_key="test-bfl-key",
@@ -711,7 +713,7 @@ def test_live_workflow_flag_routes_bfl_before_gemini_fallback(monkeypatch, tmp_p
     monkeypatch.setattr(visual_router, "_generate_live_imagen3_bytes", lambda *args, **kwargs: None)
     pulse = select_and_render_pulse_assets(
         {"word": "Anchored", "gloss": "Steady craft.", "flux_3_commission_prompts": ["one", "two"]},
-        repo_root=tmp_path, candidates=[])
+        repo_root=tmp_path, candidates=[], medium_history_30d=["PHOTOGRAPHY"] * 4)
     assert calls == ["fixture-only"]
     assert pulse.visual_medium == "FLUX_PRO"
 

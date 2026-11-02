@@ -15,3 +15,7 @@ work/
 
 # Sanitized workflow observations are artifacts, not public profile state.
 .daily-outcomes/
+
+# Private one-edition correction previews, never profile content.
+.media-correction-preview/
+.footer-preview/

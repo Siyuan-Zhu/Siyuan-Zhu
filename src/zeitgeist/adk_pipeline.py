@@ -485,6 +485,7 @@ class ZeitgeistADKOrchestrator:
         """Render and validate in isolation, then conditionally publish one bundle."""
         from src.state_store import get_state_store, PublicationOutcomeUnknown
         from .publication_commit import PublicationWorkspace, publish_bundle
+        from .public_schema import validate_editorial_entry
 
         store = (
             self._state_store
@@ -529,10 +530,12 @@ class ZeitgeistADKOrchestrator:
             payload["publication_id"] = manifest["publication_id"]
             feed_path = workspace.path / "data/pulse_feed.json"
             feed = json.loads(feed_path.read_text())
+            generated_entry = staged.last_published_pulse.to_feed_entry()
+            validate_editorial_entry(generated_entry)
             state = publish_bundle(
                 store,
                 payload,
-                staged.last_published_pulse.to_feed_entry(),
+                generated_entry,
                 expected=expected,
                 local_feed=feed,
                 prepare=prepare,
@@ -542,8 +545,7 @@ class ZeitgeistADKOrchestrator:
             installed = True
             from .visual_router import confirm_published_photo_download
             published_photo = staged.last_published_pulse
-            if (published_photo.visual_medium == "PHOTOGRAPHY"
-                    and published_photo.attribution.get("download_location")
+            if (published_photo.attribution.get("download_location")
                     and os.environ.get("ZEITGEIST_LIVE_UNSPLASH") == "1"):
                 marker = json.loads(journal.read_text())
                 marker.update(status="canonical_committed_download_tracking_pending",
@@ -666,7 +668,7 @@ class ZeitgeistADKOrchestrator:
             w = entry.get("artwork_title") or entry.get("word")
             if w:
                 history_words_30d.append(str(w))
-            m = entry.get("visual_tier_used") or entry.get("visual_medium")
+            m = entry.get("visual_medium") or entry.get("visual_tier_used")
             if m:
                 medium_history_30d.append(str(m))
             arch = entry.get("curatorial_archetype")
@@ -733,30 +735,41 @@ class ZeitgeistADKOrchestrator:
 
             curated_candidates = fetch_curated_library_candidates(word=commission.word)
 
+        from .visual_router import PhotoSelectionUnavailable
+        exception_candidates = []
         def render_commission(current, *, photo_only=None):
-            return select_and_render_pulse_assets(
-                commission=current,
-                medium_history_30d=medium_history_30d,
-                archetype_history_30d=archetype_history_30d,
-                breakout_surge=is_breakout,
-                repo_root=self.repo_root,
-                date_str=str(date_iso)[:10],
-                candidates=[] if photo_only is False else curated_candidates,
-                orbit_resonance_score=orbit_res,
-                velocity_score=vel_score,
-                cluster_keywords=c_keywords,
-                cluster_silhouette=c_sil,
-                mood_votes=tally,
-                requested_medium="photo" if photo_only is True else requested_medium,
-                require_semantic_rescore=bool(owner.get("enabled") and not _offline_demo_enabled(offline_demo)),
-                photo_history_30d=feed_entries,
-                judge_model=str(config.get("budget_guardrails", {}).get("multimodal_judge_model", "gemini-3.8-flash")),
-                strict_photo_errors=genai_client is not None,
-            )
+            nonlocal exception_candidates
+            try:
+                return select_and_render_pulse_assets(
+                    commission=current,
+                    medium_history_30d=medium_history_30d,
+                    archetype_history_30d=archetype_history_30d,
+                    breakout_surge=is_breakout,
+                    repo_root=self.repo_root,
+                    date_str=str(date_iso)[:10],
+                    candidates=exception_candidates if photo_only is False else curated_candidates,
+                    orbit_resonance_score=orbit_res,
+                    velocity_score=vel_score,
+                    cluster_keywords=c_keywords,
+                    cluster_silhouette=c_sil,
+                    mood_votes=tally,
+                    requested_medium="photo" if photo_only is True else requested_medium,
+                    require_semantic_rescore=bool(owner.get("enabled") and not _offline_demo_enabled(offline_demo)),
+                    photo_history_30d=feed_entries,
+                    judge_model=str(config.get("budget_guardrails", {}).get("multimodal_judge_model", "gemini-3.8-flash")),
+                    strict_photo_errors=genai_client is not None,
+                    offline_demo=offline_demo is True,
+                )
+            except PhotoSelectionUnavailable as exc:
+                # Only candidates scored against this exact commission survive to
+                # the allowed exception phase; never reuse another story's score.
+                exception_candidates = exc.exception_candidates
+                raise
         if genai_client is not None and requested_medium == "blueprint":
             from .photo_recovery import ai_exception_allowed
-            modes = [str(entry.get("visual_medium") or entry.get("visual_tier_used") or "UNKNOWN") for entry in feed_entries if isinstance(entry,dict)]
-            if not ai_exception_allowed(modes) or any(str(entry.get("date", ""))[:10]==str(date_iso)[:10] for entry in feed_entries if isinstance(entry,dict)):
+            from .media_provenance import publication_media_history
+            modes = publication_media_history(feed_entries, replacing_date=str(date_iso))
+            if not ai_exception_allowed(modes):
                 raise ValueError("Non-photo cadence does not permit this requested edition")
         if genai_client is not None and requested_medium != "blueprint":
             from .photo_recovery import recover_visual, revision_owner_constraints
@@ -772,10 +785,11 @@ class ZeitgeistADKOrchestrator:
                 if revised.fallback_used or revised.selected_cluster_id!=current.selected_cluster_id:
                     raise ValueError("Same-story photo recovery did not produce a grounded commission")
                 return revised
-            cadence_history = [str(entry.get("visual_medium") or entry.get("visual_tier_used") or "UNKNOWN") for entry in feed_entries[:30] if isinstance(entry,dict)]
+            from .media_provenance import publication_media_history
+            cadence_history = publication_media_history(feed_entries, replacing_date=str(date_iso))
             commission, published, recovery_trace = recover_visual(commission,
                 render=render_commission, revise=revise_for_photo, history=cadence_history,
-                photo_required=requested_medium=="photo" or any(str(entry.get("date", ""))[:10]==str(date_iso)[:10] for entry in feed_entries if isinstance(entry,dict)))
+                photo_required=requested_medium=="photo")
             self.last_commission = commission
             self.last_photo_recovery = recovery_trace
         else:
