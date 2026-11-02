@@ -90,7 +90,12 @@ def test_corrected_render_retains_strict_typed_public_contract(mutation):
     from src.zeitgeist.media_correction import evidence
     from src.zeitgeist.public_schema import validate_editorial_entry
     entry = current_entry()
-    entry.update(visual_medium='DIGITAL_ARTWORK', media_provenance=evidence(),
+    provenance = evidence()
+    entry.update(visual_medium='DIGITAL_ARTWORK', media_provenance=provenance,
+                 image_url=provenance['source_url'], artwork_url=provenance['source_url'],
+                 artwork_source='Unsplash', artwork_artist='Richard Horvath',
+                 unsplash_photographer='Richard Horvath',
+                 unsplash_profile_url='https://unsplash.com/@ricvath',
                  media_correction={'kind': 'source_medium_correction',
                      'original_publication_id': '11111111111111111111',
                      'original_visual_medium': 'PHOTOGRAPHY'})
