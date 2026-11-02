@@ -321,13 +321,19 @@ def test_firestore_rules_permits_all_eight_text_quadrant_tokens() -> None:
     assert content.count("'margin_outside'") >= 2
 
 
-def test_readme_omits_duplicate_markdown_caption_below_picture() -> None:
-    """Verify README.md renders the <picture> tag and Stitch slash-bar without a duplicate Markdown word/phrase line."""
-    readme_path = Path(__file__).resolve().parent.parent / "README.md"
-    content = readme_path.read_text(encoding="utf-8")
-    assert "<picture>" in content
+def test_readme_omits_duplicate_markdown_caption_below_daily_artwork() -> None:
+    """Theme-paired artwork has its attribution bar, without a second word/gloss line."""
+    import json
+    from scripts.build_readme import render_profile_markdown
+    from src.state_store import JsonFileStateStore
+    root = Path(__file__).resolve().parent.parent
+    content = render_profile_markdown(root, write_assets=False,
+                                      state_store=JsonFileStateStore(root))
+    assert 'daily_pulse_light.webp?v=' in content and '#gh-light-mode-only' in content
+    assert 'daily_pulse_dark.webp?v=' in content and '#gh-dark-mode-only' in content
     assert "Spot On" in content and "Too Sunny" in content and "Too Heavy" in content
-    assert "**Isobaric** — _Holding equal pressure across shifting fronts._" not in content
+    pulse = json.loads((root / 'data/zeitgeist_state.json').read_text())
+    assert f"**{pulse['word']}** — _{pulse['gloss']}_" not in content
 
 
 def test_render_curatorial_plates_wrapper_returns_path_dict(tmp_path: Path) -> None:

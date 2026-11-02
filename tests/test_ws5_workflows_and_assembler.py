@@ -93,7 +93,8 @@ def test_render_profile_markdown_includes_cache_busting_7_columns_mode_and_moods
     store = InMemoryStateStore()
     store.save_game_state(create_initial_game_state())
     md = render_profile_markdown(REPO_ROOT, state_store=store, write_assets=False)
-    assert "assets/daily_pulse.svg?v=" in md
+    assert "assets/daily_pulse_light.webp?v=" in md and "#gh-light-mode-only" in md
+    assert "assets/daily_pulse_dark.webp?v=" in md and "#gh-dark-mode-only" in md
     assert "assets/game_board.svg?v=" in md
     for col in range(1, 8):
         assert (

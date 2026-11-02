@@ -60,9 +60,9 @@ def write_typography(root):
             path.write_bytes(raw)
     manifest.write_text(json.dumps({"input_sha256": signature, "files": hashes},sort_keys=True,indent=2)+"\n")
 
-def picture(kind, prefix, alt, width=740):
+def picture(kind, prefix, alt, width=740, *, version=None):
     from html import escape
-    version = input_signature()[:12]
+    version = input_signature()[:12] if version is None else version
     # GitHub's theme-only fragments follow its saved theme even when it differs
     # from the OS preference; picture media queries follow the OS instead.
     return (f'<img src="{prefix}/{kind}_light.webp?v={version}#gh-light-mode-only" width="{width}" alt="{escape(alt,quote=True)}">'

@@ -4,7 +4,7 @@
 Design principles (aligned with Ticket #14 & Ticket #17):
   1. Compact approved introduction and subordinate public-feed attribution
      with zero duplicate sidebar chrome or unbuilt website links.
-  2. Pure image-only `daily_pulse.svg` (`<picture>` element) paired with a concise `<= 50`-character
+  2. GitHub-themed daily WebP artwork paired with a concise `<= 50`-character
      caption, platform-level photo credit (or `<= 50`-character SVG explanation), and 1-click Mood poll.
   3. Reactive, rotatable Community Game section (`Connect 4`, `Word Guess`, `20 Questions`) rendered by
      `src/game_engine.py` (`render_readme_game_section`), with turn-locked 1-click move links,
@@ -312,7 +312,8 @@ def render_profile_markdown(
         publication["word"].casefold() != word.casefold() or publication["date"] != pulse_date
     ):
         raise ValueError("README state does not match the generated publication; regenerate before publishing")
-    pulse_sha8 = hashlib.sha256(f"{pulse_date}:{word}:{phrase}:{tally}".encode("utf-8")).hexdigest()[:8]
+    publication_id = publication["publication_id"] if publication else ""
+    pulse_sha8 = hashlib.sha256(f"{pulse_date}:{word}:{phrase}:{tally}:{publication_id}".encode("utf-8")).hexdigest()[:8]
     pulse_v = f"{pulse_date}-{pulse_sha8}"
 
     game_section = render_readme_game_section(
@@ -333,11 +334,7 @@ def render_profile_markdown(
 
 <h2>{picture("editorial_opening", asset_prefix, OPENING_NAME + " — " + OPENING_PERSPECTIVE + " " + OPENING_GAME)}</h2>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="{asset_prefix}/daily_pulse_dark.webp?v={pulse_v}" type="image/webp">
-  <source media="(prefers-color-scheme: light)" srcset="{asset_prefix}/daily_pulse_light.webp?v={pulse_v}" type="image/webp">
-  <img alt="{word} — {phrase}" src="{asset_prefix}/daily_pulse.svg?v={pulse_v}" width="100%">
-</picture>
+{picture("daily_pulse", asset_prefix, word + " — " + phrase, width="100%", version=pulse_v)}
 
 </div>
 

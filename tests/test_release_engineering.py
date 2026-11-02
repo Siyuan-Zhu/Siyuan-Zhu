@@ -239,12 +239,17 @@ def test_live_repository_bundle_passes_release_validator_and_check_all_readmes()
     from scripts import validate_release_links
 
     slug = _repository_issue_slug(REPO_ROOT)
-    assert build_readme.check_all_readmes(REPO_ROOT, repo_slug=slug) is True
-    report = validate_release_links.validate_release_bundle(
-        REPO_ROOT,
-        expected_repo_slug=slug,
-    )
-    assert report["ok"] is True, f"Live repository failed release validation: {report['errors']}"
+    # Round-trip the committed fixture's presentation mode. This does not verify
+    # deployment enablement; live repository variables/readiness do that separately.
+    paused = "<sub>Game paused." in (REPO_ROOT / "README.md").read_text()
+    with pytest.MonkeyPatch.context() as fixture_env:
+        fixture_env.setenv("COMMUNITY_GAME_ENABLED", "false" if paused else "true")
+        assert build_readme.check_all_readmes(REPO_ROOT, repo_slug=slug) is True
+        report = validate_release_links.validate_release_bundle(
+            REPO_ROOT,
+            expected_repo_slug=slug,
+        )
+        assert report["ok"] is True, f"Live repository failed release validation: {report['errors']}"
 
 
 def test_firestore_collection_prefix_isolation_and_sanitization(
@@ -990,17 +995,37 @@ def test_single_writer_workflow_guards_and_remote_staging_pipeline_contracts() -
 
 
 
+@pytest.mark.parametrize("enabled", ["true", "false"])
 @pytest.mark.parametrize("slug", ["Siyuan-Zhu/Siyuan-Zhu", "Siyuan-Zhu/readme-live-sandbox"])
-def test_repository_bundle_audit_uses_actual_single_approved_issue_slug(tmp_path, monkeypatch, slug):
+def test_repository_bundle_audit_uses_actual_single_approved_issue_slug(tmp_path, monkeypatch, slug, enabled):
     """The same audit must accept the real staging tree and the public export."""
     import sys
     from src.state_store import JsonFileStateStore
     for folder in ("data", "assets", "variants", "config"):
         shutil.copytree(REPO_ROOT / folder, tmp_path / folder)
     shutil.copy2(REPO_ROOT / "PROJECTS.md", tmp_path / "PROJECTS.md")
+    monkeypatch.setenv("COMMUNITY_GAME_ENABLED", enabled)
     build_readme.build_all_readmes(tmp_path, repo_slug=slug, state_store=JsonFileStateStore(tmp_path))
+    content = (tmp_path / "README.md").read_text()
+    if enabled == "false":
+        assert "<sub>Game paused." in content
+        assert "title=game:move:" not in content
+        assert "title=pulse:vote:spot_on" in content
+    else:
+        assert "<sub>Game paused." not in content
+        assert "title=game:move:" in content
+    # CI's ambient setting may differ from the recorded fixture. The audit must
+    # round-trip the fixture itself, without changing the wider test environment.
+    ambient = "false" if enabled == "true" else "true"
+    monkeypatch.setenv("COMMUNITY_GAME_ENABLED", ambient)
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     test_live_repository_bundle_passes_release_validator_and_check_all_readmes()
+    import os
+    assert os.environ["COMMUNITY_GAME_ENABLED"] == ambient
+    # Matching the recorded mode must not excuse malformed interactive controls.
+    (tmp_path / "README.md").write_text(content.replace("title=pulse:vote:spot_on", "title=pulse:vote:unexpected"))
+    with pytest.raises(AssertionError):
+        test_live_repository_bundle_passes_release_validator_and_check_all_readmes()
 
 
 @pytest.mark.parametrize("slugs", [[], ["Unapproved/Repository"], ["Siyuan-Zhu/Siyuan-Zhu", "Siyuan-Zhu/readme-live-sandbox"]])

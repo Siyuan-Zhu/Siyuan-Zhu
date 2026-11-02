@@ -2,11 +2,7 @@
 
 <h2><img src="../assets/editorial_opening_light.webp?v=7d4ad7e39c4e#gh-light-mode-only" width="740" alt="Hi, I’m David — An image of the times—well, it’s all a matter of perspective. Connect Four looks easy enough. Stay for a move, or just a moment."><img src="../assets/editorial_opening_dark.webp?v=7d4ad7e39c4e#gh-dark-mode-only" width="740" alt="Hi, I’m David — An image of the times—well, it’s all a matter of perspective. Connect Four looks easy enough. Stay for a move, or just a moment."></h2>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../assets/daily_pulse_dark.webp?v=2026-11-01-5dadf5ff" type="image/webp">
-  <source media="(prefers-color-scheme: light)" srcset="../assets/daily_pulse_light.webp?v=2026-11-01-5dadf5ff" type="image/webp">
-  <img alt="Insinuation — Silent infiltration of trusted synthetic minds." src="../assets/daily_pulse.svg?v=2026-11-01-5dadf5ff" width="100%">
-</picture>
+<img src="../assets/daily_pulse_light.webp?v=2026-11-01-b5dd3143#gh-light-mode-only" width="100%" alt="Insinuation — Silent infiltration of trusted synthetic minds."><img src="../assets/daily_pulse_dark.webp?v=2026-11-01-b5dd3143#gh-dark-mode-only" width="100%" alt="Insinuation — Silent infiltration of trusted synthetic minds.">
 
 </div>
 

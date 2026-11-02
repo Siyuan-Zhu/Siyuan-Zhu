@@ -845,7 +845,10 @@ class TestSubsystem4MobileControlPlaneCloudRunAndAssembler(unittest.TestCase):
                 f"Projects in {order_key} variant do not match VARIANT_ORDERS[{order_key}]",
             )
 
-        self.assertIn("./assets/daily_pulse.svg", readme_text)
+        self.assertIn("./assets/daily_pulse_light.webp?v=", readme_text)
+        self.assertIn("./assets/daily_pulse_dark.webp?v=", readme_text)
+        self.assertIn("#gh-light-mode-only", readme_text)
+        self.assertIn("#gh-dark-mode-only", readme_text)
         self.assertIn("./assets/game_board.svg", readme_text)
         self.assertIn("title=game:move:", readme_text)
         self.assertTrue("/vote?dir=" in readme_text or "title=pulse:vote:" in readme_text)
