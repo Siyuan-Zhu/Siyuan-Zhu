@@ -4,12 +4,34 @@
   "word": "Insinuation",
   "gloss": "Silent infiltration of trusted synthetic minds.",
   "archetype": "STUDIO_MONOGRAPH",
-  "medium": "PHOTOGRAPHY",
+  "medium": "DIGITAL_ARTWORK",
   "files": {
-    "assets/daily_pulse_light.webp": "73116db809da244d1f3343127d828a3e727f0b5552e39d438bb26f23ed3bce52",
-    "assets/daily_pulse_dark.webp": "bfe196090b61336b00894d80a0f63bd55cc305a4acb32e0f0782ab1225f2a5ae",
-    "assets/daily_pulse.svg": "8ddbd49826b7872b6cb3775e6decf5bcf074dd557b151d44a82f1c882bef84db",
+    "assets/daily_pulse_light.webp": "55e9fe2a595891f8aed163f2cb8dbdd51a4e852431cb0f08f3b1166c6bc62e88",
+    "assets/daily_pulse_dark.webp": "9a56c505faa1448299b40f48d016c027106e9cf4f89ee83321fbb0aa8c4747d0",
+    "assets/daily_pulse.svg": "578821915da103cac3df2886d51e0f3ec8dd5f8b23b0620a0ccd879f9c18a337",
     "assets/pulse/2026-11-01.webp": "c7ff60cfae913b9c065e79b992066e8b238a438fc55ce023dca0a79a003f3ec3"
   },
-  "publication_id": "15c81bf657ff79988af4"
+  "media_provenance": {
+    "version": 1,
+    "classification": "DIGITAL_ARTWORK",
+    "basis": "source_declared_digital",
+    "provider": "unsplash",
+    "asset_id": "WOA3QKFjlo8",
+    "source_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "camera_make": "",
+    "camera_model": "",
+    "allowance_exception": true,
+    "source_claim": {
+      "kind": "creation_declaration",
+      "process": "3d_particle_system",
+      "statement": "The artwork is a 3D particle system"
+    },
+    "source_statement_sha256": "3d836a70ad56984deb7cfc7e44e60a2eb2a5416b86f88f547349614a51e764da"
+  },
+  "media_correction": {
+    "kind": "source_medium_correction",
+    "original_publication_id": "15c81bf657ff79988af4",
+    "original_visual_medium": "PHOTOGRAPHY"
+  },
+  "publication_id": "daf9ef5d30db2298a785"
 }

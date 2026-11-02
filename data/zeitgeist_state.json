@@ -1,4 +1,48 @@
 {
+  "curatorial_archetype": "STUDIO_MONOGRAPH",
+  "date": "2026-11-01",
+  "date_iso": "2026-11-01",
+  "gloss": "Silent infiltration of trusted synthetic minds.",
+  "mood_votes": {
+    "spot_on": 0,
+    "too_sunny": 0,
+    "too_heavy": 0
+  },
+  "publication_id": "daf9ef5d30db2298a785",
+  "published_at": "2026-11-01T13:43:36.796507Z",
+  "schema_version": 3,
+  "state_version": 5,
+  "text_quadrant": "margin_bottom",
+  "updated_at": "2026-11-01T13:43:36.796507Z",
+  "visitor_mood_tally": {
+    "spot_on": 0,
+    "too_sunny": 0,
+    "too_heavy": 0
+  },
+  "visual_medium": "DIGITAL_ARTWORK",
+  "word": "Insinuation",
+  "media_provenance": {
+    "asset_id": "WOA3QKFjlo8",
+    "source_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "camera_make": "",
+    "allowance_exception": true,
+    "version": 1,
+    "source_claim": {
+      "process": "3d_particle_system",
+      "statement": "The artwork is a 3D particle system",
+      "kind": "creation_declaration"
+    },
+    "provider": "unsplash",
+    "basis": "source_declared_digital",
+    "camera_model": "",
+    "source_statement_sha256": "3d836a70ad56984deb7cfc7e44e60a2eb2a5416b86f88f547349614a51e764da",
+    "classification": "DIGITAL_ARTWORK"
+  },
+  "media_correction": {
+    "kind": "source_medium_correction",
+    "original_publication_id": "15c81bf657ff79988af4",
+    "original_visual_medium": "PHOTOGRAPHY"
+  },
   "analysis": {
     "arousal": 53.0,
     "composite_score": 66.8,
@@ -12,17 +56,19 @@
     "visual_concrete_anchor": "A glowing spectral filament subtly weaving through dark, translucent circuit glass",
     "word_of_the_day": "Insinuation"
   },
-  "curatorial_archetype": "STUDIO_MONOGRAPH",
-  "date": "2026-11-01",
-  "date_iso": "2026-11-01",
-  "gloss": "Silent infiltration of trusted synthetic minds.",
-  "mood_votes": {
-    "spot_on": 0,
-    "too_heavy": 0,
-    "too_sunny": 0
+  "visual_decision": {
+    "composite_score": 0.679,
+    "credit_label": "Richard Horvath",
+    "credit_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "explanation_phrase": "Silent infiltration of trusted synthetic minds.",
+    "image_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+    "minimalist_restraint": 0.679,
+    "safety_pass": true,
+    "selected_mode": "DIGITAL_ARTWORK",
+    "semantic_alignment": 0.68,
+    "word_of_the_day": "Insinuation",
+    "local_svg_path": "assets/daily_pulse.svg"
   },
-  "publication_id": "15c81bf657ff79988af4",
-  "published_at": "2026-11-01T13:43:36.796507Z",
   "published_pulse": {
     "24h_shift": 0.24,
     "artwork_artist": "Richard Horvath",
@@ -38,8 +84,8 @@
     ],
     "commissioned_thesis": "Security researchers demonstrate that a harmless shared link can silently commandeer authenticated AI sessions, turning familiar generative conversational interfaces into unwitting vectors of systemic infiltration.",
     "critic_scores": {
-      "composite": 0.679,
-      "semantic_alignment": 0.68
+      "semantic_alignment": 0.68,
+      "composite": 0.679
     },
     "date": "2026-11-01",
     "dominant_category": "AI & Distributed Systems",
@@ -53,15 +99,13 @@
     "macro_contribution_pct": 38.0,
     "mood_votes": {
       "spot_on": 0,
-      "too_heavy": 0,
-      "too_sunny": 0
+      "too_sunny": 0,
+      "too_heavy": 0
     },
     "orbit_contribution_pct": 62.0,
     "orbit_sources_matched": [],
     "orbit_weight_ratio": 0.62,
-    "photo_selection_policy": "owner-approved-best-safe-photo",
-    "photo_selection_policy_date": "2026-11-01",
-    "publication_id": "15c81bf657ff79988af4",
+    "publication_id": "daf9ef5d30db2298a785",
     "published_at": "2026-11-01T13:43:36.796507Z",
     "quote": "Silent infiltration of trusted synthetic minds.",
     "quote_attribution": "Editorial Director Synthesis",
@@ -85,33 +129,33 @@
     "unsplash_photographer": "Richard Horvath",
     "unsplash_profile_url": "https://unsplash.com/@ricvath",
     "updated_at": "2026-11-01T13:43:36.796507Z",
-    "visual_medium": "PHOTOGRAPHY",
-    "visual_tier_used": "PHOTOGRAPHY",
+    "visual_medium": "DIGITAL_ARTWORK",
+    "visual_tier_used": "DIGITAL_ARTWORK",
     "window_hours": 96,
-    "word": "Insinuation"
-  },
-  "schema_version": 3,
-  "state_version": 4,
-  "text_quadrant": "margin_bottom",
-  "updated_at": "2026-11-01T13:43:36.796507Z",
-  "visitor_mood_tally": {
-    "spot_on": 0,
-    "too_heavy": 0,
-    "too_sunny": 0
-  },
-  "visual_decision": {
-    "composite_score": 0.679,
-    "credit_label": "Richard Horvath",
-    "credit_url": "https://unsplash.com/photos/WOA3QKFjlo8",
-    "explanation_phrase": "Silent infiltration of trusted synthetic minds.",
-    "image_url": "https://unsplash.com/photos/WOA3QKFjlo8",
-    "local_svg_path": "assets/daily_pulse.svg",
-    "minimalist_restraint": 0.679,
-    "safety_pass": true,
-    "selected_mode": "CURATED_PHOTO",
-    "semantic_alignment": 0.68,
-    "word_of_the_day": "Insinuation"
-  },
-  "visual_medium": "PHOTOGRAPHY",
-  "word": "Insinuation"
+    "word": "Insinuation",
+    "photo_selection_policy": "owner-approved-best-safe-photo",
+    "photo_selection_policy_date": "2026-11-01",
+    "media_provenance": {
+      "basis": "source_declared_digital",
+      "camera_make": "",
+      "provider": "unsplash",
+      "allowance_exception": true,
+      "source_claim": {
+        "process": "3d_particle_system",
+        "kind": "creation_declaration",
+        "statement": "The artwork is a 3D particle system"
+      },
+      "source_url": "https://unsplash.com/photos/WOA3QKFjlo8",
+      "classification": "DIGITAL_ARTWORK",
+      "asset_id": "WOA3QKFjlo8",
+      "camera_model": "",
+      "version": 1,
+      "source_statement_sha256": "3d836a70ad56984deb7cfc7e44e60a2eb2a5416b86f88f547349614a51e764da"
+    },
+    "media_correction": {
+      "original_visual_medium": "PHOTOGRAPHY",
+      "original_publication_id": "15c81bf657ff79988af4",
+      "kind": "source_medium_correction"
+    }
+  }
 }
