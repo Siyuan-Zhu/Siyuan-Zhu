@@ -1,37 +1,32 @@
 {
   "version": 1,
-  "date": "2026-11-01",
-  "word": "Insinuation",
-  "gloss": "Silent infiltration of trusted synthetic minds.",
-  "archetype": "STUDIO_MONOGRAPH",
-  "medium": "DIGITAL_ARTWORK",
+  "date": "2026-11-02",
+  "word": "Assemblage",
+  "gloss": "A shared call to gather in communal sanctuary.",
+  "archetype": "KYOTO_TANKOBON",
+  "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "55e9fe2a595891f8aed163f2cb8dbdd51a4e852431cb0f08f3b1166c6bc62e88",
-    "assets/daily_pulse_dark.webp": "9a56c505faa1448299b40f48d016c027106e9cf4f89ee83321fbb0aa8c4747d0",
-    "assets/daily_pulse.svg": "578821915da103cac3df2886d51e0f3ec8dd5f8b23b0620a0ccd879f9c18a337",
-    "assets/pulse/2026-11-01.webp": "c7ff60cfae913b9c065e79b992066e8b238a438fc55ce023dca0a79a003f3ec3"
+    "assets/daily_pulse_light.webp": "b505b4bb1cb4298efc3db177faa8cc411cbc6e46b82b1797ae3f264b06027d38",
+    "assets/daily_pulse_dark.webp": "2d8ac8e3bb67575a37216dc03e22589e1afd0df65d1d06524a88aa7553eefb8f",
+    "assets/daily_pulse.svg": "0f8ad6fb0cb8540b18626fc8e76362bb8f21bf1585199df90bb933fb524d6f98",
+    "assets/pulse/2026-11-02.webp": "9fe584d13cf82c51e9ef958195ce9d2c3f9bb2c80b7ea7c5dd613d2c293ff5f5"
   },
   "media_provenance": {
     "version": 1,
-    "classification": "DIGITAL_ARTWORK",
-    "basis": "source_declared_digital",
+    "classification": "PHOTOGRAPHY",
+    "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "WOA3QKFjlo8",
-    "source_url": "https://unsplash.com/photos/WOA3QKFjlo8",
-    "camera_make": "",
-    "camera_model": "",
-    "allowance_exception": true,
+    "asset_id": "bJnndmmymW8",
+    "source_url": "https://unsplash.com/photos/bJnndmmymW8",
+    "camera_make": "Canon",
+    "camera_model": "EOS R5",
     "source_claim": {
-      "kind": "creation_declaration",
-      "process": "3d_particle_system",
-      "statement": "The artwork is a 3D particle system"
+      "kind": "none",
+      "process": "unknown",
+      "statement": ""
     },
-    "source_statement_sha256": "3d836a70ad56984deb7cfc7e44e60a2eb2a5416b86f88f547349614a51e764da"
+    "source_statement_sha256": "",
+    "allowance_exception": false
   },
-  "media_correction": {
-    "kind": "source_medium_correction",
-    "original_publication_id": "15c81bf657ff79988af4",
-    "original_visual_medium": "PHOTOGRAPHY"
-  },
-  "publication_id": "daf9ef5d30db2298a785"
+  "publication_id": "69629c31876ed2b6f9a8"
 }
