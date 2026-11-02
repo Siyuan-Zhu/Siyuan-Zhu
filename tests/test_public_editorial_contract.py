@@ -1,19 +1,38 @@
 import copy
-import json
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 def current_entry():
-    entry = json.loads((ROOT / 'data/zeitgeist_state.json').read_text())['published_pulse']
-    # Keep synthetic policy cases stable after a later ordinary edition. The
-    # checked-in feed itself is validated separately by the runtime-schema test.
-    entry.update(visual_medium='PHOTOGRAPHY', photo_selection_policy='owner-approved-best-safe-photo',
-                 photo_selection_policy_date=str(entry['date'])[:10])
-    return entry
+    # This is a complete, deterministic photography DTO. Never inherit the
+    # current edition's medium/evidence and then relabel it as a photograph.
+    return {
+        'schema_version': '2.0', 'date': '2026-11-01',
+        'publication_id': '0123456789abcdef0123', 'word': 'Threshold',
+        'gloss': 'Pressure gathers at a familiar edge.',
+        'commissioned_thesis': 'Independent signals meet at a shared boundary.',
+        'visual_medium': 'PHOTOGRAPHY',
+        'image_url': 'https://unsplash.com/photos/fixture-photo',
+        'fallback_webp_path': 'assets/pulse/2026-11-01.webp',
+        'unsplash_photographer': 'Fixture Photographer',
+        'unsplash_profile_url': 'https://unsplash.com/@fixture',
+        'flux_model': None, 'cluster_keywords': ['boundary'],
+        'orbit_contribution_pct': 60.0, 'macro_contribution_pct': 40.0,
+        'orbit_sources_matched': ['fixture-source'], 'runner_up_clusters': [],
+        'mood_votes': {'spot_on': 0, 'too_sunny': 0, 'too_heavy': 0},
+        'critic_scores': {'semantic_alignment': 0.9, 'composite': 0.9},
+        'published_at': '2026-11-01T00:00:00Z', 'updated_at': '2026-11-01T00:00:00Z',
+        'image_data_uri': '', 'photo_selection_policy': 'owner-approved-best-safe-photo',
+        'photo_selection_policy_date': '2026-11-01',
+        'media_provenance': {
+            'version': 1, 'classification': 'PHOTOGRAPHY', 'basis': 'camera_reported',
+            'provider': 'unsplash', 'asset_id': 'fixture-photo',
+            'source_url': 'https://unsplash.com/photos/fixture-photo',
+            'camera_make': 'SONY', 'camera_model': 'ILCE-6300',
+            'allowance_exception': False, 'source_statement_sha256': '',
+            'source_claim': {'kind': 'none', 'process': 'unknown', 'statement': ''},
+        },
+    }
 
 
 def test_current_exception_is_valid_and_export_preserves_its_provenance():
@@ -64,3 +83,25 @@ def test_unrecognized_generated_field_blocks_before_canonical_commit(tmp_path, m
             '2026-10-30', prefer_visual_mode='blueprint', offline_demo=True)
     assert wire.docs == before_remote and wire.commits == []
     assert _published_files(tmp_path) == before_files
+
+
+@pytest.mark.parametrize('mutation', ['none', 'medium_mismatch', 'extra_evidence', 'invalid_correction'])
+def test_corrected_render_retains_strict_typed_public_contract(mutation):
+    from src.zeitgeist.media_correction import evidence
+    from src.zeitgeist.public_schema import validate_editorial_entry
+    entry = current_entry()
+    entry.update(visual_medium='DIGITAL_ARTWORK', media_provenance=evidence(),
+                 media_correction={'kind': 'source_medium_correction',
+                     'original_publication_id': '11111111111111111111',
+                     'original_visual_medium': 'PHOTOGRAPHY'})
+    if mutation == 'none':
+        validate_editorial_entry(entry)
+        return
+    if mutation == 'medium_mismatch':
+        entry['visual_medium'] = 'PHOTOGRAPHY'
+    elif mutation == 'extra_evidence':
+        entry['media_provenance']['private_note'] = 'not public'
+    else:
+        entry['media_correction']['kind'] = 'arbitrary'
+    with pytest.raises(ValueError):
+        validate_editorial_entry(entry)

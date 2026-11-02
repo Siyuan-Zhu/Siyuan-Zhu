@@ -833,11 +833,11 @@ def test_public_json_files_match_runtime_schema_and_no_base64_bloat() -> None:
     # Modern public JSON carries release provenance in addition to the legacy
     # history DTO. Keep legacy wire/rules checks strict and validate the exact
     # typed public extension rather than accepting arbitrary new source fields.
-    allowed = FIRESTORE_PULSE_HISTORY_ALLOWED_FIELDS | (
-        {"publication_id", "release_republication", "photo_selection_policy",
-         "photo_selection_policy_date"} if modern else set()
-    )
+    from src.zeitgeist.public_schema import PUBLIC_EDITORIAL_FIELDS, validate_editorial_entry
+    allowed = PUBLIC_EDITORIAL_FIELDS if modern else FIRESTORE_PULSE_HISTORY_ALLOWED_FIELDS
     assert set(pub_pulse).issubset(allowed)
+    if modern:
+        validate_editorial_entry(pub_pulse)
     def assert_public_provenance(payload):
         from src.zeitgeist.public_schema import photo_policy_projection
         photo_policy_projection(payload)
@@ -861,6 +861,8 @@ def test_public_json_files_match_runtime_schema_and_no_base64_bloat() -> None:
         assert entry.get("image_data_uri") == ""
         extra = set(entry) - allowed
         assert not extra, f"Disallowed public feed keys: {extra}"
+        if modern:
+            validate_editorial_entry(entry)
         assert_public_provenance(entry)
         assert SECTION_7_1_FEED_KEYS.issubset(entry)
         _assert_valid_pulse_votes(entry["mood_votes"])
