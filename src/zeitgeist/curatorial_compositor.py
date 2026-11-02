@@ -515,13 +515,12 @@ def _render_kyoto_tankobon_plate(
     visual_medium: str,
     dark_mode: bool,
 ) -> Image.Image:
-    """Render Archetype #4 (`KYOTO_TANKOBON`): Japanese Tankobon jacket with vertical spine & vermilion Hanko seal."""
+    """Render Archetype #4 (`KYOTO_TANKOBON`): Japanese book jacket with a vertical spine."""
     bg = (15, 20, 25) if dark_mode else (251, 249, 245)
     spine_bg = (22, 28, 36) if dark_mode else (244, 240, 232)
     ink_primary = (243, 244, 246) if dark_mode else (24, 24, 27)
     ink_secondary = (168, 162, 158) if dark_mode else (87, 83, 78)
     rule_color = (48, 54, 62) if dark_mode else (220, 214, 204)
-    vermilion = (200, 62, 43)
 
     canvas = Image.new("RGB", (PLATE_WIDTH, PLATE_HEIGHT), color=bg)
     draw = ImageDraw.Draw(canvas)
@@ -542,7 +541,6 @@ def _render_kyoto_tankobon_plate(
     mono_font = _load_font(_MONO_FONT_CANDIDATES, 11)
     gloss_font = _load_font(_SERIF_ITALIC_CANDIDATES, 20)
     vert_font = _load_font(_SERIF_FONT_CANDIDATES, 32.5)
-    seal_font = _load_font(_SERIF_FONT_CANDIDATES, 16)
 
     # Caption beneath plate
     gy = art_y + art_h + 22
@@ -562,14 +560,6 @@ def _render_kyoto_tankobon_plate(
         cw = c_box[2] - c_box[0]
         draw.text((spine_cx - cw // 2, vy), ch, font=vert_font, fill=ink_primary)
         vy += step_y
-
-    # Vermilion Hanko seal at foot of spine
-    seal_size = 44
-    sx0 = spine_cx - seal_size // 2
-    sy0 = PLATE_HEIGHT - 108
-    draw.rectangle([sx0, sy0, sx0 + seal_size, sy0 + seal_size], outline=vermilion, width=2)
-    draw.rectangle([sx0 + 4, sy0 + 4, sx0 + seal_size - 4, sy0 + seal_size - 4], fill=vermilion)
-    draw.text((sx0 + 11, sy0 + 12), "DZ", font=seal_font, fill=(251, 249, 245))
 
     return canvas
 
