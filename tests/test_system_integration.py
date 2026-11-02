@@ -881,7 +881,14 @@ class TestConfidentialityAndZeroDollarCompliance(unittest.TestCase):
         # still pass through the original checks, including the raw currency check.
         if rel_path not in {Path("data/pulse_feed.json"), Path("data/zeitgeist_state.json")}:
             return content.lower()
-        payload = json.loads(content)
+        def unique_fields(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate public JSON field")
+                result[key] = value
+            return result
+        payload = json.loads(content, object_pairs_hook=unique_fields)
         records = (payload.get("entries", []) if rel_path.name == "pulse_feed.json"
                    else [payload, payload.get("published_pulse", {})])
         topic = r"\b" + re.escape("chur" + "ch") + r"s?\b"
@@ -904,6 +911,12 @@ class TestConfidentialityAndZeroDollarCompliance(unittest.TestCase):
         self.assertEqual(entry["summary"], topic)
         self.assertIn(chr(36), entry["private_note"])
         self.assertIn(topic, self._name_scan_text(raw, Path("data/private.json")))
+
+    def test_public_topic_allowance_rejects_hidden_duplicate_json_fields(self) -> None:
+        private_name = "cross" + "walk"
+        raw = '{"entries":[{"summary":' + json.dumps(private_name) + ',"summary":"safe"}]}'
+        with self.assertRaisesRegex(ValueError, "Duplicate public JSON field"):
+            self._name_scan_text(raw, Path("data/pulse_feed.json"))
 
     def test_confidentiality_and_zero_dollar_compliance(self) -> None:
         dollar_char = chr(36)
