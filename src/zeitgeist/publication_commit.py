@@ -51,12 +51,21 @@ def editorial_revision(state: dict) -> str:
 def _bundle(
     payload: dict, entry: dict, existing: dict, feed: dict, tally: dict
 ) -> tuple[dict, dict, dict]:
-    state = _enrich_pulse_state_with_history(_strip_transient_keys(payload), existing)
+    # Validate the actual merged current-state view, not a replacement-shaped
+    # candidate that can omit fields retained by Firestore's update mask.
+    merged = _strip_transient_keys(existing)
+    merged.update(_strip_transient_keys(payload))
+    state = _enrich_pulse_state_with_history(merged, existing)
     item = _strip_transient_keys(entry)
     if payload.get("publication_id"):
         item["publication_id"] = payload["publication_id"]
     item["schema_version"] = "2.0"
     item["mood_votes"] = copy.deepcopy(tally)
+    from .public_schema import EDITION_METADATA_FIELDS
+    for key in EDITION_METADATA_FIELDS:
+        # Explicit null clears old edition metadata in both REST and SDK merges.
+        # Absence from an update would leave yesterday's evidence in place.
+        state[key] = copy.deepcopy(item.get(key))
     state.update(
         schema_version=3,
         visitor_mood_tally=copy.deepcopy(tally),
@@ -121,6 +130,14 @@ def publish_bundle(
                 raise PublicationConflict(
                     "A newer editorial publication exists; regenerate from it"
                 )
+            from .public_schema import EDITION_METADATA_FIELDS
+            previous_entry = snaps[1].to_dict() if snaps[1].exists else {}
+            if any(key in previous_entry and key not in entry
+                   for key in EDITION_METADATA_FIELDS):
+                # Historical/public entries cannot use the private root's null
+                # clears. Refuse an unsupported same-day metadata removal before
+                # any write rather than leave a merge-shaped corrupt history row.
+                raise ValueError("Same-date metadata removal requires explicit correction")
             # A missing canonical feed may only be bootstrapped from canonical
             # history; the workspace JSON may predate accepted remote entries.
             feed = (snaps[2].to_dict() if snaps[2].exists else

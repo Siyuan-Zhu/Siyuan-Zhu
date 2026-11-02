@@ -14,6 +14,10 @@ top_orbit_themes top_macro_themes visual_tier_used artwork_title artwork_artist
 artwork_source artwork_url image_data_uri quote quote_attribution window_hours palette_hex
 curatorial_archetype text_quadrant date_iso word_of_the_day explanation_phrase composite_score'''.split())
 PHOTO_POLICY_FIELDS = frozenset({'photo_selection_policy', 'photo_selection_policy_date'})
+# Canonical current-state projections use explicit nulls to clear these fields
+# across Firestore merge updates. Public entries and historical rows remain strict.
+EDITION_METADATA_FIELDS = PHOTO_POLICY_FIELDS | {
+    'media_provenance', 'media_correction', 'release_republication'}
 PUBLIC_EDITORIAL_FIELDS = LEGACY_EDITORIAL_FIELDS | PHOTO_POLICY_FIELDS | {
     'publication_id', 'release_republication', 'media_provenance', 'media_correction'}
 

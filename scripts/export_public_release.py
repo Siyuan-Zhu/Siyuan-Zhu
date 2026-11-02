@@ -181,7 +181,12 @@ def _editorial(value):
 
 def public_editorial_state(original):
     """The closed display state; canonical commission/telemetry stay private."""
-    pulse = _editorial(original)
+    from src.zeitgeist.public_schema import EDITION_METADATA_FIELDS
+    # Null is an explicit clear only in the private current-state projection.
+    # _editorial and the nested/public entry validator still reject null evidence.
+    current = {key: value for key, value in original.items()
+               if key not in EDITION_METADATA_FIELDS or value is not None}
+    pulse = _editorial(current)
     if "analysis" in original:
         pulse["analysis"] = _select(original["analysis"], ANALYSIS_FIELDS)
     if "visual_decision" in original:

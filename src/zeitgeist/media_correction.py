@@ -184,6 +184,10 @@ def corrected_metadata(parent, entry, publication_id):
 
 def expected_successor(parent, entry, feed, publication_id, votes):
     state,item = corrected_metadata(parent,entry,publication_id)
+    from .public_schema import EDITION_METADATA_FIELDS
+    # Match the canonical current-state clear representation exactly; the public
+    # historical entry retains its strict absent-or-valid metadata contract.
+    state.update({key:copy.deepcopy(item.get(key)) for key in EDITION_METADATA_FIELDS})
     state.update(schema_version=3,state_version=parent.get('state_version',0)+1,
         visitor_mood_tally=copy.deepcopy(votes),mood_votes=copy.deepcopy(votes))
     item['mood_votes']=copy.deepcopy(votes)
