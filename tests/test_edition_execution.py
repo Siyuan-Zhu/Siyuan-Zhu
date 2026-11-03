@@ -66,7 +66,9 @@ def test_completed_claim_is_noop(monkeypatch):
     assert b.claim(now=NOW+timedelta(hours=1),source_revision='abc',trigger='schedule') is None
 
 
-def test_completion_monitor_checks_edition_and_preserves_owner_hold():
+def test_completion_monitor_checks_edition_and_preserves_owner_hold(monkeypatch):
+    from src.zeitgeist.edition_approval import HELD_EDITIONS
+    monkeypatch.setitem(HELD_EDITIONS, '2026-11-03', frozenset())
     from scripts.check_editorial_deadline import assess
     assert assess({'date':'2026-11-02'},datetime(2026,11,3,10,tzinfo=timezone.utc))['status']=='approval_pending'
     assert assess({'date':'2026-11-02'},datetime(2026,11,4,10,tzinfo=timezone.utc))['status']=='publication_missing'

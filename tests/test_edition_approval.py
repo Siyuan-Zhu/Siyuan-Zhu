@@ -22,3 +22,9 @@ def test_direct_production_generation_is_held_before_storage_or_providers(tmp_pa
     store=object.__new__(FirestoreStateStore);store.collection_prefix=''
     with pytest.raises(PermissionError):
         ZeitgeistADKOrchestrator(tmp_path,store).run('2026-11-03')
+
+
+def test_exact_owner_approved_publication_identity_is_accepted():
+    require_edition_approval({'date':'2026-11-03','publication_id':'ff043f9a96df9c9a42ec'})
+    with pytest.raises(PermissionError):
+        require_edition_approval({'date':'2026-11-03','publication_id':'other'})

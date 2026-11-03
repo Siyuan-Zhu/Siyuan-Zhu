@@ -1,0 +1,49 @@
+name: Publish approved November 3 edition
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish_approved_nov03.yml]
+concurrency:
+  group: readme-state-writer
+  cancel-in-progress: false
+  queue: max
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  publish:
+    if: github.repository == 'Siyuan-Zhu/Siyuan-Zhu'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_REPO_SLUG: Siyuan-Zhu/Siyuan-Zhu
+      STATE_STORE_BACKEND: firestore
+      FIRESTORE_COLLECTION_PREFIX: ''
+      COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+      GCP_PROJECT_ID: git-readme-features
+      GOOGLE_CLOUD_PROJECT: git-readme-features
+      FIRESTORE_PROJECT_ID: git-readme-features
+      FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Validate exact retained publication and approval
+        run: python3 scripts/publish_approved_edition.py --bundle .approved-nov03 --expected-publication-id ff043f9a96df9c9a42ec --validate-only
+      - name: Commit canonical edition and publish with current game state
+        run: python3 scripts/publish_approved_edition.py --bundle .approved-nov03 --expected-publication-id ff043f9a96df9c9a42ec
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: approved-edition-recovery
+          include-hidden-files: true
+          if-no-files-found: ignore
+          path: |
+            .publication-recovery/
+            data/publication_reconcile.json

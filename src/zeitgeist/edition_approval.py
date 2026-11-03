@@ -3,7 +3,7 @@
 Only explicit owner approval may add an exact publication identity below.
 A held draft does not become publishable when the calendar advances.
 """
-HELD_EDITIONS = {'2026-11-03': frozenset()}
+HELD_EDITIONS = {'2026-11-03': frozenset({'ff043f9a96df9c9a42ec'})}
 
 
 def require_edition_approval(entry):

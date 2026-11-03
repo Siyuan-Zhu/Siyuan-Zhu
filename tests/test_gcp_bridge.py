@@ -40,7 +40,9 @@ def test_green_trigger_or_green_job_does_not_imply_publication(kwargs):
     assert client.posts==1
 
 
-def test_held_edition_never_dispatches():
+def test_held_edition_never_dispatches(monkeypatch):
+    from src.zeitgeist.edition_approval import HELD_EDITIONS
+    monkeypatch.setitem(HELD_EDITIONS, '2026-11-03', frozenset())
     client=Client()
     assert run(client,correlation='test-event',now=datetime(2026,11,3,9,tzinfo=timezone.utc))['status']=='approval_pending'
     assert client.posts==0
@@ -52,7 +54,9 @@ def test_deadline_monitor_never_dispatches_or_generates():
     assert client.posts==0
 
 
-def test_approval_hold_blocks_even_before_delivery_deadline():
+def test_approval_hold_blocks_even_before_delivery_deadline(monkeypatch):
+    from src.zeitgeist.edition_approval import HELD_EDITIONS
+    monkeypatch.setitem(HELD_EDITIONS, '2026-11-03', frozenset())
     client=Client()
     assert run(client,correlation='test-event',now=datetime(2026,11,3,7,tzinfo=timezone.utc))['status']=='approval_pending'
     assert client.posts==0
