@@ -59,6 +59,7 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
         save_outcome(receipt, outcome)
         print(json.dumps({'status': 'held_for_review', 'date': str(target_date), 'generation_calls': 0}))
         return False
+    execution = None
     try:
         store = store if store is not None else get_state_store(
             repo_root=root, backend='firestore',
@@ -73,16 +74,27 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
             print(json.dumps({'status': 'already_current', 'date': str(target_date),
                               'generation_calls': 0}))
             return False
+        from src.zeitgeist.edition_execution import for_store
+        execution = for_store(store, target_date, env)
+        if execution is not None:
+            claim = execution.claim(now=now, source_revision=env.get('GITHUB_SHA','local'),
+                                    trigger=outcome['trigger'])
+            if claim is None:
+                raise RuntimeError('Execution is published but public state is stale; reconcile before generation')
         if env.get('SPEND_POLICY_SHA256'):
             outcome['stage'] = 'spend_maintenance'
             save_outcome(receipt, outcome)
             runner([sys.executable, 'scripts/maintain_spend_control.py', '--apply'],
                    cwd=root, check=True)
+        if execution is not None:
+            execution.transition('generation')
         outcome['stage'] = 'generation'
         save_outcome(receipt, outcome)
         runner([sys.executable, 'scripts/run_zeitgeist.py', '--date', str(target_date)],
                cwd=root, check=True)
         observe_committed_publication(root, store, outcome)
+        if execution is not None:
+            execution.transition('validation', publication_id=outcome.get('publication_id'))
         outcome['stage'] = 'readme_build'
         save_outcome(receipt, outcome)
         runner([sys.executable, 'scripts/build_readme.py'], cwd=root, check=True)
@@ -92,6 +104,8 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
         outcome['publication_id'] = json.loads(
             (Path(root) / 'assets/pulse_manifest.json').read_text())['publication_id']
         save_outcome(receipt, outcome)
+        if execution is not None:
+            execution.transition('publication', publication_id=outcome['publication_id'])
         if output:
             with open(output, 'a', encoding='utf-8') as stream:
                 stream.write('publish_required=true\n')
@@ -99,6 +113,9 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
     except BaseException as error:
         try:
             record_failure(root, receipt, outcome, error, store=store)
+            if execution is not None:
+                execution.transition('blocked' if outcome['stage'] in {'freshness','spend_maintenance'}
+                                     else 'requires_reconciliation', failure_category=outcome['stage'])
         except Exception:
             pass  # A failed observer must not replace the actual failure.
         raise

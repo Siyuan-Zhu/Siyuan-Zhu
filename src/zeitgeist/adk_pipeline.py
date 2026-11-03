@@ -496,6 +496,12 @@ class ZeitgeistADKOrchestrator:
             raise RuntimeError(
                 "Resolve the pending canonical publication reconciliation before generating another publication"
             )
+        from zoneinfo import ZoneInfo
+        from src.state_store import FirestoreStateStore
+        from .edition_approval import require_edition_approval
+        date_iso = str(date_iso or datetime.now(ZoneInfo('America/New_York')).date())[:10]
+        if isinstance(store, FirestoreStateStore) and not store.collection_prefix:
+            require_edition_approval({'date': date_iso})
         expected = store.load_pulse_state()
         workspace = PublicationWorkspace(self.repo_root)
         committed = False
@@ -1324,30 +1330,19 @@ def commission_daily_zeitgeist(
                     else:
                         raw_resp = llm_callable(prompt)
                 else:
-                    try:
-                        raw_resp = genai_client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
-                                    {"temperature": temperature, "response_mime_type": "application/json"}),
-                        )
-                    except Exception as model_exc:
-                        err_str = str(model_exc)
-                        if "404" in err_str or "NOT_FOUND" in err_str:
-                            raw_resp = genai_client.models.generate_content(
-                                model="gemini-3-flash-preview",
-                                contents=prompt,
-                                config={"response_mime_type": "application/json"},
-                            )
-                        else:
-                            raise
+                    raw_resp = genai_client.models.generate_content(
+                        model=model_name, contents=prompt,
+                        config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
+                                {"temperature": temperature, "response_mime_type": "application/json"}),
+                    )
                 commission = _coerce_director_commission(raw_resp)
             except SpendBlocked:
                 raise
-            except Exception as exc:
-                last_rejection_reason = f"Malformed director response: {exc}"
-                if llm_callable is None and any(code in str(exc) for code in ("402", "403", "RESOURCE_EXHAUSTED", "PERMISSION_DENIED")):
-                    break
+            except (ValueError, TypeError, KeyError) as exc:
+                # Only a received but malformed response permits another bounded
+                # editorial attempt. Transport/auth/model failures propagate;
+                # a timeout can already have incurred a charge.
+                last_rejection_reason = f"Malformed director response: {type(exc).__name__}"
                 continue
 
             is_valid, reason = validate_director_commission(commission, [] if constrained and owner.get("override_word") else history_list)

@@ -244,3 +244,11 @@ def test_direct_gemini_admission_cannot_trust_unresolved_apify_collateral_outsid
     with pytest.raises(SpendBlocked,match='outside its verified allowance period'):
         guard.begin_provider_request('gemini',OP,'.02',request_digest({'next':'bounded'}))
     assert ledger==before
+
+
+def test_reserved_request_links_to_execution_without_exposing_prompt(monkeypatch):
+    monkeypatch.setenv('GITHUB_RUN_ID','12345');monkeypatch.setenv('GITHUB_RUN_ATTEMPT','2')
+    guard=budget();api,_=client(guard);generate(api)
+    record=next(iter(guard.ledger.document['reservations'].values()))
+    assert record['execution_owner']=='github-12345-2'
+    assert 'Synthetic bounded request' not in str(record)

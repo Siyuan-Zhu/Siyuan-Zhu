@@ -6,6 +6,9 @@ publishes a current rate only; no validity commitment is invented for it.
 from __future__ import annotations
 from html.parser import HTMLParser
 import hashlib
+import time
+import httpx
+from html import escape
 import re
 
 from .automatic_spend import digest
@@ -136,6 +139,71 @@ def _dated_rate(value):
     return format(money(match[1]).normalize(),'f'), format(money(match[2]).normalize(),'f')
 
 
+def _markdoc_html(body):
+    """Parse only the two reviewed model sections; never execute Markdoc.
+
+    Convert semantic tables to the existing strict validator. Retain all scoped
+    prose (including other-tier caveats) in the contract fingerprint.
+    """
+    sections = re.split(r'(?m)^## ', body)
+    output = []
+    for section in sections[1:]:
+        heading, _, content = section.partition('\n')
+        match = re.search(r'{% id="([^"]+)" %}', heading)
+        if not match or match[1] not in MODELS:
+            continue
+        identity = match[1]
+        output.append('<h2 id="'+identity+'">'+escape(heading.split('{%')[0].strip())+'</h2>')
+        # The model link is required exactly once before the first tab.
+        intro = content.split('{% tabs %}', 1)[0]
+        codes = re.findall(r'`([^`]+)`', intro)
+        if codes != [MODELS[identity]]:
+            raise ValueError('Exact model identity required')
+        tokens = re.split(r'({%.*?%})', content, flags=re.S)
+        in_table = False
+        tier = None
+        for token in tokens:
+            if token.startswith('{%'):
+                if token == '{% table %}':
+                    if in_table: raise ValueError('Nested table')
+                    in_table = True
+                elif token == '{% /table %}':
+                    if not in_table: raise ValueError('Unbalanced table')
+                    in_table = False
+                elif token.startswith('{% tab title='):
+                    title = re.fullmatch(r'{% tab title="([^"]+)" %}', token)
+                    if not title: raise ValueError('Malformed tier')
+                    tier = title[1]
+                    output.append('<h3>'+escape(tier)+'</h3>')
+                elif in_table and tier == 'Standard':
+                    # No hidden annotations/conditions in a price cell.
+                    raise ValueError('Unexpected table markup')
+                continue
+            if in_table and tier != 'Standard':
+                continue
+            # Resolve Markdown links to visible text without discarding words.
+            text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', token)
+            if in_table:
+                rows = re.split(r'(?m)^\s*---\s*(?=\n|\Z)', text)
+                output.append('<table class="pricing-table">')
+                for row in rows:
+                    cells = re.split(r'(?m)^\s*\* ', row)
+                    if cells[0].strip() or len(cells) != 4:
+                        raise ValueError('Exactly three cells required')
+                    values = [_text(c) for c in cells[1:]]
+                    if values[0] == 'Feature': values[0] = ''
+                    output.append('<tr>'+''.join('<td>'+escape(v)+'</td>' for v in values)+'</tr>')
+                output.append('</table>')
+            else:
+                # Preserve prose, converting inline code so model validation works.
+                text = escape(text)
+                text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+                text = re.sub(r'(?m)^\s*\*(<code>.*?</code>)\*', r'\1', text)
+                output.append(text)
+        if in_table: raise ValueError('Unclosed table')
+    return ''.join(output)
+
+
 def normalize_gemini_tariff(html):
     """Normalize exact standard generation+embedding rows, excluding other models.
 
@@ -149,6 +217,8 @@ def normalize_gemini_tariff(html):
     try:
         if not isinstance(html,str) or len(html.encode('utf-8')) > MAX_HTML_BYTES:
             raise ValueError('Invalid public pricing body')
+        if html.lstrip().startswith('> ## AI Agent Context') or html.lstrip().startswith('# Gemini Developer API pricing'):
+            html = _markdoc_html(html)
         parser = _PricingTables(); parser.feed(html); parser.close()
         generation, generation_conditions = _rows(parser, 'gemini-3.8-flash', (
             'input price','output price (including thinking tokens)','context caching price',
@@ -178,21 +248,39 @@ def normalize_gemini_tariff(html):
         raise SpendBlocked('Public Gemini tariff is unavailable, ambiguous or changed') from None
 
 
+def _public_get(client, url):
+    """Retry only anonymous idempotent reads; never inference or mutations."""
+    for attempt in range(3):
+        try:
+            response = client.get(url, follow_redirects=False, timeout=15)
+            if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
+                return response
+        except (httpx.TimeoutException, httpx.TransportError):
+            if attempt == 2: raise
+        time.sleep(0.5 * (2 ** attempt))
+
+
 def observe_gemini_tariff(client, *, now):
     """One anonymous fixed-origin public GET; usable as price_snapshots['gemini']."""
     try:
         sensitive = {'authorization','proxy-authorization','x-key','x-goog-api-key'}
         if now.tzinfo is None or getattr(client,'auth',None) is not None or any(str(k).lower() in sensitive for k in getattr(client,'headers',{})):
             raise ValueError('Anonymous client and real timezone-aware observation clock required')
-        response = client.get(SOURCE_URL,follow_redirects=False,timeout=15)
-        if response.status_code != 200 or str(response.url) != SOURCE_URL or response.headers.get('content-type','').split(';',1)[0].strip().lower() != 'text/html':
+        response = _public_get(client, SOURCE_URL)
+        resolved_url = SOURCE_URL
+        if str(response.url) == SOURCE_URL and response.status_code in (301, 308) and response.headers.get('location') == 'https://aistudio.google.com/docs/pricing':
+            resolved_url = 'https://aistudio.google.com/docs/pricing'
+            response = _public_get(client, resolved_url)
+        allowed_type = 'text/html' if resolved_url == SOURCE_URL else 'text/plain'
+        if response.status_code != 200 or str(response.url) != resolved_url or response.headers.get('content-type','').split(';',1)[0].strip().lower() != allowed_type:
             raise ValueError('Direct fixed-origin public HTML required')
         raw=response.content
         if not isinstance(raw,bytes) or len(raw)>MAX_HTML_BYTES:
             raise ValueError('Public pricing byte ceiling exceeded')
         contract=normalize_gemini_tariff(raw.decode('utf-8'))
         return {'source_url':SOURCE_URL,'observed_at':now.isoformat(),'sha256':digest(contract),
-            'contract':contract,'source_body_sha256':hashlib.sha256(raw).hexdigest()}
+            'contract':contract,'source_body_sha256':hashlib.sha256(raw).hexdigest(),
+            'resolved_source_url':resolved_url, 'parser_version':'gemini-tariff-v3'}
     except SpendBlocked:
         raise
     except Exception:

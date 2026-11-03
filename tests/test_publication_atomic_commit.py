@@ -323,6 +323,9 @@ def test_readme_failure_gates_both_entrypoints_before_remote_save(
     import copy
     from argparse import Namespace
     from scripts import build_readme, orbit, run_zeitgeist
+    from src.zeitgeist import adk_pipeline
+    original_run = adk_pipeline.run_daily_zeitgeist
+    monkeypatch.setattr(orbit, "run_daily_zeitgeist", lambda **kw: original_run(date_iso="2026-10-30", **kw))
 
     wire, store = _publication_fixture(tmp_path, monkeypatch)
     before_remote, before_local = copy.deepcopy(wire.docs), _published_files(tmp_path)

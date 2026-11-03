@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import os
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import sys
 from typing import Optional, Sequence
@@ -34,7 +35,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--date",
         default=os.environ.get("ZEITGEIST_DATE", ""),
-        help="ISO date string (YYYY-MM-DD). Defaults to current UTC date.",
+        help="ISO date string (YYYY-MM-DD). Defaults to the America/New_York edition date.",
     )
     parser.add_argument(
         "--prefer-visual-mode",
@@ -60,7 +61,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     resolved_date = (
         str(args.date).strip()[:10]
         if str(args.date).strip()
-        else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        else datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     )
 
     try:

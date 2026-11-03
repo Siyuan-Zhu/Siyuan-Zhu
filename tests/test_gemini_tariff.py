@@ -122,3 +122,59 @@ def test_model_scoped_common_caveat_after_other_tier_is_bound_but_other_tier_pri
     assert observe_gemini_tariff(Client(body),now=NOW)['sha256']!=original['sha256']
     other_tier=fixture().replace('0.375','0.400',1)
     assert observe_gemini_tariff(Client(other_tier),now=NOW)['sha256']==original['sha256']
+
+
+def markdoc():
+    from pathlib import Path
+    return (Path(__file__).parent/'fixtures/gemini-pricing-markdoc.txt').read_text()
+
+
+def test_observed_official_markdoc_retains_exact_standard_rates():
+    contract=normalize_gemini_tariff(markdoc())
+    assert contract['operations']==normalize_gemini_tariff(fixture())['operations']
+    assert 'Discounts and model availability' in contract['standard_conditions']['gemini-3.8-flash']['scoped_model_caveats']
+
+
+@pytest.mark.parametrize('change', [
+    lambda s:s.replace('per 1M tokens in USD','per 1K characters in USD'),
+    lambda s:s.replace('* \u00240.15\n','* Free\n'),
+    lambda s:s.replace('Output price (including thinking tokens)','Output price'),
+    lambda s:s.replace('{% /table %}','',1),
+    lambda s:s.replace('* Input price','* Unexpected fee',1),
+    lambda s:s.replace('gemini-embedding-001','wrong-model'),
+    lambda s:s+ s,
+])
+def test_markdoc_unknown_missing_malformed_never_infers_free(change):
+    with pytest.raises(SpendBlocked): normalize_gemini_tariff(change(markdoc()))
+
+
+def test_only_exact_official_permanent_redirect_is_allowed():
+    new='https://aistudio.google.com/docs/pricing'
+    client=Client(markdoc(),url=new,kind='text/plain; charset=utf-8')
+    final=client.response
+    redirect=SimpleNamespace(status_code=301,url='https://ai.google.dev/gemini-api/docs/pricing',headers={'location':new})
+    responses=iter([redirect,final])
+    client.get=lambda *a,**k:next(responses)
+    result=observe_gemini_tariff(client,now=NOW)
+    assert result['resolved_source_url']==new
+    assert result['source_url']=='https://ai.google.dev/gemini-api/docs/pricing'
+    assert result['parser_version']=='gemini-tariff-v3'
+    for location in ('https://evil.invalid/pricing',new+'?x=1'):
+        client=Client('');client.response.status_code=301;client.response.headers['location']=location
+        with pytest.raises(SpendBlocked):observe_gemini_tariff(client,now=NOW)
+
+
+def test_redirect_chain_and_malformed_utf8_reject():
+    new='https://aistudio.google.com/docs/pricing'
+    client=Client('');client.response.status_code=301;client.response.headers['location']=new
+    with pytest.raises(SpendBlocked):observe_gemini_tariff(client,now=NOW)
+    client=Client('');client.response.content=b'\xff'
+    with pytest.raises(SpendBlocked):observe_gemini_tariff(client,now=NOW)
+
+
+def test_transient_public_read_has_bounded_backoff(monkeypatch):
+    from src.zeitgeist import gemini_tariff as tariff
+    delays=[];monkeypatch.setattr(tariff.time,'sleep',delays.append)
+    client=Client(fixture(),status=503)
+    with pytest.raises(SpendBlocked):observe_gemini_tariff(client,now=NOW)
+    assert len(client.calls)==3 and delays==[0.5,1.0]

@@ -42,7 +42,7 @@ class PrivateFirestoreStore:
         )
 
     def read(self, document_id):
-        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2})", document_id):
+        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103)", document_id):
             raise SpendBlocked("Unapproved private spend document")
         return self.client.collection("spend_control").document(document_id).get()
 
@@ -180,7 +180,15 @@ def maintain_spend_control(store, *, expected_policy_sha, observer: Callable,
     rejection_history = []
     if intent is not None:
         if intent.get("policy_sha256") != expected_policy_sha:
-            raise SpendBlocked("Handoff belongs to another approved policy")
+            # A completed rollover keeps its historical policy identity. The
+            # exact atomic price-record successor receipt proves continuity;
+            # never rewrite the old handoff or reset its financial records.
+            repair = _data(store.read("price_repair_20261103")) or {}
+            if (intent.get("status") != "complete"
+                    or repair.get("old_policy_sha256") != intent.get("policy_sha256")
+                    or repair.get("new_policy_sha256") != expected_policy_sha
+                    or repair.get("month") != month):
+                raise SpendBlocked("Handoff belongs to another approved policy")
         if intent.get("status") == "pending":
             return _reconcile_pending(store, intent_id, intent_snapshot, apply=apply)
         if intent.get("status") == "known_rejected":

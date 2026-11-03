@@ -109,6 +109,9 @@ def publish_bundle(
     An ambiguous transport failure is never automatically rerun.
     """
     if isinstance(store, FirestoreStateStore):
+        from .edition_approval import require_edition_approval
+        if not store.collection_prefix:
+            require_edition_approval(entry)
         client = store._get_client()
         if client is None:
             raise RuntimeError(

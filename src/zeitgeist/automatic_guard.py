@@ -9,6 +9,7 @@ import copy
 from datetime import timedelta
 import hashlib
 import json
+import os
 import re
 
 from . import automatic_spend as accounting
@@ -179,6 +180,10 @@ class AutomaticBudgetGuard(BudgetGuard):
                 credential_fingerprint=self._credential_fingerprint(provider),
                 automatic_policy_sha256=self.expected_policy_sha,
                 request_context=copy.deepcopy(context or {}))
+            run_id = os.environ.get('GITHUB_RUN_ID', '')
+            attempt = os.environ.get('GITHUB_RUN_ATTEMPT', '1')
+            if re.fullmatch(r'[0-9]{1,24}', run_id) and re.fullmatch(r'[0-9]{1,6}', attempt):
+                document['reservations'][reservation_id]['execution_owner'] = 'github-'+run_id+'-'+attempt
         self.ledger.mutate(bind)
         return ProviderRequest(self, reservation_id, provider, operation, request_sha256)
 

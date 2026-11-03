@@ -1,4 +1,5 @@
 name: Daily Zeitgeist Commissioning
+run-name: Zeitgeist ${{ inputs.schedule_event_id || github.run_id }}
 
 on:
   schedule:
@@ -9,6 +10,10 @@ on:
       timezone: "America/New_York"
   workflow_dispatch:
     inputs:
+      schedule_event_id:
+        description: "External scheduler correlation (no publication authority)"
+        type: string
+        required: false
       preflight_only:
         description: Read-only owner readiness check without publication or paid calls
         type: boolean
@@ -205,6 +210,7 @@ jobs:
         id: publish
         if: steps.digest.outputs.publish_required == 'true'
         env:
+          ZEITGEIST_TRACK_EXECUTION: '1'
           COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
           STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
           FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
