@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-02",
-  "word": "Assemblage",
-  "gloss": "A shared call to gather in communal sanctuary.",
-  "archetype": "KYOTO_TANKOBON",
+  "date": "2026-11-03",
+  "word": "Climacteric",
+  "gloss": "A critical turning point in creative momentum.",
+  "archetype": "POETIC_CINEMA",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "b505b4bb1cb4298efc3db177faa8cc411cbc6e46b82b1797ae3f264b06027d38",
-    "assets/daily_pulse_dark.webp": "2d8ac8e3bb67575a37216dc03e22589e1afd0df65d1d06524a88aa7553eefb8f",
-    "assets/daily_pulse.svg": "0f8ad6fb0cb8540b18626fc8e76362bb8f21bf1585199df90bb933fb524d6f98",
-    "assets/pulse/2026-11-02.webp": "9fe584d13cf82c51e9ef958195ce9d2c3f9bb2c80b7ea7c5dd613d2c293ff5f5"
+    "assets/daily_pulse_light.webp": "e8094e8fc1fce9d5892592650a3a4f73f93444bd992dda70e62aa18a8aaa8c49",
+    "assets/daily_pulse_dark.webp": "e8094e8fc1fce9d5892592650a3a4f73f93444bd992dda70e62aa18a8aaa8c49",
+    "assets/daily_pulse.svg": "b910bf9afe62dc2a5a1dc61af36ac69a4a6f50c2b58a70fb2d32fb272cc45a09",
+    "assets/pulse/2026-11-03.webp": "377d4654d2510986572759d1dd8460f3717fa6d8b2e4aeed23b54c6f3704c5c5"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "bJnndmmymW8",
-    "source_url": "https://unsplash.com/photos/bJnndmmymW8",
-    "camera_make": "Canon",
-    "camera_model": "EOS R5",
+    "asset_id": "EUsVwEOsblE",
+    "source_url": "https://unsplash.com/photos/EUsVwEOsblE",
+    "camera_make": "SONY",
+    "camera_model": "ILCE-7R",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "69629c31876ed2b6f9a8"
+  "publication_id": "ff043f9a96df9c9a42ec"
 }
