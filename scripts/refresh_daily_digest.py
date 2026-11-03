@@ -53,6 +53,12 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
     if output:
         with open(output, 'a', encoding='utf-8') as stream:
             stream.write('publish_required=false\n')
+    if env.get('ZEITGEIST_REVIEW_HOLD_DATE') == str(target_date):
+        outcome.update(status='held_for_review', canonical_commit='not_attempted',
+                       git_publication='not_required', recovery_action='none')
+        save_outcome(receipt, outcome)
+        print(json.dumps({'status': 'held_for_review', 'date': str(target_date), 'generation_calls': 0}))
+        return False
     try:
         store = store if store is not None else get_state_store(
             repo_root=root, backend='firestore',

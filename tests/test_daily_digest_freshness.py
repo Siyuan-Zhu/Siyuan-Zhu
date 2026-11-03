@@ -268,3 +268,25 @@ def test_canonical_auth_failure_is_not_reported_as_a_photo_provider_failure(bund
     assert outcome['stage']=='freshness' and outcome['failure_category']=='permission'
     assert outcome['canonical_commit']=='not_attempted'
     assert 'private-error' not in receipt.read_text()
+
+
+def test_owner_review_hold_stops_before_storage_or_providers(tmp_path, monkeypatch):
+    from src.zeitgeist.daily_outcomes import complete_outcome
+    def forbidden(*args, **kwargs):
+        pytest.fail('Review hold must not access storage or providers')
+    monkeypatch.setattr(daily, 'get_state_store', forbidden)
+    output = tmp_path / 'github-output'
+    env = {'GITHUB_OUTPUT': str(output), 'ZEITGEIST_REVIEW_HOLD_DATE': '2026-11-03'}
+    assert daily.refresh(tmp_path, env=env, now=datetime(2026,11,3,12,tzinfo=timezone.utc), runner=forbidden) is False
+    assert output.read_text() == 'publish_required=false\n'
+    result = complete_outcome(tmp_path, dict(env, DAILY_DIGEST_OUTCOME='success', DAILY_PUBLISH_OUTCOME='skipped'))
+    assert result['status'] == 'held_for_review'
+
+
+def test_review_hold_expires_next_day(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+    probe = Mock(side_effect=RuntimeError('normal freshness path reached'))
+    monkeypatch.setattr(daily, 'get_state_store', probe)
+    with pytest.raises(RuntimeError, match='normal freshness'):
+        daily.refresh(tmp_path, env={'ZEITGEIST_REVIEW_HOLD_DATE':'2026-11-03'}, now=datetime(2026,11,4,12,tzinfo=timezone.utc))
+    probe.assert_called_once()

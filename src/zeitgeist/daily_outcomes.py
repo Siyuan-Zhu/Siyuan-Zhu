@@ -43,7 +43,7 @@ _GUIDANCE = {
     'inspect_provider':'Inspect the failed source/provider stage and its bounded diagnostics before another attempt.'}
 _ENUMS = {
     'stage':{'unknown','startup','freshness','spend_maintenance','generation','readme_build','publication'},
-    'status':{'started','already_current','awaiting_publication','failed','requires_reconciliation','published','unknown'},
+    'status':{'held_for_review','started','already_current','awaiting_publication','failed','requires_reconciliation','published','unknown'},
     'canonical_commit':{'unknown','not_attempted','not_required','not_committed','committed'},
     'git_publication':{'not_started','not_required','published','failed','unknown'},
     'failure_category':{'unknown','readiness','spend_control','photo_quality','photo_provider',
@@ -250,7 +250,7 @@ def complete_outcome(root, env, *, now=None):
         else:
             outcome.update(status='published',stage='publication',git_publication='published',
                            failure_category=None,recovery_action='none')
-    elif digest=='success' and publication=='skipped' and outcome.get('status')=='already_current' and not journal:
+    elif digest=='success' and publication=='skipped' and outcome.get('status') in {'already_current','held_for_review'} and not journal:
         pass
     elif outcome.get('status') not in {'failed','requires_reconciliation'}:
         outcome.update(status='requires_reconciliation' if outcome.get('canonical_commit')=='committed' else 'unknown',

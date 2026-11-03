@@ -172,6 +172,7 @@ jobs:
       - name: Run Daily Zeitgeist Pipeline & Rebuild README
         id: digest
         env:
+          ZEITGEIST_REVIEW_HOLD_DATE: "2026-11-03"
           DAILY_TRIGGER_SCHEDULE: ${{ github.event.schedule }}
           COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
