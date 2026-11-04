@@ -7,7 +7,7 @@ import argparse
 import base64
 import copy
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -236,14 +236,29 @@ def process_event(
     if title.lower().startswith("pulse:vote:"):
         raw_vote_key = title.split(":", 2)[2].strip().lower()
         vote_key = _LEGACY_MOOD_KEY_MAP.get(raw_vote_key, raw_vote_key)
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        vote_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if isinstance(state_store, FirestoreStateStore) and state_store.canonical_only:
+            # The visible accepted edition can precede either calendar midnight
+            # or a delayed refresh. Bind this request once; the atomic vote CAS
+            # still rejects it if editorial publication advances meanwhile.
+            pulse = state_store.load_pulse_state()
+            analysis = pulse.get("analysis")
+            analysis = analysis if isinstance(analysis, dict) else {}
+            vote_date = str(pulse.get("date") or pulse.get("date_iso")
+                            or analysis.get("date_iso") or "")[:10]
+            try:
+                valid_date = date.fromisoformat(vote_date).isoformat() == vote_date
+            except ValueError:
+                valid_date = False
+            if not valid_date:
+                raise RuntimeError("Canonical publication edition date is missing or invalid")
         voter_hmac = compute_voter_hmac(
             client_ip=visitor_login or "github-issue-voter",
             user_agent="github-issue",
-            date_str=today_str,
+            date_str=vote_date,
         )
         accepted, tally = state_store.record_mood_vote(
-            date_str=today_str,
+            date_str=vote_date,
             mood_key=vote_key,
             voter_hmac=voter_hmac,
         )

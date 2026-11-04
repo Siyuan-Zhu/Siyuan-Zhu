@@ -76,8 +76,17 @@ def _photo():
 
 
 @pytest.mark.parametrize("mode,medium", [("auto", "PHOTOGRAPHY"), ("photo", "PHOTOGRAPHY"), ("blueprint", "BESPOKE_SVG")])
-def test_phone_override_is_commissioned_before_all_representations(mode, medium, tmp_path, monkeypatch):
+@pytest.mark.parametrize("instant,edition", [
+    (datetime(2026, 11, 4, 1, 30, tzinfo=timezone.utc), "2026-11-03"),
+    (datetime(2026, 11, 4, 7, 30, tzinfo=timezone.utc), "2026-11-04"),
+])
+def test_phone_override_is_commissioned_before_all_representations(mode, medium, instant, edition, tmp_path, monkeypatch):
     from src.zeitgeist.publication import verify_publication_bundle
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+    monkeypatch.setattr(pipeline, "datetime", FixedClock)
     root = _workspace(tmp_path)
     monkeypatch.setenv("ZEITGEIST_OFFLINE_DEMO", "1")
     monkeypatch.setenv("STATE_STORE_BACKEND", "json")
@@ -92,7 +101,9 @@ def test_phone_override_is_commissioned_before_all_representations(mode, medium,
     manifest = verify_publication_bundle(root)
     assert manifest["word"] == state["analysis"]["word_of_the_day"] == "ANCHORED"
     assert manifest["medium"] == medium
-    assert manifest["date"] == datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # An owner request commissions the Eastern edition, including after UTC
+    # midnight. The fixture clock must not make CI depend on wall-clock hours.
+    assert manifest["date"] == edition
     assert state["analysis"]["visual_concrete_anchor"].startswith("Weathered iron anchor")
     assert "commission" not in state and "telemetry" not in state
     assert "ANCHORED" in (root / "README.md").read_text()

@@ -82,6 +82,9 @@ def setup(tmp_path, monkeypatch):
     wire = ApplicationWire(monkeypatch)
 
     def factory(**kwargs):
+        # Exercise the same canonical authority as the actual runtime factory;
+        # absence of a JSON fallback alone does not select canonical semantics.
+        kwargs.setdefault("canonical_only", True)
         return state.FirestoreStateStore(client=wire.client, **kwargs)
 
     return root, wire, factory
@@ -447,6 +450,7 @@ def test_default_runtime_factory_cannot_return_legacy_semantics_even_without_jso
         project_id="git-readme-features",
         database_id="(default)",
         collection_prefix=PREFIX,
+        canonical_only=False,
     )
     monkeypatch.setattr(app, "get_state_store", lambda **kwargs: legacy, raising=False)
     with pytest.raises(ValueError, match="runtime factory"):
