@@ -225,6 +225,39 @@ def collect_96h_signals(
     health = health if health is not None else {}
     health.update(mode="cache", instagram="not_requested", apify_batch_succeeded=False,
                   live_item_count=0, cache_item_count=len(existing_cache_map))
+    def require_live_coverage(candidate_rows, *, final=False):
+        rows = [r for r in candidate_rows if r.get("origin") != "offline_demo"]
+        orbit=[r for r in rows if str(r.get("bucket","")).upper()=="ORBIT" and fresh(r,336)]
+        macro=[r for r in rows if str(r.get("bucket","")).upper()=="MACRO" and fresh(r,96)]
+        instagram=[r for r in orbit if "_ig_" in str(r.get("source_id","")) and fresh(r,72,fetch=True)]
+        tier_counts = {}
+        for row in orbit+macro:
+            tier=str(row.get("tier") or row.get("source_tier") or "unknown")
+            tier_counts[tier]=tier_counts.get(tier,0)+1
+        health.update(orbit_item_count=len(orbit), macro_item_count=len(macro), instagram_item_count=len(instagram), seeded=False,
+                      fresh_items_by_tier=tier_counts,
+                      orbit_source_count=len({str(r.get("source_id")) for r in orbit}),
+                      macro_source_count=len({str(r.get("source_id")) for r in macro}),
+                      instagram_fetched_successfully=health.get("instagram") in {"live","empty"})
+        nonsocial_orbit = [r for r in orbit if "_ig_" not in str(r.get("source_id", ""))
+                           and str(r.get("tier") or r.get("source_tier")) in requirements["required_orbit_tiers"]]
+        nonsocial_macro = [r for r in macro if str(r.get("tier") or r.get("source_tier")) in requirements["required_macro_tiers"]]
+        orbit_sources = {str(r.get("source_id")) for r in nonsocial_orbit}
+        macro_sources = {str(r.get("source_id")) for r in nonsocial_macro}
+        orbit_tiers = {str(r.get("tier") or r.get("source_tier")) for r in nonsocial_orbit}
+        macro_tiers = {str(r.get("tier") or r.get("source_tier")) for r in nonsocial_macro}
+        health.update(nonsocial_orbit_source_count=len(orbit_sources), nonsocial_macro_source_count=len(macro_sources),
+                      required_coverage=requirements, reference_time=now_utc.isoformat())
+        if (not instagram or len(orbit_sources) < requirements["min_orbit_sources"]
+                or len(macro_sources) < requirements["min_macro_sources"]
+                or not set(requirements["required_orbit_tiers"]).issubset(orbit_tiers)
+                or not set(requirements["required_macro_tiers"]).issubset(macro_tiers)):
+            health["publishable"]=False
+            raise IngestionUnavailable("Required diverse ORBIT, MACRO and Instagram coverage unavailable; retain last publication",
+                public_diagnostics={"code": "required-source-coverage-unavailable"}, collection_health=health)
+        if final:
+            health["publishable"]=True
+
     if should_live_collect:
         cfg_path = root / "config" / "orbit_sources.json"
         if not cfg_path.exists():
@@ -340,6 +373,9 @@ def collect_96h_signals(
             live_hashes.add(key)
         health.update(embedding_eligible_item_count=len(active_rows),
             discarded_before_embedding_count=sum(not eligible_live_row(row) for row in live_raw_items))
+        # Coverage depends on source metadata, not embeddings. Reject an
+        # unusable corpus before model calls or cache writes; recheck afterward.
+        require_live_coverage(active_rows.values())
         if active_rows:
             from src.state_store import pack_ingestion_cache_pages
             pack_ingestion_cache_pages(date_str, active_rows, reserve_embedding=True)
@@ -378,35 +414,7 @@ def collect_96h_signals(
             items.append(coerced)
 
     if should_live_collect:
-        rows=[r for r in existing_cache_map.values() if r.get("origin") != "offline_demo"]
-        orbit=[r for r in rows if str(r.get("bucket","")).upper()=="ORBIT" and fresh(r,336)]
-        macro=[r for r in rows if str(r.get("bucket","")).upper()=="MACRO" and fresh(r,96)]
-        instagram=[r for r in orbit if "_ig_" in str(r.get("source_id","")) and fresh(r,72,fetch=True)]
-        tier_counts = {}
-        for row in orbit+macro:
-            tier=str(row.get("tier") or row.get("source_tier") or "unknown")
-            tier_counts[tier]=tier_counts.get(tier,0)+1
-        health.update(orbit_item_count=len(orbit), macro_item_count=len(macro), instagram_item_count=len(instagram), seeded=False,
-                      fresh_items_by_tier=tier_counts,
-                      orbit_source_count=len({str(r.get("source_id")) for r in orbit}),
-                      macro_source_count=len({str(r.get("source_id")) for r in macro}),
-                      instagram_fetched_successfully=health.get("instagram") in {"live","empty"})
-        nonsocial_orbit = [r for r in orbit if "_ig_" not in str(r.get("source_id", ""))
-                           and str(r.get("tier") or r.get("source_tier")) in requirements["required_orbit_tiers"]]
-        nonsocial_macro = [r for r in macro if str(r.get("tier") or r.get("source_tier")) in requirements["required_macro_tiers"]]
-        orbit_sources = {str(r.get("source_id")) for r in nonsocial_orbit}
-        macro_sources = {str(r.get("source_id")) for r in nonsocial_macro}
-        orbit_tiers = {str(r.get("tier") or r.get("source_tier")) for r in nonsocial_orbit}
-        macro_tiers = {str(r.get("tier") or r.get("source_tier")) for r in nonsocial_macro}
-        health.update(nonsocial_orbit_source_count=len(orbit_sources), nonsocial_macro_source_count=len(macro_sources),
-                      required_coverage=requirements, reference_time=now_utc.isoformat())
-        if (not instagram or len(orbit_sources) < requirements["min_orbit_sources"]
-                or len(macro_sources) < requirements["min_macro_sources"]
-                or not set(requirements["required_orbit_tiers"]).issubset(orbit_tiers)
-                or not set(requirements["required_macro_tiers"]).issubset(macro_tiers)):
-            health["publishable"]=False
-            raise IngestionUnavailable("Required diverse ORBIT, MACRO and Instagram coverage unavailable; retain last publication")
-        health["publishable"]=True
+        require_live_coverage(existing_cache_map.values(), final=True)
     if items:
         return items
 

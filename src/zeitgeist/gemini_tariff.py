@@ -248,16 +248,7 @@ def normalize_gemini_tariff(html):
         raise SpendBlocked('Public Gemini tariff is unavailable, ambiguous or changed') from None
 
 
-def _public_get(client, url):
-    """Retry only anonymous idempotent reads; never inference or mutations."""
-    for attempt in range(3):
-        try:
-            response = client.get(url, follow_redirects=False, timeout=15)
-            if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
-                return response
-        except (httpx.TimeoutException, httpx.TransportError):
-            if attempt == 2: raise
-        time.sleep(0.5 * (2 ** attempt))
+from .public_tariff_http import public_get as _public_get
 
 
 def observe_gemini_tariff(client, *, now):

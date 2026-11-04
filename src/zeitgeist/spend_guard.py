@@ -258,6 +258,11 @@ class SpendBlocked(RuntimeError):
         'Ledger credit-only funding differs from approved policy': 'automatic-ledger-credit-only-funding-differs-from-approved-policy',
         'Public Gemini tariff is unavailable, ambiguous or changed': 'automatic-public-gemini-tariff-is-unavailable-ambiguous-or-changed',
         'Public Gemini tariff observation unavailable; no price inferred': 'automatic-public-gemini-tariff-observation-unavailable-no-price-inferred',
+        'Anonymous fixed-origin public pricing client required': 'public-pricing-anonymous-client-required',
+        'Public pricing retry interval is invalid': 'public-pricing-retry-interval-invalid',
+        'Public pricing retry interval is outside the bounded recovery window': 'public-pricing-retry-interval-outside-window',
+        'Public pricing response origin changed': 'public-pricing-response-origin-changed',
+        'Temporary anonymous public pricing read unavailable': 'transient-anonymous-price-read',
     }
 
     def __init__(self, message, *, provider_status=None, provider_error_type=None):

@@ -20,6 +20,7 @@ from src.zeitgeist.automatic_spend_runtime import (
     PrivateFirestoreStore, maintain_spend_control, observe_provider_metadata,
 )
 from src.zeitgeist.spend_guard import SpendBlocked
+from src.zeitgeist.public_tariff_http import TransientPublicRead, validate_retry_not_before
 from scripts.promote_release_state import _private_write
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,6 +107,17 @@ def recorded_observations(report,secrets):
         yield
 
 
+class _WriteObservedStore:
+    """Track attempted accounting commits before delegating; never retry them."""
+    def __init__(self, store):
+        self.store, self.write_attempts = store, 0
+    def read(self, document_id):
+        return self.store.read(document_id)
+    def commit(self, writes):
+        self.write_attempts += 1
+        return self.store.commit(writes)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Apply only a previously approved installed policy")
@@ -113,7 +125,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     report={'schema_version':1,'status':'pending','stage':'planning_or_commit',
         'mode':'apply' if args.apply else 'plan_only','observations':{}}
-    path=None;created=False;summary=None
+    path=None;created=False;summary=None;store=None;temporary=False
     secrets=_secrets(os.environ)
     def observer(policy,now):
         report['stage']='observing'
@@ -138,15 +150,27 @@ def main(argv=None):
         try:
             logging.disable(logging.CRITICAL)
             with redirect_stdout(StringIO()),redirect_stderr(StringIO()):
-                result = maintain_spend_control(PrivateFirestoreStore(),
+                store = _WriteObservedStore(PrivateFirestoreStore())
+                result = maintain_spend_control(store,
                     expected_policy_sha=os.environ.get("SPEND_POLICY_SHA256", ""), apply=args.apply,
                     observer=observer)
         finally:
             logging.disable(previous_logging)
         summary=result.public_status()
     except BaseException as error:
+        now = datetime.now(timezone.utc)
         summary={'status':'blocked','operation':'maintenance',
-                 'month':datetime.now(timezone.utc).strftime('%Y-%m'),**public_failure(error)}
+                 'month':now.strftime('%Y-%m'),**public_failure(error)}
+        if (isinstance(error, TransientPublicRead) and report['stage']=='observing'
+                and store is not None and store.write_attempts == 0):
+            try:
+                validate_retry_not_before(error.retry_not_before, now=now)
+            except (ValueError, TypeError):
+                pass  # A malformed/expired classification never authorizes a retry.
+            else:
+                temporary=True
+                summary.update(code='transient-anonymous-price-read', retryable=True,
+                               retry_not_before=error.retry_not_before)
     finally:
         if summary is not None:
             report.update(status=summary['status'],public_diagnostics={key:summary[key]
@@ -158,7 +182,8 @@ def main(argv=None):
                     'month':datetime.now(timezone.utc).strftime('%Y-%m'),
                     'code':'private-report-unavailable','error_type':'OSError'}
     print(json.dumps(summary,sort_keys=True))
-    return 0 if summary['status']!='blocked' else 2
+    if summary['status']!='blocked': return 0
+    return 75 if temporary and summary.get('retryable') is True else 2
 
 
 if __name__ == "__main__":

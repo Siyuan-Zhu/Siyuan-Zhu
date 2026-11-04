@@ -33,6 +33,7 @@ def new_outcome(env, now, edition_date):
 
 _GUIDANCE = {
     'none':'No action is required for this attempt.',
+    'wait_configured_catchup':'A proven zero-write anonymous pricing-read failure may retry at the next configured catch-up after its lease and Retry-After expire, within the three-claim edition limit. This authorizes no paid or uncertain-write replay.',
     'inspect_outcome_before_retry':'Inspect this run and its outcome before choosing a recovery. Do not replay moves or votes.',
     'inspect_canonical_outcome':'Inspect the canonical publication identity and retained run artifacts. Do not resubmit an uncertain mutation.',
     'reconcile_retained_publication':'Reconcile the exact committed publication using its retained artwork and latest visitor state. Do not generate another digest or restore stale state.',
@@ -83,6 +84,14 @@ def save_outcome(path, outcome):
     action=outcome.get('recovery_action')
     clean['recovery_action']=action if isinstance(action,str) and action in _GUIDANCE else 'inspect_outcome_before_retry'
     clean['recovery_guidance']=_GUIDANCE[clean['recovery_action']]
+    if clean['failure_category'] == 'source_collection':
+        from .collectors import public_collection_health
+        clean['failure_code'] = 'required-source-coverage-unavailable'
+        clean['collection_health'] = public_collection_health(outcome.get('collection_health'))
+    if (clean['failure_category'] == 'spend_control' and
+            outcome.get('failure_code') == 'transient-anonymous-price-read'):
+        clean['failure_code'] = 'transient-anonymous-price-read'
+        clean['retry_not_before'] = _iso(outcome.get('retry_not_before'))
     clean['artifact_name']=(f"publication-recovery-{clean['run_id']}-{clean['run_attempt']}"
         if clean['run_id'] and clean['run_attempt'] else None)
     path=Path(path)
@@ -192,6 +201,7 @@ def record_generation_failure(root, error, env):
         category='photo_provider';known_precommit=True
     elif isinstance(error,IngestionUnavailable):
         category='source_collection';known_precommit=True
+        outcome['collection_health'] = error.public_collection_health
     elif isinstance(error,SpendBlocked):
         category='spend_control';known_precommit=True
     elif isinstance(error,PermissionError) or isinstance(error,HTTPError) and error.code in {401,403}:

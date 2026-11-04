@@ -47,7 +47,8 @@ def test_stale_dispatch_keeps_existing_funding_guard_and_explicit_date(bundle, t
         ['scripts/maintain_spend_control.py', '--apply'],
         ['scripts/run_zeitgeist.py', '--date', str(now.date())],
         ['scripts/build_readme.py']]
-    assert all(c[1] == {'cwd': root, 'check': True} for c in calls)
+    assert calls[0][1] == {'cwd': root, 'check': True, 'capture_output': True, 'text': True}
+    assert all(c[1] == {'cwd': root, 'check': True} for c in calls[1:])
     assert output.read_text() == 'publish_required=false\npublish_required=true\n'
 
 

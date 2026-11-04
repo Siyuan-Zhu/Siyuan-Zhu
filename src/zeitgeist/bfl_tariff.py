@@ -182,7 +182,8 @@ def observe_bfl_flux3_tariff(client, *, now):
         sensitive = {'authorization','proxy-authorization','x-key','x-goog-api-key'}
         if getattr(client, 'auth', None) is not None or any(str(key).lower() in sensitive for key in getattr(client, 'headers', {})):
             raise ValueError('Public pricing must use an unauthenticated client')
-        response = client.get(SOURCE_URL, follow_redirects=False, timeout=15)
+        from .public_tariff_http import public_get
+        response = public_get(client, SOURCE_URL)
         if response.status_code != 200 or str(response.url) != SOURCE_URL or response.headers.get('content-type', '').split(';', 1)[0].strip().lower() != 'text/html':
             raise ValueError('Public pricing response must be direct HTML on exact origin')
         raw = response.content

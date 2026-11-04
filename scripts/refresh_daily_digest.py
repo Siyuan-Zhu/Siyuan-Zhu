@@ -39,6 +39,31 @@ def publication_due(root, store, target_date):
     return published_date < target_date
 
 
+def retryable_maintenance_failure(error, *, now):
+    """Trust only the local CLI's exact zero-write transient classification."""
+    from src.zeitgeist.public_tariff_http import validate_retry_not_before
+    if (not isinstance(error,subprocess.CalledProcessError) or error.returncode!=75
+            or not isinstance(error.stdout,str) or len(error.stdout)>2048):
+        return None
+    def unique(pairs):
+        result={}
+        for key,value in pairs:
+            if key in result:raise ValueError('Duplicate recovery field')
+            result[key]=value
+        return result
+    try:
+        value=json.loads(error.stdout,object_pairs_hook=unique)
+        if (not isinstance(value,dict) or set(value)!={'status','operation','month','code','retryable','retry_not_before'}
+                or value['status']!='blocked' or value['operation']!='maintenance'
+                or value['code']!='transient-anonymous-price-read' or value['retryable'] is not True
+                or value['month']!=now.strftime('%Y-%m')):
+            return None
+        deadline=validate_retry_not_before(value['retry_not_before'],now=now)
+        return max(now,deadline).isoformat()
+    except (ValueError,TypeError,KeyError,AttributeError,RecursionError):
+        return None
+
+
 def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run):
     env = os.environ if env is None else env
     now = now or datetime.now(timezone.utc)
@@ -85,7 +110,7 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
             outcome['stage'] = 'spend_maintenance'
             save_outcome(receipt, outcome)
             runner([sys.executable, 'scripts/maintain_spend_control.py', '--apply'],
-                   cwd=root, check=True)
+                   cwd=root, check=True, capture_output=True, text=True)
         if execution is not None:
             execution.transition('generation')
         outcome['stage'] = 'generation'
@@ -114,8 +139,18 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
         try:
             record_failure(root, receipt, outcome, error, store=store)
             if execution is not None:
-                execution.transition('blocked' if outcome['stage'] in {'freshness','spend_maintenance'}
-                                     else 'requires_reconciliation', failure_category=outcome['stage'])
+                observed_now=datetime.now(timezone.utc)
+                retry_at=retryable_maintenance_failure(error,now=observed_now) if outcome['stage']=='spend_maintenance' else None
+                if retry_at is not None:
+                    execution.transition('preflight_retryable',failure_category='transient_anonymous_price_read',
+                        retry_not_before=retry_at,now=observed_now)
+                    outcome.update(status='failed',failure_category='spend_control',
+                        failure_code='transient-anonymous-price-read',retry_not_before=retry_at,
+                        recovery_action='wait_configured_catchup',canonical_commit='not_attempted')
+                    save_outcome(receipt,outcome)
+                else:
+                    execution.transition('blocked' if outcome['stage'] in {'freshness','spend_maintenance'}
+                                         else 'requires_reconciliation', failure_category=outcome['stage'])
         except Exception:
             pass  # A failed observer must not replace the actual failure.
         raise

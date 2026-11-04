@@ -9,6 +9,7 @@ import json
 from src.state_store import _commit_documents, PublicationOutcomeUnknown
 
 ACTIVE_UNCERTAIN={'generation','validation','publication','awaiting_approval','requires_reconciliation'}
+FAILED_TERMINAL={'blocked','held_for_review','requires_reconciliation','preflight_retryable'}
 
 
 class EditionExecution:
@@ -37,6 +38,13 @@ class EditionExecution:
             if prior['stage'] in ACTIVE_UNCERTAIN:
                 raise RuntimeError('Edition requires existing-work reconciliation, not new inference')
             if prior['stage']=='held_for_review':raise PermissionError('Edition held for owner review')
+            if prior['stage']=='preflight_retryable':
+                from .public_tariff_http import validate_retry_not_before
+                if prior.get('failure_category')!='transient_anonymous_price_read' or prior.get('publication_id'):
+                    raise RuntimeError('Retry requires proven pre-inference observation failure')
+                deferred=validate_retry_not_before(prior.get('retry_not_before'),
+                    now=datetime.fromisoformat(prior['updated_at']))
+                if now<deferred:raise RuntimeError('Anonymous pricing Retry-After has not elapsed')
             if datetime.fromisoformat(prior['lease_until'])>now:
                 raise RuntimeError('Another edition claim is active')
             if prior['stage']=='blocked' and prior.get('source_revision')==source_revision:
@@ -49,18 +57,29 @@ class EditionExecution:
             'publication_id':None,'failure_category':None}
         return self._write(snap,value)
 
-    def transition(self, stage, *, publication_id=None, failure_category=None, now=None):
+    def transition(self, stage, *, publication_id=None, failure_category=None, retry_not_before=None, now=None):
         allowed={'preflight','generation','validation','publication','awaiting_approval',
-            'published','blocked','held_for_review','requires_reconciliation'}
+            'published','blocked','held_for_review','requires_reconciliation','preflight_retryable'}
         if stage not in allowed:raise ValueError('Unknown execution stage')
         now=now or datetime.now(timezone.utc)
         snap=self.doc.get();value=snap.to_dict() if snap.exists else {}
         if value.get('owner')!=self.owner:raise RuntimeError('Execution ownership changed')
+        if value.get('stage') in FAILED_TERMINAL and (stage!=value['stage'] or
+                (publication_id is not None and publication_id!=value.get('publication_id'))):
+            raise RuntimeError('Failed execution is terminal; inspect or claim eligible preflight recovery')
         if value.get('stage')=='published' and stage!='published':raise RuntimeError('Published edition is terminal')
         # The lease fences the generation start; after paid work, the same owner
         # may record results after expiry, but nobody may steal uncertain work.
         if stage=='generation' and datetime.fromisoformat(value['lease_until'])<=now:
             raise RuntimeError('Lease expired before generation')
+        if stage=='preflight_retryable':
+            from .public_tariff_http import validate_retry_not_before
+            if value.get('stage')!='preflight' or failure_category!='transient_anonymous_price_read' or value.get('publication_id'):
+                raise RuntimeError('Only proven pre-inference failure may become retryable')
+            validate_retry_not_before(retry_not_before,now=now)
+            value['retry_not_before']=retry_not_before
+        elif retry_not_before is not None:
+            raise ValueError('Retry timestamp belongs only to preflight observation failure')
         value.update(stage=stage,updated_at=now.isoformat(),publication_id=publication_id or value.get('publication_id'),
                      failure_category=failure_category)
         return self._write(snap,value)

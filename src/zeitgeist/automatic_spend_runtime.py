@@ -70,6 +70,13 @@ def observe_provider_metadata(policy, env: Mapping[str, str], now):
     private_env['APIFY_INSTAGRAM_BUILD_ID'] = policy['providers']['apify']['actor_build_id']
     with httpx.Client(timeout=20, follow_redirects=False) as client:
         report = run_preflight(client, private_env, now=now, required_models=models)
+    # A known authentication/configuration failure must not be hidden by a later
+    # transient anonymous pricing read. Reuse the refresh validator's exact gate.
+    for name, pinned in policy["providers"].items():
+        fresh = report.get(name, {})
+        if (fresh.get("status") != "metadata_verified" or
+                fresh.get("credential_fingerprint") != pinned["account"]["credential_fingerprint"]):
+            raise SpendBlocked("Provider metadata or credential binding failed")
     report["price_snapshots"] = {}
     for name, pinned in policy["providers"].items():
         mode = pinned.get("price_evidence_mode", "dynamic_snapshot")
