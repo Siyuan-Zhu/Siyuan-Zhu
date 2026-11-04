@@ -48,7 +48,7 @@ _ENUMS = {
     'canonical_commit':{'unknown','not_attempted','not_required','not_committed','committed'},
     'git_publication':{'not_started','not_required','published','failed','unknown'},
     'failure_category':{'unknown','readiness','spend_control','photo_quality','photo_provider',
-                        'source_collection','permission','publication','startup'},
+                        'source_collection','embedding_provider','permission','publication','startup'},
 }
 
 
@@ -84,9 +84,10 @@ def save_outcome(path, outcome):
     action=outcome.get('recovery_action')
     clean['recovery_action']=action if isinstance(action,str) and action in _GUIDANCE else 'inspect_outcome_before_retry'
     clean['recovery_guidance']=_GUIDANCE[clean['recovery_action']]
-    if clean['failure_category'] == 'source_collection':
-        from .collectors import public_collection_health
-        clean['failure_code'] = 'required-source-coverage-unavailable'
+    if clean['failure_category'] in {'source_collection','embedding_provider'}:
+        from .collectors import public_collection_health, INGESTION_FAILURE_CODES
+        code=outcome.get('failure_code')
+        clean['failure_code'] = code if isinstance(code,str) and code in INGESTION_FAILURE_CODES else 'source-collection-unavailable'
         clean['collection_health'] = public_collection_health(outcome.get('collection_health'))
     if (clean['failure_category'] == 'spend_control' and
             outcome.get('failure_code') == 'transient-anonymous-price-read'):
@@ -200,7 +201,11 @@ def record_generation_failure(root, error, env):
     elif isinstance(error,(PhotoSearchUnavailable,PhotoCriticUnavailable)):
         category='photo_provider';known_precommit=True
     elif isinstance(error,IngestionUnavailable):
-        category='source_collection';known_precommit=True
+        from .collectors import INGESTION_FAILURE_CODES
+        code=error.public_diagnostics.get('code')
+        outcome['failure_code']=code if isinstance(code,str) and code in INGESTION_FAILURE_CODES else 'source-collection-unavailable'
+        category='embedding_provider' if outcome['failure_code'].startswith('embedding-') else 'source_collection'
+        known_precommit=True
         outcome['collection_health'] = error.public_collection_health
     elif isinstance(error,SpendBlocked):
         category='spend_control';known_precommit=True

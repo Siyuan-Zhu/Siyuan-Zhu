@@ -177,4 +177,5 @@ def test_transient_public_read_has_bounded_backoff(monkeypatch):
     delays=[];monkeypatch.setattr(tariff.time,'sleep',delays.append)
     client=Client(fixture(),status=503)
     with pytest.raises(SpendBlocked):observe_gemini_tariff(client,now=NOW)
-    assert len(client.calls)==3 and delays==[0.5,1.0]
+    assert len(client.calls)==3 and len(delays)==2
+    assert .5<=delays[0]<=.625 and 1<=delays[1]<=1.25

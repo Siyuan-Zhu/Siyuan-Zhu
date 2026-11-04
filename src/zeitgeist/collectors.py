@@ -1249,6 +1249,11 @@ class IngestionUnavailable(RuntimeError):
         self.public_collection_health = public_collection_health(collection_health)
 
 
+INGESTION_FAILURE_CODES = frozenset({'required-source-coverage-unavailable',
+    'source-collection-unavailable','embedding-model-mismatch','embedding-provider-unavailable',
+    'embedding-request-outcome-unavailable','embedding-response-invalid'})
+
+
 def _sanitized_provider_error(exc, token):
     status = getattr(getattr(exc, "response", None), "status_code", None)
     detail = {"provider": "apify", "status": status, "error_type": type(exc).__name__}
@@ -1734,7 +1739,8 @@ def embed_missing_items(
     if not items:
         return []
     if require_live and model != EMBEDDING_MODEL:
-        raise IngestionUnavailable("Live embedding model differs from the approved semantic space")
+        raise IngestionUnavailable("Live embedding model differs from the approved semantic space",
+            public_diagnostics={'code':'embedding-model-mismatch'})
 
     active_client = genai_client if genai_client is not None else client
     cache_ref = existing_cache if isinstance(existing_cache, dict) else {}
@@ -1774,7 +1780,8 @@ def embed_missing_items(
     if not uncached_indices:
         return enriched
     if require_live and active_client is None:
-        raise IngestionUnavailable("Required live embedding provider unavailable; retain last publication")
+        raise IngestionUnavailable("Required live embedding provider unavailable; retain last publication",
+            public_diagnostics={'code':'embedding-provider-unavailable'})
 
     step = max(1, int(batch_size))
     for start in range(0, len(uncached_indices), step):
@@ -1799,7 +1806,8 @@ def embed_missing_items(
                 raise
             except Exception as exc:
                 if require_live:
-                    raise IngestionUnavailable("Required live embedding request failed; retain last publication") from None
+                    raise IngestionUnavailable("Required live embedding request failed; retain last publication",
+                        public_diagnostics={'code':'embedding-request-outcome-unavailable'}) from None
                 logger.warning(
                     "Batch embedding call failed for %d items (%s); retrying items individually.",
                     len(batch_idx_slice),
@@ -1809,7 +1817,8 @@ def embed_missing_items(
                 batch_failed = True
 
             if require_live and batch_failed:
-                raise IngestionUnavailable("Required live embedding response incomplete or invalid; retain last publication")
+                raise IngestionUnavailable("Required live embedding response incomplete or invalid; retain last publication",
+                    public_diagnostics={'code':'embedding-response-invalid'})
             if batch_failed and len(batch_idx_slice) > 1:
                 for pos, single_text in enumerate(batch_text_slice):
                     if packed_batch[pos] is not None:

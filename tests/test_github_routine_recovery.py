@@ -25,13 +25,33 @@ def test_source_failure_receipt_survives_completion_without_private_data(tmp_pat
     env={'DAILY_OUTCOME_PATH':str(path),'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'1','GITHUB_SHA':'a'*40}
     outcome=new_outcome(env,NOW,NOW.date());outcome['stage']='generation'
     save_outcome(path,outcome)
-    error=IngestionUnavailable('PRIVATE_TOKEN_AND_FEED',collection_health={
+    error=IngestionUnavailable('PRIVATE_TOKEN_AND_FEED',public_diagnostics={'code':'required-source-coverage-unavailable'},collection_health={
         'instagram':'empty','instagram_item_count':0,'publishable':False,'private':'PRIVATE_TOKEN_AND_FEED'})
     record_generation_failure(tmp_path,error,env)
     result=complete_outcome(tmp_path,env|{'DAILY_DIGEST_OUTCOME':'failure','DAILY_PUBLISH_OUTCOME':'skipped'},now=NOW)
     assert result['failure_code']=='required-source-coverage-unavailable'
     assert result['collection_health']=={'instagram':'empty','instagram_item_count':0,'publishable':False}
     assert result['failure_category']=='source_collection' and result['canonical_commit']=='not_committed'
+    assert 'PRIVATE' not in path.read_text()
+
+
+@pytest.mark.parametrize('kind,code',[('missing','embedding-provider-unavailable'),
+    ('timeout','embedding-request-outcome-unavailable'),('invalid','embedding-response-invalid')])
+def test_real_embedding_failure_is_not_reported_as_missing_sources(tmp_path,kind,code):
+    from types import SimpleNamespace
+    from src.zeitgeist.collectors import embed_missing_items
+    def embed(**kwargs):
+        if kind=='timeout':raise TimeoutError('PRIVATE_PAID_RESPONSE')
+        return SimpleNamespace(embeddings=[])
+    client=None if kind=='missing' else SimpleNamespace(models=SimpleNamespace(embed_content=embed))
+    with pytest.raises(IngestionUnavailable) as raised:
+        embed_missing_items([{'url_hash':'x','title':'Real boundary'}],genai_client=client,require_live=True)
+    assert raised.value.public_diagnostics=={'code':code}
+    path=tmp_path/'outcome.json';env={'DAILY_OUTCOME_PATH':str(path)}
+    outcome=new_outcome(env,NOW,NOW.date());outcome['stage']='generation';save_outcome(path,outcome)
+    record_generation_failure(tmp_path,raised.value,env)
+    result=json.loads(path.read_text())
+    assert result['failure_code']==code and result['failure_category']=='embedding_provider'
     assert 'PRIVATE' not in path.read_text()
 
 
