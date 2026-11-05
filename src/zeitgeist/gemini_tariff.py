@@ -262,9 +262,9 @@ def observe_gemini_tariff(client, *, now):
         if str(response.url) == SOURCE_URL and response.status_code in (301, 308) and response.headers.get('location') == 'https://aistudio.google.com/docs/pricing':
             resolved_url = 'https://aistudio.google.com/docs/pricing'
             response = _public_get(client, resolved_url)
-        allowed_type = 'text/html' if resolved_url == SOURCE_URL else 'text/plain'
-        if response.status_code != 200 or str(response.url) != resolved_url or response.headers.get('content-type','').split(';',1)[0].strip().lower() != allowed_type:
-            raise ValueError('Direct fixed-origin public HTML required')
+        allowed_types = {'text/html'} if resolved_url == SOURCE_URL else {'text/plain', 'text/markdown'}
+        if response.status_code != 200 or str(response.url) != resolved_url or response.headers.get('content-type','').split(';',1)[0].strip().lower() not in allowed_types:
+            raise ValueError('Reviewed fixed-origin pricing representation required')
         raw=response.content
         if not isinstance(raw,bytes) or len(raw)>MAX_HTML_BYTES:
             raise ValueError('Public pricing byte ceiling exceeded')

@@ -148,9 +148,10 @@ def test_markdoc_unknown_missing_malformed_never_infers_free(change):
     with pytest.raises(SpendBlocked): normalize_gemini_tariff(change(markdoc()))
 
 
-def test_only_exact_official_permanent_redirect_is_allowed():
+@pytest.mark.parametrize('kind', ['text/plain; charset=utf-8', 'text/markdown; charset=utf-8'])
+def test_only_exact_official_permanent_redirect_is_allowed(kind):
     new='https://aistudio.google.com/docs/pricing'
-    client=Client(markdoc(),url=new,kind='text/plain; charset=utf-8')
+    client=Client(markdoc(),url=new,kind=kind)
     final=client.response
     redirect=SimpleNamespace(status_code=301,url='https://ai.google.dev/gemini-api/docs/pricing',headers={'location':new})
     responses=iter([redirect,final])
@@ -162,6 +163,15 @@ def test_only_exact_official_permanent_redirect_is_allowed():
     for location in ('https://evil.invalid/pricing',new+'?x=1'):
         client=Client('');client.response.status_code=301;client.response.headers['location']=location
         with pytest.raises(SpendBlocked):observe_gemini_tariff(client,now=NOW)
+
+
+@pytest.mark.parametrize('kind', ['application/json', 'text/html', 'application/octet-stream'])
+def test_markdown_redirect_does_not_accept_other_representations(kind):
+    new='https://aistudio.google.com/docs/pricing'
+    client=Client(markdoc(),url=new,kind=kind)
+    responses=iter([SimpleNamespace(status_code=301,url='https://ai.google.dev/gemini-api/docs/pricing',headers={'location':new}),client.response])
+    client.get=lambda *a,**k:next(responses)
+    with pytest.raises(SpendBlocked):observe_gemini_tariff(client,now=NOW)
 
 
 def test_redirect_chain_and_malformed_utf8_reject():
