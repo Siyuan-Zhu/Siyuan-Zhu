@@ -775,6 +775,9 @@ class BudgetGuard:
         if max_bytes <= 0 or len(serialized) > max_bytes:
             raise SpendBlocked("Request exceeds verified model input bound")
         if method == "generate_content":
+            # One reservation prices one request. The SDK otherwise defaults to
+            # automatically sending additional requests on CONTINUATION replies.
+            config["automatic_continuation"] = False
             if int(config.get("candidate_count", 1)) != 1:
                 raise SpendBlocked("Only one priced generation candidate is permitted")
             if model.startswith("gemini-3"):
