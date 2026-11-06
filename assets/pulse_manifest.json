@@ -6,9 +6,9 @@
   "archetype": "LITERARY_JOURNAL",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "20b75658435fb4fa8ca096e57185fe80f802978b9e07ce298cd8531c50df65c2",
-    "assets/daily_pulse_dark.webp": "45b5306227891c95246bbf10dc7739cf67b28080ffbc504ae06f73070a7f9903",
-    "assets/daily_pulse.svg": "908119617206cb81297ff7856751557d10c58605a74fd570d3248bab329aa88e",
+    "assets/daily_pulse_light.webp": "dff209795166437ebbc5042c6b73aa10aef788872c97b80a1c3b13500885a1f2",
+    "assets/daily_pulse_dark.webp": "24bab4a7f96a15351292dc65e7f143e4bbf43e8878fe1e3ce39d18dccbf12eed",
+    "assets/daily_pulse.svg": "9acbf0db03dd5e83a462c66b98aec624b9cc6aecd0db4cda6833b0668b277c4c",
     "assets/pulse/2026-11-06.webp": "f5e417461f70316dd5f4afbe155aa21050aabf63b9ec3226a221554cab2b52a9"
   },
   "media_provenance": {
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "aac90301948fb83b99a6"
+  "publication_id": "6cdb9872c4cbf2be23f4"
 }

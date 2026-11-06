@@ -4,27 +4,39 @@
   "state_version": 10,
   "updated_at": "2026-11-06T15:34:13.766631+00:00",
   "handles": {
-    "tomfoxcatalog": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "mpfaffenberger": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "pai.chi": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
     "alejandro.arrias": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "davidbravobustos": {
+    "benjamindane": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "douwem": {
+    "tomfoxcatalog": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "modelcontextprotocol": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "papitaa_criolla": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "mekanbaymyradov": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "myleshendrik": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "_nutealla_": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "pai.chi": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -36,11 +48,7 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "modelcontextprotocol": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "laurameijueiro": {
+    "douwem": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -48,7 +56,15 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "_nutealla_": {
+    "camilla_greenwell": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "laurameijueiro": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "davidbravobustos": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -56,31 +72,15 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "myleshendrik": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
     "emilyjaynemay": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
+    "mpfaffenberger": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
     "casholman": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "mekanbaymyradov": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "camilla_greenwell": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "papitaa_criolla": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "benjamindane": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     }

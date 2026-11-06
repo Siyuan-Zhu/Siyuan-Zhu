@@ -36,7 +36,7 @@
       "orbit_contribution_pct": 62.0,
       "orbit_sources_matched": [],
       "orbit_weight_ratio": 0.62,
-      "publication_id": "aac90301948fb83b99a6",
+      "publication_id": "6cdb9872c4cbf2be23f4",
       "published_at": "2026-11-06T15:35:06.921967Z",
       "quote": "Civic space reborn in steel and monumental light.",
       "quote_attribution": "Editorial Director Synthesis",
@@ -65,21 +65,21 @@
       "window_hours": 96,
       "word": "Lattice",
       "media_provenance": {
-        "version": 1,
-        "classification": "PHOTOGRAPHY",
-        "basis": "camera_reported",
-        "provider": "unsplash",
-        "asset_id": "beWrUq3HM4k",
-        "source_url": "https://unsplash.com/photos/beWrUq3HM4k",
-        "camera_make": "FUJIFILM",
         "camera_model": "X100F",
+        "asset_id": "beWrUq3HM4k",
         "source_claim": {
-          "kind": "none",
+          "statement": "",
           "process": "unknown",
-          "statement": ""
+          "kind": "none"
         },
+        "basis": "camera_reported",
+        "camera_make": "FUJIFILM",
+        "allowance_exception": false,
+        "source_url": "https://unsplash.com/photos/beWrUq3HM4k",
+        "version": 1,
+        "provider": "unsplash",
         "source_statement_sha256": "",
-        "allowance_exception": false
+        "classification": "PHOTOGRAPHY"
       }
     },
     {
