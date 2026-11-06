@@ -1342,9 +1342,12 @@ def fetch_instagram_batch(
         "dataDetailLevel": "basicData",
         "onlyPostsNewerThan": "14 days",
     }
-    build = (actor_build or os.environ.get("APIFY_INSTAGRAM_BUILD", "")).strip()
-    if not re.fullmatch(r"\d+\.\d+\.\d+", build):
+    configured_build = (actor_build or os.environ.get("APIFY_INSTAGRAM_BUILD", "")).strip()
+    if configured_build and not re.fullmatch(r"\d+\.\d+\.\d+", configured_build):
         raise IngestionUnavailable("Verified, pinned APIFY_INSTAGRAM_BUILD required")
+    if not configured_build and spend_guard is None and not os.environ.get("SPEND_POLICY_SHA256"):
+        raise IngestionUnavailable("Verified, pinned APIFY_INSTAGRAM_BUILD required")
+    build = configured_build  # replaced by the policy pin once the guard is known
     # This is a provider-enforced total charge cap, not a predicted bill. Credits
     # and remaining cash are reserved separately by the shared account ledger.
     maximum_charge = max(0.005, len(cleaned_handles) * per_handle_cap * 0.002)
@@ -1362,6 +1365,9 @@ def fetch_instagram_batch(
     unavailable_reasons = {}
     try:
         guard = spend_guard or get_spend_guard(credential_keys={"apify": token})
+        from .automatic_spend import approved_apify_build
+        # The approved policy pins the build; an ambient value may only agree with it.
+        build = approved_apify_build(getattr(guard, "automatic_policy", None), configured_build)
         def request():
             nonlocal response_status
             with httpx.Client(timeout=request_timeout, follow_redirects=False) as client:

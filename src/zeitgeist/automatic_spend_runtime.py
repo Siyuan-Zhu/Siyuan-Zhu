@@ -66,7 +66,9 @@ def observe_provider_metadata(policy, env: Mapping[str, str], now):
     private_env = {name: env[name] for name in (
         "GEMINI_API_KEY", "BFL_API_KEY", "APIFY_TOKEN", "APIFY_API_TOKEN", "APIFY_INSTAGRAM_BUILD"
     ) if name in env}
-    # The immutable ID comes from the reviewed policy, never an ambient override.
+    # The build and its immutable ID come from the reviewed policy, never an ambient override.
+    from .automatic_spend import approved_apify_build
+    private_env['APIFY_INSTAGRAM_BUILD'] = approved_apify_build(policy, env.get('APIFY_INSTAGRAM_BUILD', ''))
     private_env['APIFY_INSTAGRAM_BUILD_ID'] = policy['providers']['apify']['actor_build_id']
     with httpx.Client(timeout=20, follow_redirects=False) as client:
         report = run_preflight(client, private_env, now=now, required_models=models)

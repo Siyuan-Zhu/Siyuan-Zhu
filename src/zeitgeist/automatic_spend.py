@@ -22,6 +22,25 @@ MODES = {'gemini': 'cash_only', 'bfl': 'nonrenewable_prepaid', 'apify': 'recurri
 PRICE_HOSTS = {'gemini': {'ai.google.dev'}, 'bfl': {'bfl.ai', 'docs.bfl.ai', 'help.bfl.ai'}, 'apify': {'apify.com', 'api.apify.com', 'docs.apify.com'}}
 
 
+def approved_apify_build(policy, configured=''):
+    """The Apify Instagram build: the approved policy's pin is the single source.
+
+    A configured build (environment or argument) is only an optional assertion:
+    under a policy it must equal the pin or the run stops. Without a policy, the
+    legacy verified numeric build is still required.
+    """
+    configured = str(configured or '').strip()
+    if policy:
+        pinned = policy['providers']['apify']['actor_build']
+        if configured and configured != pinned:
+            raise SpendBlocked('APIFY_INSTAGRAM_BUILD differs from the approved policy pin')
+        return pinned
+    if not re.fullmatch(r'\d+\.\d+\.\d+', configured):
+        from .collectors import IngestionUnavailable
+        raise IngestionUnavailable('Verified, pinned APIFY_INSTAGRAM_BUILD required')
+    return configured
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 

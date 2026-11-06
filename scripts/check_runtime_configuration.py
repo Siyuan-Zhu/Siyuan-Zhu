@@ -39,7 +39,9 @@ def configuration_errors(env: Mapping[str, str], *, visitor: bool = False, daily
         for key in ("ZEITGEIST_LIVE_COLLECT", "ZEITGEIST_LIVE_LLM", "ZEITGEIST_LIVE_UNSPLASH"):
             if env.get(key) != "1":
                 errors.append(f"{key} must enable the reviewed live path")
-        if not re.fullmatch(r"\d+\.\d+\.\d+", env.get("APIFY_INSTAGRAM_BUILD", "")):
+        build = env.get("APIFY_INSTAGRAM_BUILD", "")
+        # Under an approved policy the build comes from the policy; a set value must still be numeric.
+        if (build or not env.get("SPEND_POLICY_SHA256")) and not re.fullmatch(r"\d+\.\d+\.\d+", build):
             errors.append("APIFY_INSTAGRAM_BUILD must be a verified numeric build")
         if env.get("ZEITGEIST_OFFLINE_DEMO") == "1":
             errors.append("Daily writers must never use demonstration signals")

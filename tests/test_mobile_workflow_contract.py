@@ -35,7 +35,9 @@ def test_mobile_commissioning_environment_forwards_live_provider_contract():
     env = _step().split("        env:\n", 1)[1].split("        run: |", 1)[0]
     for name in ("GEMINI_API_KEY", "BFL_API_KEY", "UNSPLASH_ACCESS_KEY", "APIFY_TOKEN", "APIFY_API_TOKEN"):
         assert f"          {name}: {chr(36)}{{{{ secrets." in env
-    assert "APIFY_INSTAGRAM_BUILD: " + chr(36) + "{{ vars.APIFY_INSTAGRAM_BUILD }}" in env
+    # The Apify build comes from the approved spend policy, never a repository variable.
+    assert "APIFY_INSTAGRAM_BUILD" not in env
+    assert "SPEND_POLICY_SHA256" in env
     for flag in ("ZEITGEIST_LIVE_LLM", "ZEITGEIST_LIVE_COLLECT", "ZEITGEIST_LIVE_UNSPLASH"):
         assert f'{flag}: "1"' in env
     assert 'ZEITGEIST_OFFLINE_DEMO: "0"' in env

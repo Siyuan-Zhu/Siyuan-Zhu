@@ -81,7 +81,6 @@ jobs:
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
-          APIFY_INSTAGRAM_BUILD: ${{ vars.APIFY_INSTAGRAM_BUILD }}
           SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
           ZEITGEIST_LIVE_LLM: "1"
           ZEITGEIST_LIVE_COLLECT: "1"

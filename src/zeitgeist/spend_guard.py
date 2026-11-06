@@ -252,6 +252,7 @@ class SpendBlocked(RuntimeError):
         'Unapproved credit-only funding configuration': 'automatic-unapproved-credit-only-funding-configuration',
         'Verified bounded Gemini reload and credit-only peer providers required': 'automatic-verified-bounded-gemini-reload-and-credit-only-peer-providers-required',
         'Credit-only funding has unattributed prior cash liability': 'automatic-credit-only-funding-has-unattributed-prior-cash-liability',
+        'APIFY_INSTAGRAM_BUILD differs from the approved policy pin': 'automatic-apify-build-differs-from-policy-pin',
         'Credit-only funding requires a timezone-aware current time': 'automatic-credit-only-funding-requires-a-timezone-aware-current-time',
         'Credit-only provider collateral is outside its verified allowance period': 'automatic-credit-only-provider-collateral-is-outside-its-verified-allowance-period',
         'Credit-only provider has an uncollateralized retained liability': 'automatic-credit-only-provider-has-an-uncollateralized-retained-liability',
