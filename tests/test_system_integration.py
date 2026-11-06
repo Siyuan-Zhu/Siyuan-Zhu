@@ -254,12 +254,15 @@ class TestSubsystem1ZeitgeistAndVisualRouter(unittest.TestCase):
         }
 
         # A successful live fixture must satisfy the actual diversified source contract.
+        configured = json.loads((Path(__file__).resolve().parents[1] / "config/orbit_sources.json")
+                                .read_text())["coverage_requirements"]
+        fixture_sources = max(configured["min_orbit_sources"], configured["min_macro_sources"])
         curated_pool = []
         for bucket, prefix, tiers, template in (
             ("ORBIT", "o", ("O1", "O2", "O3"), curated_item),
             ("MACRO", "m", ("M1", "M2", "M3"), macro_item),
         ):
-            for i in range(6):
+            for i in range(fixture_sources):
                 row = dict(template, source_id=f"{prefix}_fixture_{i}", bucket=bucket,
                            tier=tiers[i % 3], source_tier=tiers[i % 3],
                            url=f"https://example.org/{prefix}/entry-{i}")
@@ -287,7 +290,7 @@ class TestSubsystem1ZeitgeistAndVisualRouter(unittest.TestCase):
         self.assertEqual(mock_feeds.call_count, 1)
         self.assertEqual(mock_ig.call_count, 1)
         self.assertEqual(mock_macro.call_count, 1)
-        self.assertEqual(len(signals), 14)
+        self.assertEqual(len(signals), 2 * fixture_sources + 2)
         for sig in signals:
             self.assertEqual(len(sig.url_hash), 32)
             self.assertEqual(len(sig.embedding_f16), 1536)
@@ -296,7 +299,7 @@ class TestSubsystem1ZeitgeistAndVisualRouter(unittest.TestCase):
         saved_roster = store.load_orbit_roster()
         self.assertIn("scout_alpha", saved_roster.get("handles", {}))
         self.assertIn("2026-10-27", store._ingestion_cache_shards)
-        self.assertEqual(len(store._ingestion_cache_shards["2026-10-27"]["items"]), 14)
+        self.assertEqual(len(store._ingestion_cache_shards["2026-10-27"]["items"]), 2 * fixture_sources + 2)
 
 
 class TestSubsystem2Connect4GameEngine(unittest.TestCase):

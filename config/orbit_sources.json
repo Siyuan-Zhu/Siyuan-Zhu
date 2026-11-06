@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "description": "Weighted multi-lens sentiment and cultural editorial orbit for Siyuan-Zhu daily pulse (30 Personal Orbit + 30 Macro Velocity curated feeds plus dynamic 1-hop OrbitScout and MacroScout discovery). Zero personal login cookies or private identifiers.",
   "coverage_requirements": {
-    "min_orbit_sources": 6,
+    "min_orbit_sources": 8,
     "min_macro_sources": 6,
     "required_orbit_tiers": ["O1", "O2", "O3"],
     "required_macro_tiers": ["M1", "M2", "M3"]
@@ -25,7 +25,7 @@
     "legitsadierob",
     "christian_huff",
     "hohl.co",
-    "bibleproject",
+    "thebibleproject",
     "kinfolk",
     "cerealmag",
     "a24"
