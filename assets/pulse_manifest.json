@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-04",
-  "word": "Imposition",
-  "gloss": "Digital infrastructure intrudes upon civic soil.",
-  "archetype": "POETIC_CINEMA",
+  "date": "2026-11-06",
+  "word": "Lattice",
+  "gloss": "Civic space reborn in steel and monumental light.",
+  "archetype": "LITERARY_JOURNAL",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "e3f99e021c92d1086ff78dc6e5353c7660cb824eb3650511e218830e9f2c5bd5",
-    "assets/daily_pulse_dark.webp": "e3f99e021c92d1086ff78dc6e5353c7660cb824eb3650511e218830e9f2c5bd5",
-    "assets/daily_pulse.svg": "169bd3ac7165b8fa7a1dc8dba8e73958243a04e722f0f4a5bda01df95fc06ebb",
-    "assets/pulse/2026-11-04.webp": "40313f5f1b2792bfcff150a046bc79f03b20cb5885e8cf3a9f1c1f5e14fa7ed2"
+    "assets/daily_pulse_light.webp": "20b75658435fb4fa8ca096e57185fe80f802978b9e07ce298cd8531c50df65c2",
+    "assets/daily_pulse_dark.webp": "45b5306227891c95246bbf10dc7739cf67b28080ffbc504ae06f73070a7f9903",
+    "assets/daily_pulse.svg": "908119617206cb81297ff7856751557d10c58605a74fd570d3248bab329aa88e",
+    "assets/pulse/2026-11-06.webp": "f5e417461f70316dd5f4afbe155aa21050aabf63b9ec3226a221554cab2b52a9"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "ZWH6Wm4rUw4",
-    "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
-    "camera_make": "Canon",
-    "camera_model": "Canon EOS 77D",
+    "asset_id": "beWrUq3HM4k",
+    "source_url": "https://unsplash.com/photos/beWrUq3HM4k",
+    "camera_make": "FUJIFILM",
+    "camera_model": "X100F",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "434ade2b29427efd9f55"
+  "publication_id": "aac90301948fb83b99a6"
 }
