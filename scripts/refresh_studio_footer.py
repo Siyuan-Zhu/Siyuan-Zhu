@@ -18,16 +18,35 @@ from PIL import Image, ImageChops
 from src.state_store import (
     FirestoreStateStore, PublicationOutcomeUnknown, _commit_documents, get_state_store, git_commit_and_push_with_retry,
 )
-from src.zeitgeist.curatorial_compositor import replace_studio_monograph_footer
+from src.zeitgeist.curatorial_compositor import (
+    literary_journal_text_boxes, replace_studio_monograph_footer, strip_literary_journal_text,
+)
 from src.zeitgeist.publication import verify_publication_bundle, write_publication_manifest
 from src.zeitgeist.publication_commit import PublicationWorkspace, publish_bundle
 
 
+CORRECTABLE = ('STUDIO_MONOGRAPH', 'LITERARY_JOURNAL')
+COMMIT_MESSAGES = {'STUDIO_MONOGRAPH': 'fix(pulse): remove Studio Monograph footer prefix [skip ci]',
+                   'LITERARY_JOURNAL': 'fix(pulse): remove Literary Journal masthead name and paragraph [skip ci]'}
+
+
+def _unchanged_outside(old, saved, boxes):
+    from PIL import ImageDraw
+    mask = Image.new('L', old.size, 255)
+    draw = ImageDraw.Draw(mask)
+    for box in boxes:
+        draw.rectangle(box, fill=0)
+    diff = ImageChops.difference(old, saved).convert('L')
+    return ImageChops.multiply(diff, mask).getbbox() is None
+
+
 def correct_assets(root: Path, expected_id: str, *, media_plan=None) -> dict:
-    """Only change the footer pixels and embedded copy; preserve the archive."""
+    """Only change the reviewed text pixels and embedded copy; preserve the archive."""
     before = verify_publication_bundle(root, require_current_pulse=True)
-    if before['publication_id'] != expected_id or before['archetype'] != 'STUDIO_MONOGRAPH':
-        raise ValueError('Exact accepted Studio Monograph publication required')
+    archetype = before['archetype']
+    if (before['publication_id'] != expected_id or archetype not in CORRECTABLE
+            or (media_plan and archetype != 'STUDIO_MONOGRAPH')):
+        raise ValueError('Exact accepted correctable publication required')
     pulse = json.loads((root / 'data/zeitgeist_state.json').read_text())
     entry = pulse.get('published_pulse') or next(
         e for e in json.loads((root / 'data/pulse_feed.json').read_text())['entries']
@@ -37,13 +56,18 @@ def correct_assets(root: Path, expected_id: str, *, media_plan=None) -> dict:
         path = root / f'assets/daily_pulse_{theme}.webp'
         with Image.open(path) as source:
             old = source.convert('RGB')
-        new = replace_studio_monograph_footer(old, date_str=before['date'],
-            attribution=attribution, visual_medium='DIGITAL_ARTWORK' if media_plan else before['medium'], dark_mode=theme == 'dark')
+        if archetype == 'LITERARY_JOURNAL':
+            new = strip_literary_journal_text(old, word=before['word'], gloss=before['gloss'],
+                date_str=before['date'], dark_mode=theme == 'dark')
+            boxes = literary_journal_text_boxes(before['word'], before['gloss'])
+        else:
+            new = replace_studio_monograph_footer(old, date_str=before['date'],
+                attribution=attribution, visual_medium='DIGITAL_ARTWORK' if media_plan else before['medium'], dark_mode=theme == 'dark')
+            boxes = ((0, 716, 1199, 747),)
         new.save(path, format='WEBP', lossless=True, exact=True)
         with Image.open(path) as saved:
-            diff = ImageChops.difference(old, saved.convert('RGB'))
-            if diff.crop((0, 0, 1200, 716)).getbbox() or diff.crop((0, 748, 1200, 800)).getbbox():
-                raise ValueError('Footer correction changed accepted artwork pixels')
+            if not _unchanged_outside(old, saved.convert('RGB'), boxes):
+                raise ValueError('Correction changed accepted artwork pixels')
     path = root / 'assets/daily_pulse.svg'
     svg = path.read_text()
     encoded = base64.b64encode((root / 'assets/daily_pulse_dark.webp').read_bytes()).decode('ascii')
@@ -165,7 +189,7 @@ def refresh(root, expected_id, *, store=None, apply=False, media_plan=None):
                                local_feed=feed, prepare=prepare, validate_current=validate_current if media_plan else None)
         committed = True
         workspace.install(state)
-        if not git_commit_and_push_with_retry('fix(pulse): remove Studio Monograph footer prefix [skip ci]',
+        if not git_commit_and_push_with_retry(COMMIT_MESSAGES[manifest['archetype']],
                                              repo_root=root, store=store,
                                              expected_publication_id=state['publication_id'] if media_plan else None):
             raise RuntimeError('Canonical correction committed; Git reconciliation required')

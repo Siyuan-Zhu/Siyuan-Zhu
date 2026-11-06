@@ -406,7 +406,7 @@ def _render_literary_journal_plate(
     body_font = _load_font(_SANS_FONT_CANDIDATES, 14)
 
     left_x = 56
-    draw.text((left_x, 168), f"THE DAILY ZEITGEIST  ·  {date_str}", font=mono_font, fill=ink_muted)
+    draw.text((left_x, 168), date_str, font=mono_font, fill=ink_muted)
     draw.line([(left_x, 194), (left_x + 72, 194)], fill=rule_color, width=1)
 
     title_runs, gy = layout_literary_title(word)
@@ -418,15 +418,46 @@ def _render_literary_journal_plate(
 
     gy += 18
     draw.line([(left_x, gy), (left_x + 330, gy)], fill=rule_color, width=1)
-    gy += 20
-
-    for line in textwrap.wrap(thesis.strip(), width=42)[:5]:
-        draw.text((left_x, gy), line, font=body_font, fill=ink_secondary)
-        gy += 22
+    # Owner decision 2026-11-06: no masthead name and no thesis paragraph here;
+    # the word, gloss and plate carry the edition.
 
     credit = _credit_line(attribution, visual_medium)
     draw.text((art_x, art_y + art_h + 16), credit, font=mono_font, fill=ink_muted)
 
+    return canvas
+
+
+LITERARY_KICKER_BOX = (0, 160, 443, 190)
+
+
+def literary_journal_text_boxes(word: str, gloss: str) -> tuple:
+    """Left-column boxes that held the masthead kicker and the thesis paragraph."""
+    _, gy = layout_literary_title(word)
+    gy += 27 * len(_pixel_wrap(gloss.strip(), _load_font(_SERIF_ITALIC_CANDIDATES, 23.75), 330))
+    paragraph_top = gy + 18 + 20 - 4
+    return LITERARY_KICKER_BOX, (0, paragraph_top, 443, PLATE_HEIGHT - 96)
+
+
+def strip_literary_journal_text(image, *, word, gloss, date_str, dark_mode):
+    """Correct an accepted Literary Journal plate without recomposing its plate.
+
+    Repaints only the kicker (redrawn as the date alone) and the thesis block in
+    the left column. The divider, word, gloss, rule, photograph and credit keep
+    every decoded pixel. Save the result losslessly.
+    """
+    if image.size != (PLATE_WIDTH, PLATE_HEIGHT):
+        raise ValueError("Unexpected Literary Journal dimensions")
+    canvas = image.convert("RGB").copy()
+    draw = ImageDraw.Draw(canvas)
+    # The accepted file's own background, which encoding may shift by a level.
+    bg = canvas.getpixel((8, 8))
+    expected = (15, 20, 25) if dark_mode else (251, 249, 245)
+    if max(abs(c - e) for c, e in zip(bg, expected)) > 3:
+        raise ValueError("Unexpected Literary Journal background")
+    kicker, paragraph = literary_journal_text_boxes(word, gloss)
+    draw.rectangle(kicker, fill=bg)
+    draw.rectangle(paragraph, fill=bg)
+    draw.text((56, 168), date_str, font=_load_font(_MONO_FONT_CANDIDATES, 12), fill=(120, 113, 108))
     return canvas
 
 
