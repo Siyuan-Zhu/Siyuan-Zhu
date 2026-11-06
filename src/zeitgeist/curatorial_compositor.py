@@ -368,6 +368,34 @@ def layout_literary_title(word):
     return runs, max(294, y+12)
 
 
+LITERARY_ART_BOX = (424, 160, 720, 480)  # x, y, w, h: untouched 3:2 plate
+LITERARY_COLUMN = (96, 264)  # x, width
+
+
+def _cap_height(font):
+    return -font.getbbox("H", anchor="ls")[1]
+
+
+def _spaced(draw, xy, text, font, fill, tracking):
+    """Draw text on one baseline with letter spacing; `xy` is its cap-top corner."""
+    x, y = xy
+    baseline = y + _cap_height(font)
+    for char in text:
+        draw.text((x, baseline), char, font=font, fill=fill, anchor="ls")
+        x += font.getlength(char) + tracking
+    return x
+
+
+def _fit_literary_word(word, width):
+    """Largest display size <= 76px whose lines fit the column; wrap only at 44px."""
+    for size in range(76, 43, -2):
+        font = _load_font(_SERIF_FONT_CANDIDATES, size)
+        if font.getlength(word) <= width:
+            return font, [word]
+    font = _load_font(_SERIF_FONT_CANDIDATES, 44)
+    return font, _pixel_wrap(word, font, width)
+
+
 def _render_literary_journal_plate(
     hero_img: Image.Image,
     *,
@@ -379,85 +407,53 @@ def _render_literary_journal_plate(
     visual_medium: str,
     dark_mode: bool,
 ) -> Image.Image:
-    """Render Archetype #2 (`LITERARY_JOURNAL`): asymmetric 40/60 spread with 100% untouched 3:2 plate."""
+    """Render Archetype #2 (`LITERARY_JOURNAL`) as a gallery label.
+
+    Owner decision 2026-11-06: no masthead name and no thesis paragraph. The
+    text column is exactly as tall as the untouched 3:2 plate: the date hangs
+    from the plate's top edge and the word and gloss stand on its bottom edge.
+    `thesis` is accepted for interface compatibility and not drawn.
+    """
     bg = (15, 20, 25) if dark_mode else (251, 249, 245)
     ink_primary = (243, 244, 246) if dark_mode else (24, 24, 27)
-    ink_secondary = (168, 162, 158) if dark_mode else (87, 83, 78)
-    ink_muted = (120, 113, 108) if dark_mode else (120, 113, 108)
-    rule_color = (42, 48, 56) if dark_mode else (228, 223, 215)
+    ink_secondary = (184, 178, 172) if dark_mode else (87, 83, 78)
+    ink_muted = (156, 149, 143) if dark_mode else (120, 113, 108)
+    rule_color = (58, 66, 76) if dark_mode else (214, 207, 196)
 
     canvas = Image.new("RGB", (PLATE_WIDTH, PLATE_HEIGHT), color=bg)
     draw = ImageDraw.Draw(canvas)
 
-    # Right 60% column: untouched 3:2 photograph/art plate (660 x 440) centered vertically
-    art_w, art_h = 660, 440
-    art_x = 486
-    art_y = (PLATE_HEIGHT - art_h) // 2
-    fitted_art = ImageOps.fit(hero_img, (art_w, art_h), method=Image.Resampling.LANCZOS)
-    canvas.paste(fitted_art, (art_x, art_y))
-    draw.rectangle([art_x - 1, art_y - 1, art_x + art_w, art_y + art_h], outline=rule_color, width=1)
+    art_x, art_y, art_w, art_h = LITERARY_ART_BOX
+    canvas.paste(ImageOps.fit(hero_img, (art_w, art_h), method=Image.Resampling.LANCZOS), (art_x, art_y))
+    top, bottom = art_y, art_y + art_h
+    left_x, column_w = LITERARY_COLUMN
 
-    # Vertical hairline divider
-    draw.line([(444, 96), (444, PLATE_HEIGHT - 96)], fill=rule_color, width=1)
+    # Top of the column: spaced date and a short rule.
+    date_font = _load_font(_MONO_FONT_CANDIDATES, 13)
+    _spaced(draw, (left_x, top), " · ".join(date_str.split("-")), date_font, ink_muted, 1.8)
+    rule_y = top + 13 + 14
+    draw.line([(left_x, rule_y), (left_x + 32, rule_y)], fill=rule_color, width=1)
 
-    mono_font = _load_font(_MONO_FONT_CANDIDATES, 12)
-    title_font = _load_font(_SERIF_FONT_CANDIDATES, 57.5)
-    gloss_font = _load_font(_SERIF_ITALIC_CANDIDATES, 23.75)
-    body_font = _load_font(_SANS_FONT_CANDIDATES, 14)
+    # Bottom of the column: word above gloss, the gloss's last baseline near the plate's bottom edge.
+    gloss_font = _load_font(_SERIF_ITALIC_CANDIDATES, 25)
+    gloss_lines = _pixel_wrap(gloss.strip(), gloss_font, column_w)
+    gloss_leading = 31
+    first_gloss_baseline = bottom - 7 - gloss_leading * (len(gloss_lines) - 1)
+    word_font, word_lines = _fit_literary_word(word.strip(), column_w)
+    word_leading = int(round(word_font.size * 0.95))
+    last_word_baseline = first_gloss_baseline - _cap_height(gloss_font) - 40
+    first_word_baseline = last_word_baseline - word_leading * (len(word_lines) - 1)
+    if first_word_baseline - _cap_height(word_font) < rule_y + 24:
+        raise ValueError("Literary Journal text exceeds its gallery label column")
+    for index, line in enumerate(word_lines):
+        draw.text((left_x, first_word_baseline + index * word_leading), line,
+                  font=word_font, fill=ink_primary, anchor="ls")
+    for index, line in enumerate(gloss_lines):
+        draw.text((left_x, first_gloss_baseline + index * gloss_leading), line,
+                  font=gloss_font, fill=ink_secondary, anchor="ls")
 
-    left_x = 56
-    draw.text((left_x, 168), date_str, font=mono_font, fill=ink_muted)
-    draw.line([(left_x, 194), (left_x + 72, 194)], fill=rule_color, width=1)
-
-    title_runs, gy = layout_literary_title(word)
-    for text, position in title_runs:
-        draw.text(position, text, font=title_font, fill=ink_primary)
-    for line in _pixel_wrap(gloss.strip(), gloss_font, 330):
-        draw.text((left_x, gy), line, font=gloss_font, fill=ink_secondary)
-        gy += 27
-
-    gy += 18
-    draw.line([(left_x, gy), (left_x + 330, gy)], fill=rule_color, width=1)
-    # Owner decision 2026-11-06: no masthead name and no thesis paragraph here;
-    # the word, gloss and plate carry the edition.
-
-    credit = _credit_line(attribution, visual_medium)
-    draw.text((art_x, art_y + art_h + 16), credit, font=mono_font, fill=ink_muted)
-
-    return canvas
-
-
-LITERARY_KICKER_BOX = (0, 160, 443, 190)
-
-
-def literary_journal_text_boxes(word: str, gloss: str) -> tuple:
-    """Left-column boxes that held the masthead kicker and the thesis paragraph."""
-    _, gy = layout_literary_title(word)
-    gy += 27 * len(_pixel_wrap(gloss.strip(), _load_font(_SERIF_ITALIC_CANDIDATES, 23.75), 330))
-    paragraph_top = gy + 18 + 20 - 4
-    return LITERARY_KICKER_BOX, (0, paragraph_top, 443, PLATE_HEIGHT - 96)
-
-
-def strip_literary_journal_text(image, *, word, gloss, date_str, dark_mode):
-    """Correct an accepted Literary Journal plate without recomposing its plate.
-
-    Repaints only the kicker (redrawn as the date alone) and the thesis block in
-    the left column. The divider, word, gloss, rule, photograph and credit keep
-    every decoded pixel. Save the result losslessly.
-    """
-    if image.size != (PLATE_WIDTH, PLATE_HEIGHT):
-        raise ValueError("Unexpected Literary Journal dimensions")
-    canvas = image.convert("RGB").copy()
-    draw = ImageDraw.Draw(canvas)
-    # The accepted file's own background, which encoding may shift by a level.
-    bg = canvas.getpixel((8, 8))
-    expected = (15, 20, 25) if dark_mode else (251, 249, 245)
-    if max(abs(c - e) for c, e in zip(bg, expected)) > 3:
-        raise ValueError("Unexpected Literary Journal background")
-    kicker, paragraph = literary_journal_text_boxes(word, gloss)
-    draw.rectangle(kicker, fill=bg)
-    draw.rectangle(paragraph, fill=bg)
-    draw.text((56, 168), date_str, font=_load_font(_MONO_FONT_CANDIDATES, 12), fill=(120, 113, 108))
+    credit_font = _load_font(_MONO_FONT_CANDIDATES, 12)
+    _spaced(draw, (art_x, bottom + 16), _credit_line(attribution, visual_medium), credit_font, ink_muted, 0.5)
     return canvas
 
 

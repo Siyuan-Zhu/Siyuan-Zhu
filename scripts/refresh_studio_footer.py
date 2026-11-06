@@ -18,8 +18,9 @@ from PIL import Image, ImageChops
 from src.state_store import (
     FirestoreStateStore, PublicationOutcomeUnknown, _commit_documents, get_state_store, git_commit_and_push_with_retry,
 )
+from PIL import ImageOps
 from src.zeitgeist.curatorial_compositor import (
-    literary_journal_text_boxes, replace_studio_monograph_footer, strip_literary_journal_text,
+    LITERARY_ART_BOX, _render_literary_journal_plate, replace_studio_monograph_footer,
 )
 from src.zeitgeist.publication import verify_publication_bundle, write_publication_manifest
 from src.zeitgeist.publication_commit import PublicationWorkspace, publish_bundle
@@ -27,7 +28,7 @@ from src.zeitgeist.publication_commit import PublicationWorkspace, publish_bundl
 
 CORRECTABLE = ('STUDIO_MONOGRAPH', 'LITERARY_JOURNAL')
 COMMIT_MESSAGES = {'STUDIO_MONOGRAPH': 'fix(pulse): remove Studio Monograph footer prefix [skip ci]',
-                   'LITERARY_JOURNAL': 'fix(pulse): remove Literary Journal masthead name and paragraph [skip ci]'}
+                   'LITERARY_JOURNAL': 'fix(pulse): apply Gallery label layout to the Literary Journal edition [skip ci]'}
 
 
 def _unchanged_outside(old, saved, boxes):
@@ -41,7 +42,7 @@ def _unchanged_outside(old, saved, boxes):
 
 
 def correct_assets(root: Path, expected_id: str, *, media_plan=None) -> dict:
-    """Only change the reviewed text pixels and embedded copy; preserve the archive."""
+    """Studio Monograph: footer pixels only. Literary Journal: re-render from the archive. Archive kept."""
     before = verify_publication_bundle(root, require_current_pulse=True)
     archetype = before['archetype']
     if (before['publication_id'] != expected_id or archetype not in CORRECTABLE
@@ -52,21 +53,31 @@ def correct_assets(root: Path, expected_id: str, *, media_plan=None) -> dict:
         e for e in json.loads((root / 'data/pulse_feed.json').read_text())['entries']
         if str(e.get('date', ''))[:10] == before['date'])
     attribution = {'photographer_name': entry.get('unsplash_photographer') or entry.get('artwork_artist')}
+    archive = root / f"assets/pulse/{before['date']}.webp"
+    if archetype == 'LITERARY_JOURNAL':
+        # Re-render from the accepted edition's own archived source photograph.
+        with Image.open(archive) as source:
+            hero = source.convert('RGB')
+        x, y, w, h = LITERARY_ART_BOX
+        expected_plate = ImageOps.fit(hero, (w, h), method=Image.Resampling.LANCZOS)
     for theme in ('light', 'dark'):
         path = root / f'assets/daily_pulse_{theme}.webp'
         with Image.open(path) as source:
             old = source.convert('RGB')
         if archetype == 'LITERARY_JOURNAL':
-            new = strip_literary_journal_text(old, word=before['word'], gloss=before['gloss'],
-                date_str=before['date'], dark_mode=theme == 'dark')
-            boxes = literary_journal_text_boxes(before['word'], before['gloss'])
+            new = _render_literary_journal_plate(hero, word=before['word'], gloss=before['gloss'], thesis='',
+                date_str=before['date'], attribution=attribution, visual_medium=before['medium'],
+                dark_mode=theme == 'dark')
         else:
             new = replace_studio_monograph_footer(old, date_str=before['date'],
                 attribution=attribution, visual_medium='DIGITAL_ARTWORK' if media_plan else before['medium'], dark_mode=theme == 'dark')
-            boxes = ((0, 716, 1199, 747),)
         new.save(path, format='WEBP', lossless=True, exact=True)
         with Image.open(path) as saved:
-            if not _unchanged_outside(old, saved.convert('RGB'), boxes):
+            saved = saved.convert('RGB')
+            if archetype == 'LITERARY_JOURNAL':
+                if ImageChops.difference(saved.crop((x, y, x + w, y + h)), expected_plate).getbbox():
+                    raise ValueError('Re-rendered plate is not the archived photograph')
+            elif not _unchanged_outside(old, saved, ((0, 716, 1199, 747),)):
                 raise ValueError('Correction changed accepted artwork pixels')
     path = root / 'assets/daily_pulse.svg'
     svg = path.read_text()
