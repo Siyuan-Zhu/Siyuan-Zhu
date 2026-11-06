@@ -8,10 +8,10 @@
     "too_sunny": 0,
     "too_heavy": 0
   },
-  "publication_id": "6cdb9872c4cbf2be23f4",
+  "publication_id": "5558a0d082ce8003364a",
   "published_at": "2026-11-06T15:35:06.921967Z",
   "schema_version": 3,
-  "state_version": 10,
+  "state_version": 11,
   "text_quadrant": "margin_outside",
   "updated_at": "2026-11-06T15:35:06.921967Z",
   "visitor_mood_tally": {
@@ -22,21 +22,21 @@
   "visual_medium": "PHOTOGRAPHY",
   "word": "Lattice",
   "media_provenance": {
-    "basis": "camera_reported",
-    "version": 1,
-    "source_statement_sha256": "",
-    "asset_id": "beWrUq3HM4k",
     "camera_model": "X100F",
     "camera_make": "FUJIFILM",
-    "allowance_exception": false,
     "source_url": "https://unsplash.com/photos/beWrUq3HM4k",
     "provider": "unsplash",
+    "basis": "camera_reported",
+    "source_statement_sha256": "",
     "classification": "PHOTOGRAPHY",
+    "allowance_exception": false,
     "source_claim": {
       "process": "unknown",
-      "statement": "",
-      "kind": "none"
-    }
+      "kind": "none",
+      "statement": ""
+    },
+    "asset_id": "beWrUq3HM4k",
+    "version": 1
   },
   "analysis": {
     "arousal": 51.4,
@@ -79,8 +79,8 @@
     ],
     "commissioned_thesis": "The unveiling of Powerhouse Parramatta marks a profound architectural and institutional shift, anchoring western Sydney with ambitious civic engineering and immersive contemporary commissions by Turrell and Devlin.",
     "critic_scores": {
-      "composite": 0.722,
-      "semantic_alignment": 0.74
+      "semantic_alignment": 0.74,
+      "composite": 0.722
     },
     "date": "2026-11-06",
     "dominant_category": "AI & Distributed Systems",
@@ -100,7 +100,7 @@
     "orbit_contribution_pct": 62.0,
     "orbit_sources_matched": [],
     "orbit_weight_ratio": 0.62,
-    "publication_id": "6cdb9872c4cbf2be23f4",
+    "publication_id": "5558a0d082ce8003364a",
     "published_at": "2026-11-06T15:35:06.921967Z",
     "quote": "Civic space reborn in steel and monumental light.",
     "quote_attribution": "Editorial Director Synthesis",
@@ -129,21 +129,21 @@
     "window_hours": 96,
     "word": "Lattice",
     "media_provenance": {
-      "basis": "camera_reported",
-      "classification": "PHOTOGRAPHY",
-      "source_statement_sha256": "",
-      "version": 1,
-      "allowance_exception": false,
-      "asset_id": "beWrUq3HM4k",
-      "camera_model": "X100F",
-      "source_claim": {
-        "kind": "none",
-        "process": "unknown",
-        "statement": ""
-      },
       "camera_make": "FUJIFILM",
       "source_url": "https://unsplash.com/photos/beWrUq3HM4k",
-      "provider": "unsplash"
+      "provider": "unsplash",
+      "version": 1,
+      "classification": "PHOTOGRAPHY",
+      "source_statement_sha256": "",
+      "camera_model": "X100F",
+      "allowance_exception": false,
+      "asset_id": "beWrUq3HM4k",
+      "source_claim": {
+        "kind": "none",
+        "statement": "",
+        "process": "unknown"
+      },
+      "basis": "camera_reported"
     }
   }
 }

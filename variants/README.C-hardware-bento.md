@@ -2,7 +2,7 @@
 
 <h2><img src="../assets/editorial_opening_light.webp?v=7d4ad7e39c4e#gh-light-mode-only" width="740" alt="Hi, I’m David — An image of the times—well, it’s all a matter of perspective. Connect Four looks easy enough. Stay for a move, or just a moment."><img src="../assets/editorial_opening_dark.webp?v=7d4ad7e39c4e#gh-dark-mode-only" width="740" alt="Hi, I’m David — An image of the times—well, it’s all a matter of perspective. Connect Four looks easy enough. Stay for a move, or just a moment."></h2>
 
-<img src="../assets/daily_pulse_light.webp?v=2026-11-06-d340c1b7#gh-light-mode-only" width="100%" alt="Lattice — Civic space reborn in steel and monumental light."><img src="../assets/daily_pulse_dark.webp?v=2026-11-06-d340c1b7#gh-dark-mode-only" width="100%" alt="Lattice — Civic space reborn in steel and monumental light.">
+<img src="../assets/daily_pulse_light.webp?v=2026-11-06-5fffe113#gh-light-mode-only" width="100%" alt="Lattice — Civic space reborn in steel and monumental light."><img src="../assets/daily_pulse_dark.webp?v=2026-11-06-5fffe113#gh-dark-mode-only" width="100%" alt="Lattice — Civic space reborn in steel and monumental light.">
 
 </div>
 
