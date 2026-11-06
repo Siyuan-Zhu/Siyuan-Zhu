@@ -42,7 +42,7 @@ class PrivateFirestoreStore:
         )
 
     def read(self, document_id):
-        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103)", document_id):
+        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103|apify_build_repair_20261106)", document_id):
             raise SpendBlocked("Unapproved private spend document")
         return self.client.collection("spend_control").document(document_id).get()
 
@@ -162,6 +162,20 @@ def _reconcile_pending(store, intent_id, intent_snapshot, *, apply):
     return MaintenanceResult("reconciled" if apply else "reconciliation_ready", "handoff", plan["destination_after"]["month"], plan)
 
 
+# Reviewed one-time policy successors, in the order they were applied.
+POLICY_REPAIR_RECEIPTS = ("price_repair_20261103", "apify_build_repair_20261106")
+
+
+def _successor_policy(store, policy_sha, month):
+    """Follow exact same-month repair receipts from a handoff's policy identity."""
+    current = policy_sha
+    for receipt_id in POLICY_REPAIR_RECEIPTS:
+        receipt = _data(store.read(receipt_id)) or {}
+        if receipt.get("month") == month and receipt.get("old_policy_sha256") == current:
+            current = receipt.get("new_policy_sha256")
+    return current
+
+
 def maintain_spend_control(store, *, expected_policy_sha, observer: Callable,
                            now=None, apply=False):
     """Plan or execute one refresh/handoff of preinstalled schema-3 accounting.
@@ -187,14 +201,11 @@ def maintain_spend_control(store, *, expected_policy_sha, observer: Callable,
     rejection_history = []
     if intent is not None:
         if intent.get("policy_sha256") != expected_policy_sha:
-            # A completed rollover keeps its historical policy identity. The
-            # exact atomic price-record successor receipt proves continuity;
-            # never rewrite the old handoff or reset its financial records.
-            repair = _data(store.read("price_repair_20261103")) or {}
+            # A completed rollover keeps its historical policy identity. Exact
+            # atomic successor receipts, applied in reviewed order, prove
+            # continuity; never rewrite the old handoff or its financial records.
             if (intent.get("status") != "complete"
-                    or repair.get("old_policy_sha256") != intent.get("policy_sha256")
-                    or repair.get("new_policy_sha256") != expected_policy_sha
-                    or repair.get("month") != month):
+                    or _successor_policy(store, intent.get("policy_sha256"), month) != expected_policy_sha):
                 raise SpendBlocked("Handoff belongs to another approved policy")
         if intent.get("status") == "pending":
             return _reconcile_pending(store, intent_id, intent_snapshot, apply=apply)
