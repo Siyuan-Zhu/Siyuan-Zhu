@@ -310,8 +310,8 @@
       "visual_tier_used": "DIGITAL_ARTWORK",
       "window_hours": 96,
       "word": "Insinuation",
-      "photo_selection_policy_date": "2026-11-01",
       "photo_selection_policy": "owner-approved-best-safe-photo",
+      "photo_selection_policy_date": "2026-11-01",
       "media_provenance": {
         "version": 1,
         "classification": "DIGITAL_ARTWORK",
