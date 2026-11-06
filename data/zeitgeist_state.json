@@ -22,20 +22,20 @@
   "visual_medium": "PHOTOGRAPHY",
   "word": "Imposition",
   "media_provenance": {
+    "basis": "camera_reported",
+    "version": 1,
+    "allowance_exception": false,
     "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
+    "asset_id": "ZWH6Wm4rUw4",
+    "source_statement_sha256": "",
     "camera_make": "Canon",
     "camera_model": "Canon EOS 77D",
     "source_claim": {
-      "kind": "none",
       "statement": "",
-      "process": "unknown"
+      "process": "unknown",
+      "kind": "none"
     },
-    "source_statement_sha256": "",
-    "version": 1,
     "provider": "unsplash",
-    "basis": "camera_reported",
-    "asset_id": "ZWH6Wm4rUw4",
-    "allowance_exception": false,
     "classification": "PHOTOGRAPHY"
   },
   "analysis": {
@@ -79,8 +79,8 @@
     ],
     "commissioned_thesis": "As the physical footprint of artificial intelligence collides with local geography, data centers cease to be invisible clouds and become fiercely contested territory on electoral ballots, transforming quiet community unease into active political resistance against industrial sprawl.",
     "critic_scores": {
-      "semantic_alignment": 0.7,
-      "composite": 0.688
+      "composite": 0.688,
+      "semantic_alignment": 0.7
     },
     "date": "2026-11-04",
     "dominant_category": "AI & Distributed Systems",
@@ -129,21 +129,21 @@
     "window_hours": 96,
     "word": "Imposition",
     "media_provenance": {
-      "source_statement_sha256": "",
-      "provider": "unsplash",
       "basis": "camera_reported",
       "classification": "PHOTOGRAPHY",
-      "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
       "version": 1,
       "allowance_exception": false,
-      "asset_id": "ZWH6Wm4rUw4",
       "camera_make": "Canon",
-      "camera_model": "Canon EOS 77D",
+      "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
+      "source_statement_sha256": "",
       "source_claim": {
-        "kind": "none",
+        "process": "unknown",
         "statement": "",
-        "process": "unknown"
-      }
+        "kind": "none"
+      },
+      "camera_model": "Canon EOS 77D",
+      "provider": "unsplash",
+      "asset_id": "ZWH6Wm4rUw4"
     }
   }
 }
