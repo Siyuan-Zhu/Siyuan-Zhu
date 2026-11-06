@@ -1,12 +1,12 @@
 {
+  "state_version": 0,
   "schema_version": "1.0",
-  "past_rounds": [],
-  "current_round_log": [],
-  "active_game_key": "connect4",
-  "active_stakes": {},
   "bot_elo": 1200,
-  "round_id": 1,
   "players": {},
+  "round_id": 1,
+  "active_stakes": {},
+  "active_game_key": "connect4",
+  "current_round_log": [],
   "recent_rounds": [],
-  "state_version": 0
+  "past_rounds": []
 }
