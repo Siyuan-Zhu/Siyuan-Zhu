@@ -1,91 +1,4 @@
 {
-  "game_key": "connect4",
-  "past_rounds": [],
-  "bitboard_p2": 18176,
-  "turn": 5,
-  "last_challenger_move": "col3",
-  "last_move_epoch": 1793942746.2489,
-  "round_over": false,
-  "schema_version": "2.0",
-  "last_move": {
-    "move_id": "col3"
-  },
-  "updated_at": "2026-11-06T03:23:55Z",
-  "moves_this_round": 8,
-  "status": "ACTIVE",
-  "state_version": 4,
-  "bitboard_p1": 2195584,
-  "last_move_summary": "@Siyuan-Zhu dropped in col 3 (answered col 2) \u00b7 turn 5",
-  "finisher_handle": null,
-  "board": [
-    [
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      2,
-      0,
-      0,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      2,
-      1,
-      0,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      2,
-      1,
-      0,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      1,
-      2,
-      1,
-      0,
-      0,
-      0
-    ]
-  ],
-  "active_game": "connect4",
-  "winning_cells": [],
-  "red_contributors": {
-    "Siyuan-Zhu": 4
-  },
-  "last_elo_delta": 0,
-  "mode": "VS_BOT",
-  "rate_limits": {},
-  "last_bot_move": "col2",
-  "last_move_timestamp": 1793942746.2489,
-  "winner": null,
-  "round_id": 1,
-  "yellow_contributors": {},
   "move_log": [
     {
       "turn": 1,
@@ -166,18 +79,35 @@
       "move_id": "col2",
       "player_move": "Answered col 2",
       "bot_reply": ""
+    },
+    {
+      "turn": 5,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 2,
+      "summary": "Dropped in col 2",
+      "move_id": "col2",
+      "player_move": "Dropped in col 2",
+      "bot_reply": "Answered col 3"
+    },
+    {
+      "turn": 5,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 3,
+      "summary": "Answered col 3",
+      "move_id": "col3",
+      "player_move": "Answered col 3",
+      "bot_reply": ""
     }
   ],
-  "episode_trace": [
-    "00000002000000000000000000",
-    "00000002000000000000004000",
-    "00000002000800000000004000",
-    "00000002000800000000004100",
-    "00000002080800000000004100",
-    "00000002080800000000004300",
-    "00000002180800000000004300",
-    "00000002180800000000004700"
-  ],
+  "rate_limits": {},
+  "winner": null,
+  "past_rounds": [],
+  "last_challenger_move": "col2",
+  "schema_version": "2.0",
+  "moves_this_round": 10,
+  "finisher_handle": null,
   "move_history": [
     {
       "turn": 1,
@@ -258,98 +188,123 @@
       "move_id": "col2",
       "player_move": "Answered col 2",
       "bot_reply": ""
+    },
+    {
+      "turn": 5,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 2,
+      "summary": "Dropped in col 2",
+      "move_id": "col2",
+      "player_move": "Dropped in col 2",
+      "bot_reply": "Answered col 3"
+    },
+    {
+      "turn": 5,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 3,
+      "summary": "Answered col 3",
+      "move_id": "col3",
+      "player_move": "Answered col 3",
+      "bot_reply": ""
     }
   ],
+  "bitboard_p1": 2197632,
+  "active_game": "connect4",
+  "updated_at": "2026-11-06T03:23:55Z",
+  "turn": 6,
+  "winning_cells": [],
   "last_mover": "Siyuan-Zhu",
-  "current_turn_color": "RED",
-  "board_state": {
-    "game_key": "connect4",
-    "past_rounds": [],
-    "bitboard_p2": 18176,
-    "turn": 5,
-    "last_challenger_move": "col3",
-    "last_move_epoch": 1793942746.2489,
-    "round_over": false,
-    "schema_version": "2.0",
-    "last_move": {
-      "move_id": "col3"
-    },
-    "updated_at": "2026-11-06T03:23:55Z",
-    "moves_this_round": 8,
-    "status": "ACTIVE",
-    "state_version": 4,
-    "bitboard_p1": 2195584,
-    "last_move_summary": "@Siyuan-Zhu dropped in col 3 (answered col 2) \u00b7 turn 5",
-    "finisher_handle": null,
-    "board": [
-      [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        2,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        2,
-        1,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        2,
-        1,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        1,
-        2,
-        1,
-        0,
-        0,
-        0
-      ]
+  "last_elo_delta": 0,
+  "mode": "VS_BOT",
+  "yellow_contributors": {},
+  "bitboard_p2": 149248,
+  "board": [
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
     ],
-    "active_game": "connect4",
-    "winning_cells": [],
-    "red_contributors": {
-      "Siyuan-Zhu": 4
-    },
-    "last_elo_delta": 0,
-    "mode": "VS_BOT",
-    "rate_limits": {},
-    "last_bot_move": "col2",
-    "last_move_timestamp": 1793942746.2489,
-    "winner": null,
-    "round_id": 1,
-    "yellow_contributors": {},
+    [
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      2,
+      2,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      2,
+      1,
+      0,
+      0,
+      0
+    ]
+  ],
+  "last_bot_move": "col3",
+  "status": "ACTIVE",
+  "current_turn_color": "RED",
+  "last_move_epoch": 1793943140.687683,
+  "episode_trace": [
+    "00000002000000000000000000",
+    "00000002000000000000004000",
+    "00000002000800000000004000",
+    "00000002000800000000004100",
+    "00000002080800000000004100",
+    "00000002080800000000004300",
+    "00000002180800000000004300",
+    "00000002180800000000004700",
+    "00000002188800000000004700",
+    "00000002188800000000024700"
+  ],
+  "round_over": false,
+  "round_id": 1,
+  "last_move_summary": "@Siyuan-Zhu dropped in col 2 (answered col 3) \u00b7 turn 6",
+  "state_version": 5,
+  "last_move_timestamp": 1793943140.687683,
+  "red_contributors": {
+    "Siyuan-Zhu": 5
+  },
+  "game_key": "connect4",
+  "last_move": {
+    "move_id": "col3"
+  },
+  "board_state": {
     "move_log": [
       {
         "turn": 1,
@@ -430,18 +385,35 @@
         "move_id": "col2",
         "player_move": "Answered col 2",
         "bot_reply": ""
+      },
+      {
+        "turn": 5,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 2,
+        "summary": "Dropped in col 2",
+        "move_id": "col2",
+        "player_move": "Dropped in col 2",
+        "bot_reply": "Answered col 3"
+      },
+      {
+        "turn": 5,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 3,
+        "summary": "Answered col 3",
+        "move_id": "col3",
+        "player_move": "Answered col 3",
+        "bot_reply": ""
       }
     ],
-    "episode_trace": [
-      "00000002000000000000000000",
-      "00000002000000000000004000",
-      "00000002000800000000004000",
-      "00000002000800000000004100",
-      "00000002080800000000004100",
-      "00000002080800000000004300",
-      "00000002180800000000004300",
-      "00000002180800000000004700"
-    ],
+    "rate_limits": {},
+    "winner": null,
+    "past_rounds": [],
+    "last_challenger_move": "col2",
+    "schema_version": "2.0",
+    "moves_this_round": 10,
+    "finisher_handle": null,
     "move_history": [
       {
         "turn": 1,
@@ -522,9 +494,121 @@
         "move_id": "col2",
         "player_move": "Answered col 2",
         "bot_reply": ""
+      },
+      {
+        "turn": 5,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 2,
+        "summary": "Dropped in col 2",
+        "move_id": "col2",
+        "player_move": "Dropped in col 2",
+        "bot_reply": "Answered col 3"
+      },
+      {
+        "turn": 5,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 3,
+        "summary": "Answered col 3",
+        "move_id": "col3",
+        "player_move": "Answered col 3",
+        "bot_reply": ""
       }
     ],
+    "bitboard_p1": 2197632,
+    "active_game": "connect4",
+    "updated_at": "2026-11-06T03:23:55Z",
+    "turn": 6,
+    "winning_cells": [],
     "last_mover": "Siyuan-Zhu",
-    "current_turn_color": "RED"
+    "last_elo_delta": 0,
+    "mode": "VS_BOT",
+    "yellow_contributors": {},
+    "bitboard_p2": 149248,
+    "board": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        2,
+        2,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        2,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        2,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0
+      ]
+    ],
+    "last_bot_move": "col3",
+    "status": "ACTIVE",
+    "current_turn_color": "RED",
+    "last_move_epoch": 1793943140.687683,
+    "episode_trace": [
+      "00000002000000000000000000",
+      "00000002000000000000004000",
+      "00000002000800000000004000",
+      "00000002000800000000004100",
+      "00000002080800000000004100",
+      "00000002080800000000004300",
+      "00000002180800000000004300",
+      "00000002180800000000004700",
+      "00000002188800000000004700",
+      "00000002188800000000024700"
+    ],
+    "round_over": false,
+    "round_id": 1,
+    "last_move_summary": "@Siyuan-Zhu dropped in col 2 (answered col 3) \u00b7 turn 6",
+    "state_version": 5,
+    "last_move_timestamp": 1793943140.687683,
+    "red_contributors": {
+      "Siyuan-Zhu": 5
+    },
+    "game_key": "connect4",
+    "last_move": {
+      "move_id": "col3"
+    }
   }
 }
