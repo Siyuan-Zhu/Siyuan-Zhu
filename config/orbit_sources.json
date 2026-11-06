@@ -261,18 +261,18 @@
       "tags": ["ethics", "contemplation", "formation"]
     },
     {
-      "id": "o2_plough_quarterly",
-      "name": "Plough Quarterly Stories & Essays",
+      "id": "o2_first_things",
+      "name": "First Things Essays on Faith & Public Life",
       "tier": "O2",
       "bucket": "ORBIT",
       "origin": "curated_O1_O3",
       "type": "rss",
       "feed_type": "rss",
-      "url": "https://www.plough.com/en/feeds/articles-feed",
-      "uri": "https://www.plough.com/en/feeds/articles-feed",
+      "url": "https://www.firstthings.com/feed",
+      "uri": "https://www.firstthings.com/feed",
       "weight": 1.6,
       "category": "cultural_pulse",
-      "tags": ["community", "patience", "narrative"]
+      "tags": ["faith", "public-life", "narrative"]
     },
     {
       "id": "o2_bibleproject_podcast",
@@ -366,8 +366,8 @@
       "origin": "curated_O1_O3",
       "type": "rss",
       "feed_type": "rss",
-      "url": "https://www.aiddata.org/rss.xml",
-      "uri": "https://www.aiddata.org/rss.xml",
+      "url": "https://www.aiddata.org/rss",
+      "uri": "https://www.aiddata.org/rss",
       "weight": 1.3,
       "category": "economics",
       "tags": ["william-and-mary", "development-finance", "policy-data"]
@@ -387,18 +387,18 @@
       "tags": ["minimalism", "interiors", "slow-living"]
     },
     {
-      "id": "o3_cereal_magazine",
-      "name": "Cereal Travel & Design Journal",
+      "id": "o3_dezeen",
+      "name": "Dezeen Architecture & Design",
       "tier": "O3",
       "bucket": "ORBIT",
       "origin": "curated_O1_O3",
       "type": "rss",
       "feed_type": "rss",
-      "url": "https://readcereal.com/feed/",
-      "uri": "https://readcereal.com/feed/",
+      "url": "https://www.dezeen.com/feed/",
+      "uri": "https://www.dezeen.com/feed/",
       "weight": 1.3,
       "category": "design",
-      "tags": ["travel", "light-and-shadow", "geometry"]
+      "tags": ["architecture", "light-and-shadow", "geometry"]
     },
     {
       "id": "o3_a24_notes",
@@ -436,8 +436,8 @@
       "origin": "curated_O1_O3",
       "type": "rss",
       "feed_type": "rss",
-      "url": "https://tapeop.com/feeds/articles/",
-      "uri": "https://tapeop.com/feeds/articles/",
+      "url": "https://tapeop.com/rss",
+      "uri": "https://tapeop.com/rss",
       "weight": 1.3,
       "category": "tech_ai",
       "tags": ["songwriting", "piano-arrangements", "analog-audio"]
@@ -478,8 +478,8 @@
       "origin": "curated_O1_O3",
       "type": "youtube_atom",
       "feed_type": "youtube_atom",
-      "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCQ18bfMm67nVq11cT0Rw5ef",
-      "uri": "https://www.youtube.com/feeds/videos.xml?channel_id=UCQ18bfMm67nVq11cT0Rw5ef",
+      "url": "https://www.youtube.com/feeds/videos.xml?user=VeritasForum",
+      "uri": "https://www.youtube.com/feeds/videos.xml?user=VeritasForum",
       "weight": 1.3,
       "category": "science",
       "tags": ["philosophy", "university", "dialogue"]
@@ -751,18 +751,18 @@
       "tags": ["incentives", "markets", "economic-history"]
     },
     {
-      "id": "m2_imf_blog",
-      "name": "IMF Global Economy & Financial Stability",
+      "id": "m2_liberty_street",
+      "name": "NY Fed Liberty Street Economics",
       "tier": "M2",
       "bucket": "MACRO",
       "origin": "curated_M1_M3",
       "type": "rss",
       "feed_type": "rss",
-      "url": "https://www.imf.org/en/News/RSS?language=eng",
-      "uri": "https://www.imf.org/en/News/RSS?language=eng",
+      "url": "https://libertystreeteconomics.newyorkfed.org/feed/",
+      "uri": "https://libertystreeteconomics.newyorkfed.org/feed/",
       "weight": 1.0,
       "category": "macro_institution",
-      "tags": ["sovereign-debt", "central-banks", "resilience"]
+      "tags": ["central-banks", "financial-stability", "resilience"]
     },
     {
       "id": "m3_dezeen",
