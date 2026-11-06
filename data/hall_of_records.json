@@ -1,12 +1,34 @@
 {
-  "current_round_log": [],
-  "players": {},
-  "active_stakes": {},
-  "state_version": 0,
-  "round_id": 1,
-  "active_game_key": "connect4",
   "past_rounds": [],
-  "bot_elo": 1200,
-  "recent_rounds": [],
-  "schema_version": "1.0"
+  "current_round_log": [],
+  "active_stakes": {},
+  "round_id": 1,
+  "bot_elo": 1203,
+  "state_version": 1,
+  "recent_rounds": [
+    {
+      "settled_at": "2026-11-06T05:50:38Z",
+      "mode": "VS_BOT",
+      "winner": "bot",
+      "finisher": "House-Bot",
+      "moves_count": 24,
+      "deltas": {
+        "Siyuan-Zhu": -3
+      },
+      "round_id": 1,
+      "house_delta": 3
+    }
+  ],
+  "active_game_key": "connect4",
+  "schema_version": "1.0",
+  "players": {
+    "Siyuan-Zhu": {
+      "draws": 0,
+      "losses": 1,
+      "finishes": 0,
+      "wins": 0,
+      "last_played_at": "2026-11-06T05:50:38Z",
+      "elo": 797
+    }
+  }
 }

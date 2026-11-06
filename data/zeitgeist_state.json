@@ -23,20 +23,20 @@
   "word": "Imposition",
   "media_provenance": {
     "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
-    "allowance_exception": false,
-    "source_claim": {
-      "process": "unknown",
-      "statement": "",
-      "kind": "none"
-    },
-    "basis": "camera_reported",
-    "camera_make": "Canon",
-    "classification": "PHOTOGRAPHY",
-    "camera_model": "Canon EOS 77D",
     "provider": "unsplash",
-    "version": 1,
+    "source_claim": {
+      "statement": "",
+      "kind": "none",
+      "process": "unknown"
+    },
+    "camera_make": "Canon",
+    "asset_id": "ZWH6Wm4rUw4",
+    "classification": "PHOTOGRAPHY",
+    "allowance_exception": false,
+    "basis": "camera_reported",
     "source_statement_sha256": "",
-    "asset_id": "ZWH6Wm4rUw4"
+    "camera_model": "Canon EOS 77D",
+    "version": 1
   },
   "analysis": {
     "arousal": 50.4,
@@ -129,21 +129,21 @@
     "window_hours": 96,
     "word": "Imposition",
     "media_provenance": {
+      "provider": "unsplash",
       "source_statement_sha256": "",
       "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
-      "source_claim": {
-        "process": "unknown",
-        "kind": "none",
-        "statement": ""
-      },
-      "provider": "unsplash",
+      "camera_model": "Canon EOS 77D",
+      "allowance_exception": false,
       "basis": "camera_reported",
       "asset_id": "ZWH6Wm4rUw4",
-      "allowance_exception": false,
+      "source_claim": {
+        "kind": "none",
+        "statement": "",
+        "process": "unknown"
+      },
       "classification": "PHOTOGRAPHY",
-      "version": 1,
-      "camera_model": "Canon EOS 77D",
-      "camera_make": "Canon"
+      "camera_make": "Canon",
+      "version": 1
     }
   }
 }
