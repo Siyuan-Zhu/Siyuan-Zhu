@@ -387,15 +387,15 @@
       "tags": ["minimalism", "interiors", "slow-living"]
     },
     {
-      "id": "o3_dezeen",
-      "name": "Dezeen Architecture & Design",
+      "id": "o3_design_milk",
+      "name": "Design Milk",
       "tier": "O3",
       "bucket": "ORBIT",
       "origin": "curated_O1_O3",
       "type": "rss",
       "feed_type": "rss",
-      "url": "https://www.dezeen.com/feed/",
-      "uri": "https://www.dezeen.com/feed/",
+      "url": "https://design-milk.com/feed/",
+      "uri": "https://design-milk.com/feed/",
       "weight": 1.3,
       "category": "design",
       "tags": ["architecture", "light-and-shadow", "geometry"]

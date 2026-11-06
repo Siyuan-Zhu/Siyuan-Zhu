@@ -119,3 +119,14 @@ def test_a_different_publication_id_is_refused(accepted):
     root, _ = accepted
     with pytest.raises(ValueError):
         footer.correct_assets(root, '0' * 20)
+
+
+@pytest.mark.parametrize('channel,delta', [(0, 1), (1, 1), (2, 1), (2, 4)])
+def test_pixel_guard_catches_a_one_level_change_in_any_channel(channel, delta):
+    old = Image.new('RGB', (1200, 800), (100, 100, 100))
+    new = old.copy()
+    pixel = [100, 100, 100]
+    pixel[channel] += delta
+    new.putpixel((10, 10), tuple(pixel))
+    assert footer._unchanged_outside(old, new, ((0, 716, 1199, 747),)) is False
+    assert footer._unchanged_outside(old, old.copy(), ((0, 716, 1199, 747),)) is True

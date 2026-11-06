@@ -31,6 +31,9 @@ NEW = {'actor_build': '0.0.659', 'actor_build_id': 'Ih1cRmBcVyKVYQlOj',
 SCHEMA_SHA = 'c05eebabee083a1a348aebebbc2084beb417dee1b8ae534b71be58f6578981c0'
 PRICING_SHA = '12cc41388ad55dda87685f711086d048eda188ea00ec6e9d699c55adc9e86d0d'
 ACCOUNT = '6d57321aabee388b'
+# Reviewed identities of the November 6 transition; the CLI refuses any other.
+EXPECTED_OLD_SHA = '9c4cd3a01eddff725768a9ffeaf82ec7b87677e94823010a2a94fa4a28888b05'
+EXPECTED_NEW_SHA = '5a5e5fd1a04688a0870c321906bc3eea00713fe8110865249d52df1bff0f2aaf'
 
 
 def observe(token, now):
@@ -117,8 +120,13 @@ if __name__ == '__main__':
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     from src.zeitgeist.automatic_spend_runtime import PrivateFirestoreStore
+    if os.environ['SPEND_POLICY_SHA256'] != EXPECTED_OLD_SHA:
+        raise SystemExit('Only the reviewed November 6 source policy may be repaired')
     now = datetime.now(timezone.utc)
     observation = observe(os.environ['APIFY_TOKEN'], now)
-    sha = repair(PrivateFirestoreStore(), os.environ['SPEND_POLICY_SHA256'],
-                 observation=observation, apply=args.apply, now=now)
+    sha = repair(PrivateFirestoreStore(), EXPECTED_OLD_SHA, observation=observation, apply=False, now=now)
+    if sha != EXPECTED_NEW_SHA:
+        raise SystemExit('Computed successor differs from the reviewed workflow pin; nothing written')
+    if args.apply:
+        sha = repair(PrivateFirestoreStore(), EXPECTED_OLD_SHA, observation=observation, apply=True, now=now)
     print(json.dumps({'status': 'applied_or_reconciled' if args.apply else 'planned', 'policy_sha256': sha}))

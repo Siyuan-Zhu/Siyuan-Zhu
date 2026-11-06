@@ -74,8 +74,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
-          APIFY_INSTAGRAM_BUILD: "0.0.648"
-          APIFY_INSTAGRAM_BUILD_ID: "jwxpsPozhIjbsOspW"
+          APIFY_INSTAGRAM_BUILD: "0.0.659"
+          APIFY_INSTAGRAM_BUILD_ID: "Ih1cRmBcVyKVYQlOj"
         run: >-
           python3 scripts/provider_preflight.py
           --required-model gemini-3.8-flash
@@ -94,7 +94,7 @@ jobs:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
-          APIFY_INSTAGRAM_BUILD: "0.0.648"
+          APIFY_INSTAGRAM_BUILD: "0.0.659"
           GCP_PROJECT_ID: git-readme-features
           FIRESTORE_DATABASE_ID: "(default)"
           GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
@@ -163,7 +163,7 @@ jobs:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
-          APIFY_INSTAGRAM_BUILD: "0.0.648"
+          APIFY_INSTAGRAM_BUILD: "0.0.659"
           GCP_PROJECT_ID: git-readme-features
           FIRESTORE_DATABASE_ID: "(default)"
           GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
@@ -220,7 +220,7 @@ jobs:
       FIRESTORE_DATABASE_ID: "(default)"
       MAX_STAGE_RETRIES: "1"
       GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
-      APIFY_INSTAGRAM_BUILD: "0.0.648"
+      APIFY_INSTAGRAM_BUILD: "0.0.659"
       SPEND_POLICY_SHA256: ${{ vars.SPEND_POLICY_SHA256 }}
       TARGET_REPO_SLUG: ${{ github.repository }}
       ZEITGEIST_OFFLINE_DEMO: ${{ (!inputs.live_collect && !inputs.live_llm && !inputs.live_unsplash && '1') || '0' }}

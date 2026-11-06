@@ -37,8 +37,9 @@ def _unchanged_outside(old, saved, boxes):
     draw = ImageDraw.Draw(mask)
     for box in boxes:
         draw.rectangle(box, fill=0)
-    diff = ImageChops.difference(old, saved).convert('L')
-    return ImageChops.multiply(diff, mask).getbbox() is None
+    diff = ImageChops.difference(old.convert('RGB'), saved.convert('RGB'))
+    # Mask every channel: a grayscale conversion would hide one-level changes.
+    return ImageChops.multiply(diff, Image.merge('RGB', (mask, mask, mask))).getbbox() is None
 
 
 def correct_assets(root: Path, expected_id: str, *, media_plan=None) -> dict:
