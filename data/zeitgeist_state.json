@@ -22,21 +22,21 @@
   "visual_medium": "PHOTOGRAPHY",
   "word": "Imposition",
   "media_provenance": {
-    "camera_make": "Canon",
-    "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
-    "basis": "camera_reported",
-    "version": 1,
+    "provider": "unsplash",
+    "source_statement_sha256": "",
     "source_claim": {
       "process": "unknown",
-      "statement": "",
-      "kind": "none"
+      "kind": "none",
+      "statement": ""
     },
-    "asset_id": "ZWH6Wm4rUw4",
-    "camera_model": "Canon EOS 77D",
     "classification": "PHOTOGRAPHY",
-    "source_statement_sha256": "",
-    "allowance_exception": false,
-    "provider": "unsplash"
+    "camera_model": "Canon EOS 77D",
+    "basis": "camera_reported",
+    "camera_make": "Canon",
+    "asset_id": "ZWH6Wm4rUw4",
+    "version": 1,
+    "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
+    "allowance_exception": false
   },
   "analysis": {
     "arousal": 50.4,
@@ -79,8 +79,8 @@
     ],
     "commissioned_thesis": "As the physical footprint of artificial intelligence collides with local geography, data centers cease to be invisible clouds and become fiercely contested territory on electoral ballots, transforming quiet community unease into active political resistance against industrial sprawl.",
     "critic_scores": {
-      "semantic_alignment": 0.7,
-      "composite": 0.688
+      "composite": 0.688,
+      "semantic_alignment": 0.7
     },
     "date": "2026-11-04",
     "dominant_category": "AI & Distributed Systems",
@@ -129,21 +129,21 @@
     "window_hours": 96,
     "word": "Imposition",
     "media_provenance": {
-      "version": 1,
-      "basis": "camera_reported",
-      "allowance_exception": false,
-      "provider": "unsplash",
-      "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
-      "classification": "PHOTOGRAPHY",
       "source_statement_sha256": "",
-      "asset_id": "ZWH6Wm4rUw4",
       "camera_model": "Canon EOS 77D",
-      "camera_make": "Canon",
       "source_claim": {
-        "process": "unknown",
+        "statement": "",
         "kind": "none",
-        "statement": ""
-      }
+        "process": "unknown"
+      },
+      "source_url": "https://unsplash.com/photos/ZWH6Wm4rUw4",
+      "asset_id": "ZWH6Wm4rUw4",
+      "version": 1,
+      "camera_make": "Canon",
+      "allowance_exception": false,
+      "classification": "PHOTOGRAPHY",
+      "provider": "unsplash",
+      "basis": "camera_reported"
     }
   }
 }
