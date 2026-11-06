@@ -64,7 +64,7 @@ def test_reconciles_to_blocked_keeping_attempt_and_revision(client):
     after = rec.reconcile(client, OUTCOME, LEDGER, apply=True, now=NOW)
     assert after['stage'] == 'blocked' and after['attempt'] == 1
     assert after['source_revision'] == RECORD['source_revision']
-    assert after['reconciliation']['apify_reservation_id'] == 'apify-today'
+    assert after['reconciliation']['paid_reservation_ids'] == ['apify-today']
     assert rec.reconcile(client, OUTCOME, LEDGER, apply=True, now=NOW)['stage'] == 'blocked'
     assert len(client.commits) == 1
 
@@ -117,3 +117,41 @@ def test_blocked_record_is_claimable_only_from_another_revision():
     execution._write = lambda snapshot, value: value
     claimed = execution.claim(now=NOW, source_revision='new-revision', trigger='workflow_dispatch')
     assert claimed['attempt'] == 2 and claimed['stage'] == 'preflight'
+
+
+SECOND = dict(RECORD, owner='github-42240720931-1', attempt=2,
+              source_revision='5880c5aee594fff6d4b96915889d7ad28086b277',
+              lease_until='2026-11-06T15:31:54+00:00')
+PHOTO = {'edition_date': '2026-11-06', 'run_id': '42240720931', 'status': 'failed',
+         'failure_category': 'photo_quality', 'recovery_action': 'retain_last_digest',
+         'canonical_commit': 'not_committed', 'git_publication': 'not_started',
+         'publication_id': '434ade2b29427efd9f55', 'previous_publication_id': '434ade2b29427efd9f55',
+         'started_at': '2026-11-06T15:11:54+00:00', 'completed_at': '2026-11-06T15:16:13+00:00'}
+PAID = {'reservations': {
+    'apify': {'provider': 'apify', 'status': 'settled', 'created_at': '2026-11-06T15:12:12+00:00'},
+    'gemini-1': {'provider': 'gemini', 'status': 'settled', 'created_at': '2026-11-06T15:13:17+00:00'},
+    'gemini-2': {'provider': 'gemini', 'status': 'settled', 'created_at': '2026-11-06T15:15:54+00:00'}}}
+
+
+def test_photo_quality_run_reconciles_when_all_paid_work_settled(monkeypatch):
+    c = Client(SECOND)
+    monkeypatch.setattr(rec, '_commit_documents', lambda target, writes: setattr(c, 'record', writes[0][2]))
+    after = rec.reconcile(c, PHOTO, PAID, apply=True, now=NOW)
+    assert after['stage'] == 'blocked' and after['attempt'] == 2
+    assert after['failure_category'] == 'photo_quality'
+    assert after['reconciliation']['paid_reservation_ids'] == ['apify', 'gemini-1', 'gemini-2']
+
+
+@pytest.mark.parametrize('status', ['reserved', 'unknown'])
+def test_unsettled_paid_work_blocks_photo_reconciliation(monkeypatch, status):
+    ledger = copy.deepcopy(PAID)
+    ledger['reservations']['gemini-2']['status'] = status
+    monkeypatch.setattr(rec, '_commit_documents', lambda *a: pytest.fail('must not write'))
+    with pytest.raises(RuntimeError):
+        rec.reconcile(Client(SECOND), PHOTO, ledger, apply=True, now=NOW)
+
+
+def test_unreviewed_run_blocks(monkeypatch):
+    monkeypatch.setattr(rec, '_commit_documents', lambda *a: pytest.fail('must not write'))
+    with pytest.raises(RuntimeError):
+        rec.reconcile(Client(SECOND), dict(PHOTO, run_id='999'), PAID, apply=True, now=NOW)
