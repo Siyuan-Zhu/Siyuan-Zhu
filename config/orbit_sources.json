@@ -14,7 +14,7 @@
     "primary_text_model": "gemini-3.8-flash",
     "multimodal_judge_model": "gemini-3.8-flash",
     "ai_image_fallback_model": "imagen-3.0-generate-002",
-    "ai_image_fallback_threshold": 0.78
+    "ai_image_fallback_threshold": 0.7
   },
   "curated_o3_instagram_handles": [
     "william_and_mary",
