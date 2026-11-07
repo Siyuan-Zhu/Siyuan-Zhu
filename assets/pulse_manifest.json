@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-06",
-  "word": "Lattice",
-  "gloss": "Civic space reborn in steel and monumental light.",
-  "archetype": "LITERARY_JOURNAL",
+  "date": "2026-11-07",
+  "word": "Relic",
+  "gloss": "The sudden quietude of an obsolete monument.",
+  "archetype": "STUDIO_MONOGRAPH",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "da4ef1c9547ed68f864ce8b85d98ec4a2f01a1fda9cfb5f56dac834f2ddccf4e",
-    "assets/daily_pulse_dark.webp": "9ed932f4d3a90f7fbadb691ed98d852332b6f1e738a0a56ea3f8099fd634daa2",
-    "assets/daily_pulse.svg": "5109687e59712076b4e318d6ab78c194398ca343fab424cfde447af30f30d2b5",
-    "assets/pulse/2026-11-06.webp": "f5e417461f70316dd5f4afbe155aa21050aabf63b9ec3226a221554cab2b52a9"
+    "assets/daily_pulse_light.webp": "01d90d104a0e44c7e0cc1534e79fc188e43db188d288f1d796481f21464e5573",
+    "assets/daily_pulse_dark.webp": "31dc285f03921e9e752898b7c127e35fc79308f80a9eb315e771fb617f368200",
+    "assets/daily_pulse.svg": "dcdac75d5c3ce10f516d5e6f363bb88d95be572e6bc84f26944766c4876face7",
+    "assets/pulse/2026-11-07.webp": "3d67fe59afb223d152ea1c2b574b500f84a7a7582c22d7f77a7a5f5ed470f2ae"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "beWrUq3HM4k",
-    "source_url": "https://unsplash.com/photos/beWrUq3HM4k",
-    "camera_make": "FUJIFILM",
-    "camera_model": "X100F",
+    "asset_id": "igBubhh6IoA",
+    "source_url": "https://unsplash.com/photos/igBubhh6IoA",
+    "camera_make": "Hasselblad",
+    "camera_model": "L1D-20c",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "5558a0d082ce8003364a"
+  "publication_id": "d876915e45364741e7b3"
 }

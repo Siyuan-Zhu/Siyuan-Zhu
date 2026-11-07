@@ -2,6 +2,90 @@
   "entries": [
     {
       "24h_shift": 0.24,
+      "artwork_artist": "Ben Koorengevel",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Relic",
+      "artwork_url": "https://unsplash.com/photos/igBubhh6IoA",
+      "cluster_keywords": [
+        "tesla",
+        "cybertruck",
+        "production",
+        "production cybertruck",
+        "down production"
+      ],
+      "commissioned_thesis": "Tesla's winding down of the Cybertruck marks the swift transition of aggressive, futuristic industrial design into an immediate cultural artifact. The abrupt halt captures a pivotal tech hubris turning overnight into an abandoned steel curiosity.",
+      "critic_scores": {
+        "semantic_alignment": 0.66,
+        "composite": 0.662
+      },
+      "date": "2026-11-07",
+      "dominant_category": "AI & Distributed Systems",
+      "dominant_signal_type": "HYBRID",
+      "fallback_webp_path": "assets/pulse/2026-11-07.webp",
+      "flux_model": null,
+      "gloss": "The sudden quietude of an obsolete monument.",
+      "headline": "Relic \u2014 The sudden quietude of an obsolete monument.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/igBubhh6IoA",
+      "macro_contribution_pct": 38.0,
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_contribution_pct": 62.0,
+      "orbit_sources_matched": [],
+      "orbit_weight_ratio": 0.62,
+      "publication_id": "d876915e45364741e7b3",
+      "published_at": "2026-11-07T08:47:06.460943Z",
+      "quote": "The sudden quietude of an obsolete monument.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "Tesla's winding down of the Cybertruck marks the swift transition of aggressive, futuristic industrial design into an immediate cultural artifact. The abrupt halt captures a pivotal tech hubris turning overnight into an abandoned steel curiosity.",
+      "top_macro_themes": [
+        "tesla",
+        "cybertruck",
+        "production",
+        "production cybertruck",
+        "down production"
+      ],
+      "top_orbit_themes": [
+        "tesla",
+        "cybertruck",
+        "production",
+        "production cybertruck",
+        "down production"
+      ],
+      "unsplash_photographer": "Ben Koorengevel",
+      "unsplash_profile_url": "https://unsplash.com/@benkoorengevel",
+      "updated_at": "2026-11-07T08:47:06.460943Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Relic",
+      "photo_selection_policy_date": "2026-11-07",
+      "photo_selection_policy": "owner-approved-best-safe-photo",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "igBubhh6IoA",
+        "source_url": "https://unsplash.com/photos/igBubhh6IoA",
+        "camera_make": "Hasselblad",
+        "camera_model": "L1D-20c",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
+      "24h_shift": 0.24,
       "artwork_artist": "Danish Prakash",
       "artwork_source": "Unsplash",
       "artwork_title": "Lattice",
@@ -484,6 +568,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-06T15:35:06.921967Z",
+  "updated_at": "2026-11-07T08:47:06.460943Z",
   "version": "2.0"
 }
