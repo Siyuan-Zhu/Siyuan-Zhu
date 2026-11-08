@@ -2,6 +2,88 @@
   "entries": [
     {
       "24h_shift": 0.24,
+      "artwork_artist": "Liana S",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Pneuma",
+      "artwork_url": "https://unsplash.com/photos/2I-k5FuJo0s",
+      "cluster_keywords": [
+        "interaction humans",
+        "spirit interaction",
+        "humans explore",
+        "through spirit",
+        "interaction"
+      ],
+      "commissioned_thesis": "In an era saturated by mechanized logic and material acceleration, there is a quiet, insurgent impulse toward the unseen\u2014an exploration of how creative consciousness communes with transcendent breath. Studio practice transforms into a sanctuary where human agency engages the immaterial, framing artistic endeavor not as mere production, but as an ongoing dialogue with animating spirit.",
+      "critic_scores": {
+        "semantic_alignment": 0.72,
+        "composite": 0.688
+      },
+      "date": "2026-11-08",
+      "dominant_category": "AI & Distributed Systems",
+      "dominant_signal_type": "HYBRID",
+      "fallback_webp_path": "assets/pulse/2026-11-08.webp",
+      "flux_model": null,
+      "gloss": "The breath of creative and divine communion.",
+      "headline": "Pneuma \u2014 The breath of creative and divine communion.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/2I-k5FuJo0s",
+      "macro_contribution_pct": 38.0,
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_contribution_pct": 62.0,
+      "orbit_sources_matched": [],
+      "orbit_weight_ratio": 0.62,
+      "publication_id": "b208bf2e4cc61fcb53f2",
+      "published_at": "2026-11-08T08:48:36.884320Z",
+      "quote": "The breath of creative and divine communion.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "In an era saturated by mechanized logic and material acceleration, there is a quiet, insurgent impulse toward the unseen\u2014an exploration of how creative consciousness communes with transcendent breath. Studio practice transforms into a sanctuary where human agency engages the immaterial, framing artistic endeavor not as mere production, but as an ongoing dialogue with animating spirit.",
+      "top_macro_themes": [
+        "interaction humans",
+        "spirit interaction",
+        "humans explore",
+        "through spirit",
+        "interaction"
+      ],
+      "top_orbit_themes": [
+        "interaction humans",
+        "spirit interaction",
+        "humans explore",
+        "through spirit",
+        "interaction"
+      ],
+      "unsplash_photographer": "Liana S",
+      "unsplash_profile_url": "https://unsplash.com/@cherstve_pechivo",
+      "updated_at": "2026-11-08T08:48:36.884320Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Pneuma",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "2I-k5FuJo0s",
+        "source_url": "https://unsplash.com/photos/2I-k5FuJo0s",
+        "camera_make": "NIKON CORPORATION",
+        "camera_model": "NIKON D600",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
+      "24h_shift": 0.24,
       "artwork_artist": "Ben Koorengevel",
       "artwork_source": "Unsplash",
       "artwork_title": "Relic",
@@ -64,8 +146,8 @@
       "visual_tier_used": "PHOTOGRAPHY",
       "window_hours": 96,
       "word": "Relic",
-      "photo_selection_policy_date": "2026-11-07",
       "photo_selection_policy": "owner-approved-best-safe-photo",
+      "photo_selection_policy_date": "2026-11-07",
       "media_provenance": {
         "version": 1,
         "classification": "PHOTOGRAPHY",
@@ -476,8 +558,8 @@
       "visual_tier_used": "DIGITAL_ARTWORK",
       "window_hours": 96,
       "word": "Insinuation",
-      "photo_selection_policy_date": "2026-11-01",
       "photo_selection_policy": "owner-approved-best-safe-photo",
+      "photo_selection_policy_date": "2026-11-01",
       "media_provenance": {
         "version": 1,
         "classification": "DIGITAL_ARTWORK",
@@ -568,6 +650,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-07T08:47:06.460943Z",
+  "updated_at": "2026-11-08T08:48:36.884320Z",
   "version": "2.0"
 }

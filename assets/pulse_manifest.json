@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-07",
-  "word": "Relic",
-  "gloss": "The sudden quietude of an obsolete monument.",
-  "archetype": "STUDIO_MONOGRAPH",
+  "date": "2026-11-08",
+  "word": "Pneuma",
+  "gloss": "The breath of creative and divine communion.",
+  "archetype": "POETIC_CINEMA",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "01d90d104a0e44c7e0cc1534e79fc188e43db188d288f1d796481f21464e5573",
-    "assets/daily_pulse_dark.webp": "31dc285f03921e9e752898b7c127e35fc79308f80a9eb315e771fb617f368200",
-    "assets/daily_pulse.svg": "dcdac75d5c3ce10f516d5e6f363bb88d95be572e6bc84f26944766c4876face7",
-    "assets/pulse/2026-11-07.webp": "3d67fe59afb223d152ea1c2b574b500f84a7a7582c22d7f77a7a5f5ed470f2ae"
+    "assets/daily_pulse_light.webp": "69449181d38647013af0ab2ca912a2729f0f96b1398a1d38ee8305105c74de99",
+    "assets/daily_pulse_dark.webp": "69449181d38647013af0ab2ca912a2729f0f96b1398a1d38ee8305105c74de99",
+    "assets/daily_pulse.svg": "b146256f1d1a445aa503d46bcfae9cbf7828498530984dadd5508298e95e755a",
+    "assets/pulse/2026-11-08.webp": "c7e4633219dce1dc80fa09e3ee98348297068af53b66b4f907f38e74c48dea5c"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "igBubhh6IoA",
-    "source_url": "https://unsplash.com/photos/igBubhh6IoA",
-    "camera_make": "Hasselblad",
-    "camera_model": "L1D-20c",
+    "asset_id": "2I-k5FuJo0s",
+    "source_url": "https://unsplash.com/photos/2I-k5FuJo0s",
+    "camera_make": "NIKON CORPORATION",
+    "camera_model": "NIKON D600",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "d876915e45364741e7b3"
+  "publication_id": "b208bf2e4cc61fcb53f2"
 }
