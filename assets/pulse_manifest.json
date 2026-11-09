@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-08",
-  "word": "Pneuma",
-  "gloss": "The breath of creative and divine communion.",
-  "archetype": "POETIC_CINEMA",
+  "date": "2026-11-09",
+  "word": "Numen",
+  "gloss": "The felt presence of divine immanence.",
+  "archetype": "KYOTO_TANKOBON",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "69449181d38647013af0ab2ca912a2729f0f96b1398a1d38ee8305105c74de99",
-    "assets/daily_pulse_dark.webp": "69449181d38647013af0ab2ca912a2729f0f96b1398a1d38ee8305105c74de99",
-    "assets/daily_pulse.svg": "b146256f1d1a445aa503d46bcfae9cbf7828498530984dadd5508298e95e755a",
-    "assets/pulse/2026-11-08.webp": "c7e4633219dce1dc80fa09e3ee98348297068af53b66b4f907f38e74c48dea5c"
+    "assets/daily_pulse_light.webp": "1435107cd3f8bcf1d5f686d7dc99e05cfd44498eff9050b882b4ceb5f3ca314b",
+    "assets/daily_pulse_dark.webp": "791b03c20f304d339e110195e8964fb5851bb5da76c4d0b2d2550aafc226cceb",
+    "assets/daily_pulse.svg": "7abce54ccb74efd3b4fa3c19d3d8838a9fbd0954aed93805e8335c9d1ffe5ec7",
+    "assets/pulse/2026-11-09.webp": "131339acc01a3d3f3e007743fd707885ed229712f220208b3a5d0ac32158c349"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "2I-k5FuJo0s",
-    "source_url": "https://unsplash.com/photos/2I-k5FuJo0s",
-    "camera_make": "NIKON CORPORATION",
-    "camera_model": "NIKON D600",
+    "asset_id": "KXtMGheovdw",
+    "source_url": "https://unsplash.com/photos/KXtMGheovdw",
+    "camera_make": "FUJIFILM",
+    "camera_model": "X-T1",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "b208bf2e4cc61fcb53f2"
+  "publication_id": "761c1a9243d98ed3192e"
 }

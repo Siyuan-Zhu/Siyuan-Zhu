@@ -1,22 +1,10 @@
 {
-  "curated_o3_cursor": 0,
-  "rss_o3_cursor": 0,
-  "state_version": 12,
-  "updated_at": "2026-11-08T08:47:19.546086+00:00",
+  "curated_o3_cursor": 8,
+  "rss_o3_cursor": 2,
+  "state_version": 13,
+  "updated_at": "2026-11-09T08:46:34.433064+00:00",
   "handles": {
-    "camilla_greenwell": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "modelcontextprotocol": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "alejandro.arrias": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "tomfoxcatalog": {
+    "mpfaffenberger": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -24,31 +12,7 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "myleshendrik": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "benjamindane": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "douwem": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "emilyjaynemay": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "dsfaccini": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
     "davidbravobustos": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "dafyy321": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -56,11 +20,31 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "_nutealla_": {
+    "papitaa_criolla": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "mekanbaymyradov": {
+    "tomfoxcatalog": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "douwem": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "camilla_greenwell": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "benjamindane": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "modelcontextprotocol": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "dafyy321": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -72,15 +56,31 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
+    "myleshendrik": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "alejandro.arrias": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "mekanbaymyradov": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
     "nathanwolfgrace": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "papitaa_criolla": {
+    "dsfaccini": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "mpfaffenberger": {
+    "emilyjaynemay": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "_nutealla_": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     }
