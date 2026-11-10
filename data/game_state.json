@@ -1,44 +1,17 @@
 {
-  "current_turn_color": "RED",
-  "mode": "VS_BOT",
-  "active_game": "connect4",
-  "bitboard_p2": 4400777152258,
-  "moves_this_round": 24,
-  "last_elo_delta": 0,
-  "turn": 13,
-  "finisher_handle": "House-Bot",
-  "winning_cells": [
-    [
-      4,
-      0
-    ],
-    [
-      3,
-      1
-    ],
-    [
-      2,
-      2
-    ],
-    [
-      1,
-      3
-    ]
-  ],
-  "past_rounds": [],
-  "round_id": 1,
-  "last_mover": "Siyuan-Zhu",
   "last_move": {
     "move_id": "col3"
   },
-  "last_move_summary": "@Siyuan-Zhu dropped in col 4 (answered col 4) \u00b7 turn 13",
-  "state_version": 12,
-  "round_over": true,
+  "active_game": "connect4",
+  "mode": "VS_BOT",
+  "current_turn_color": "RED",
+  "round_id": 1,
+  "schema_version": "2.0",
+  "last_elo_delta": 0,
+  "bitboard_p1": 8831814174849,
   "yellow_contributors": {},
   "status": "COMPLETED",
-  "last_challenger_move": "col4",
-  "last_move_timestamp": 1793944238.96076,
-  "bitboard_p1": 8831814174849,
+  "winner": "bot",
   "episode_trace": [
     "00000002000000000000000000",
     "00000002000000000000004000",
@@ -65,13 +38,159 @@
     "00489612140820087090c28001",
     "00489612140820087092c28001"
   ],
-  "red_contributors": {
-    "Siyuan-Zhu": 12
-  },
+  "moves_this_round": 24,
   "last_bot_move": "col4",
+  "winning_cells": [
+    [
+      4,
+      0
+    ],
+    [
+      3,
+      1
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      1,
+      3
+    ]
+  ],
+  "finisher_handle": "House-Bot",
+  "round_over": true,
+  "bitboard_p2": 4400777152258,
+  "game_key": "connect4",
+  "state_version": 12,
+  "last_move_summary": "@Siyuan-Zhu dropped in col 4 (answered col 4) \u00b7 turn 13",
+  "turn": 13,
+  "past_rounds": [],
+  "last_move_timestamp": 1793944238.96076,
+  "last_mover": "Siyuan-Zhu",
+  "move_log": [
+    {
+      "turn": 7,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 3,
+      "summary": "Dropped in col 3",
+      "move_id": "col3",
+      "player_move": "Dropped in col 3",
+      "bot_reply": "Answered col 7"
+    },
+    {
+      "turn": 7,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 7,
+      "summary": "Answered col 7",
+      "move_id": "col7",
+      "player_move": "Answered col 7",
+      "bot_reply": ""
+    },
+    {
+      "turn": 8,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 5,
+      "summary": "Dropped in col 5",
+      "move_id": "col5",
+      "player_move": "Dropped in col 5",
+      "bot_reply": "Answered col 5"
+    },
+    {
+      "turn": 8,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 5,
+      "summary": "Answered col 5",
+      "move_id": "col5",
+      "player_move": "Answered col 5",
+      "bot_reply": ""
+    },
+    {
+      "turn": 9,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 5,
+      "summary": "Dropped in col 5",
+      "move_id": "col5",
+      "player_move": "Dropped in col 5",
+      "bot_reply": "Answered col 5"
+    },
+    {
+      "turn": 9,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 5,
+      "summary": "Answered col 5",
+      "move_id": "col5",
+      "player_move": "Answered col 5",
+      "bot_reply": ""
+    },
+    {
+      "turn": 10,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 7,
+      "summary": "Dropped in col 7",
+      "move_id": "col7",
+      "player_move": "Dropped in col 7",
+      "bot_reply": "Answered col 4"
+    },
+    {
+      "turn": 10,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 4,
+      "summary": "Answered col 4",
+      "move_id": "col4",
+      "player_move": "Answered col 4",
+      "bot_reply": ""
+    },
+    {
+      "turn": 11,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 6,
+      "summary": "Dropped in col 6",
+      "move_id": "col6",
+      "player_move": "Dropped in col 6",
+      "bot_reply": "Answered col 4"
+    },
+    {
+      "turn": 11,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 4,
+      "summary": "Answered col 4",
+      "move_id": "col4",
+      "player_move": "Answered col 4",
+      "bot_reply": ""
+    },
+    {
+      "turn": 12,
+      "player": "@Siyuan-Zhu",
+      "side": "RED",
+      "col": 4,
+      "summary": "Dropped in col 4",
+      "move_id": "col4",
+      "player_move": "Dropped in col 4",
+      "bot_reply": "Answered col 4"
+    },
+    {
+      "turn": 12,
+      "player": "House-Bot",
+      "side": "YELLOW",
+      "col": 4,
+      "summary": "Answered col 4",
+      "move_id": "col4",
+      "player_move": "Answered col 4",
+      "bot_reply": ""
+    }
+  ],
   "last_move_epoch": 1793944238.96076,
-  "rate_limits": {},
-  "winner": "bot",
   "move_history": [
     {
       "turn": 1,
@@ -314,129 +433,6 @@
       "bot_reply": ""
     }
   ],
-  "move_log": [
-    {
-      "turn": 7,
-      "player": "@Siyuan-Zhu",
-      "side": "RED",
-      "col": 3,
-      "summary": "Dropped in col 3",
-      "move_id": "col3",
-      "player_move": "Dropped in col 3",
-      "bot_reply": "Answered col 7"
-    },
-    {
-      "turn": 7,
-      "player": "House-Bot",
-      "side": "YELLOW",
-      "col": 7,
-      "summary": "Answered col 7",
-      "move_id": "col7",
-      "player_move": "Answered col 7",
-      "bot_reply": ""
-    },
-    {
-      "turn": 8,
-      "player": "@Siyuan-Zhu",
-      "side": "RED",
-      "col": 5,
-      "summary": "Dropped in col 5",
-      "move_id": "col5",
-      "player_move": "Dropped in col 5",
-      "bot_reply": "Answered col 5"
-    },
-    {
-      "turn": 8,
-      "player": "House-Bot",
-      "side": "YELLOW",
-      "col": 5,
-      "summary": "Answered col 5",
-      "move_id": "col5",
-      "player_move": "Answered col 5",
-      "bot_reply": ""
-    },
-    {
-      "turn": 9,
-      "player": "@Siyuan-Zhu",
-      "side": "RED",
-      "col": 5,
-      "summary": "Dropped in col 5",
-      "move_id": "col5",
-      "player_move": "Dropped in col 5",
-      "bot_reply": "Answered col 5"
-    },
-    {
-      "turn": 9,
-      "player": "House-Bot",
-      "side": "YELLOW",
-      "col": 5,
-      "summary": "Answered col 5",
-      "move_id": "col5",
-      "player_move": "Answered col 5",
-      "bot_reply": ""
-    },
-    {
-      "turn": 10,
-      "player": "@Siyuan-Zhu",
-      "side": "RED",
-      "col": 7,
-      "summary": "Dropped in col 7",
-      "move_id": "col7",
-      "player_move": "Dropped in col 7",
-      "bot_reply": "Answered col 4"
-    },
-    {
-      "turn": 10,
-      "player": "House-Bot",
-      "side": "YELLOW",
-      "col": 4,
-      "summary": "Answered col 4",
-      "move_id": "col4",
-      "player_move": "Answered col 4",
-      "bot_reply": ""
-    },
-    {
-      "turn": 11,
-      "player": "@Siyuan-Zhu",
-      "side": "RED",
-      "col": 6,
-      "summary": "Dropped in col 6",
-      "move_id": "col6",
-      "player_move": "Dropped in col 6",
-      "bot_reply": "Answered col 4"
-    },
-    {
-      "turn": 11,
-      "player": "House-Bot",
-      "side": "YELLOW",
-      "col": 4,
-      "summary": "Answered col 4",
-      "move_id": "col4",
-      "player_move": "Answered col 4",
-      "bot_reply": ""
-    },
-    {
-      "turn": 12,
-      "player": "@Siyuan-Zhu",
-      "side": "RED",
-      "col": 4,
-      "summary": "Dropped in col 4",
-      "move_id": "col4",
-      "player_move": "Dropped in col 4",
-      "bot_reply": "Answered col 4"
-    },
-    {
-      "turn": 12,
-      "player": "House-Bot",
-      "side": "YELLOW",
-      "col": 4,
-      "summary": "Answered col 4",
-      "move_id": "col4",
-      "player_move": "Answered col 4",
-      "bot_reply": ""
-    }
-  ],
-  "game_key": "connect4",
   "board": [
     [
       0,
@@ -493,49 +489,26 @@
       2
     ]
   ],
-  "schema_version": "2.0",
   "updated_at": "2026-11-06T03:23:55Z",
+  "rate_limits": {},
+  "last_challenger_move": "col4",
+  "red_contributors": {
+    "Siyuan-Zhu": 12
+  },
   "board_state": {
-    "current_turn_color": "RED",
-    "mode": "VS_BOT",
-    "active_game": "connect4",
-    "bitboard_p2": 4400777152258,
-    "moves_this_round": 24,
-    "last_elo_delta": 0,
-    "turn": 13,
-    "finisher_handle": "House-Bot",
-    "winning_cells": [
-      [
-        4,
-        0
-      ],
-      [
-        3,
-        1
-      ],
-      [
-        2,
-        2
-      ],
-      [
-        1,
-        3
-      ]
-    ],
-    "past_rounds": [],
-    "round_id": 1,
-    "last_mover": "Siyuan-Zhu",
     "last_move": {
       "move_id": "col3"
     },
-    "last_move_summary": "@Siyuan-Zhu dropped in col 4 (answered col 4) \u00b7 turn 13",
-    "state_version": 12,
-    "round_over": true,
+    "active_game": "connect4",
+    "mode": "VS_BOT",
+    "current_turn_color": "RED",
+    "round_id": 1,
+    "schema_version": "2.0",
+    "last_elo_delta": 0,
+    "bitboard_p1": 8831814174849,
     "yellow_contributors": {},
     "status": "COMPLETED",
-    "last_challenger_move": "col4",
-    "last_move_timestamp": 1793944238.96076,
-    "bitboard_p1": 8831814174849,
+    "winner": "bot",
     "episode_trace": [
       "00000002000000000000000000",
       "00000002000000000000004000",
@@ -562,13 +535,159 @@
       "00489612140820087090c28001",
       "00489612140820087092c28001"
     ],
-    "red_contributors": {
-      "Siyuan-Zhu": 12
-    },
+    "moves_this_round": 24,
     "last_bot_move": "col4",
+    "winning_cells": [
+      [
+        4,
+        0
+      ],
+      [
+        3,
+        1
+      ],
+      [
+        2,
+        2
+      ],
+      [
+        1,
+        3
+      ]
+    ],
+    "finisher_handle": "House-Bot",
+    "round_over": true,
+    "bitboard_p2": 4400777152258,
+    "game_key": "connect4",
+    "state_version": 12,
+    "last_move_summary": "@Siyuan-Zhu dropped in col 4 (answered col 4) \u00b7 turn 13",
+    "turn": 13,
+    "past_rounds": [],
+    "last_move_timestamp": 1793944238.96076,
+    "last_mover": "Siyuan-Zhu",
+    "move_log": [
+      {
+        "turn": 7,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 3,
+        "summary": "Dropped in col 3",
+        "move_id": "col3",
+        "player_move": "Dropped in col 3",
+        "bot_reply": "Answered col 7"
+      },
+      {
+        "turn": 7,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 7,
+        "summary": "Answered col 7",
+        "move_id": "col7",
+        "player_move": "Answered col 7",
+        "bot_reply": ""
+      },
+      {
+        "turn": 8,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 5,
+        "summary": "Dropped in col 5",
+        "move_id": "col5",
+        "player_move": "Dropped in col 5",
+        "bot_reply": "Answered col 5"
+      },
+      {
+        "turn": 8,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 5,
+        "summary": "Answered col 5",
+        "move_id": "col5",
+        "player_move": "Answered col 5",
+        "bot_reply": ""
+      },
+      {
+        "turn": 9,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 5,
+        "summary": "Dropped in col 5",
+        "move_id": "col5",
+        "player_move": "Dropped in col 5",
+        "bot_reply": "Answered col 5"
+      },
+      {
+        "turn": 9,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 5,
+        "summary": "Answered col 5",
+        "move_id": "col5",
+        "player_move": "Answered col 5",
+        "bot_reply": ""
+      },
+      {
+        "turn": 10,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 7,
+        "summary": "Dropped in col 7",
+        "move_id": "col7",
+        "player_move": "Dropped in col 7",
+        "bot_reply": "Answered col 4"
+      },
+      {
+        "turn": 10,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 4,
+        "summary": "Answered col 4",
+        "move_id": "col4",
+        "player_move": "Answered col 4",
+        "bot_reply": ""
+      },
+      {
+        "turn": 11,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 6,
+        "summary": "Dropped in col 6",
+        "move_id": "col6",
+        "player_move": "Dropped in col 6",
+        "bot_reply": "Answered col 4"
+      },
+      {
+        "turn": 11,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 4,
+        "summary": "Answered col 4",
+        "move_id": "col4",
+        "player_move": "Answered col 4",
+        "bot_reply": ""
+      },
+      {
+        "turn": 12,
+        "player": "@Siyuan-Zhu",
+        "side": "RED",
+        "col": 4,
+        "summary": "Dropped in col 4",
+        "move_id": "col4",
+        "player_move": "Dropped in col 4",
+        "bot_reply": "Answered col 4"
+      },
+      {
+        "turn": 12,
+        "player": "House-Bot",
+        "side": "YELLOW",
+        "col": 4,
+        "summary": "Answered col 4",
+        "move_id": "col4",
+        "player_move": "Answered col 4",
+        "bot_reply": ""
+      }
+    ],
     "last_move_epoch": 1793944238.96076,
-    "rate_limits": {},
-    "winner": "bot",
     "move_history": [
       {
         "turn": 1,
@@ -811,129 +930,6 @@
         "bot_reply": ""
       }
     ],
-    "move_log": [
-      {
-        "turn": 7,
-        "player": "@Siyuan-Zhu",
-        "side": "RED",
-        "col": 3,
-        "summary": "Dropped in col 3",
-        "move_id": "col3",
-        "player_move": "Dropped in col 3",
-        "bot_reply": "Answered col 7"
-      },
-      {
-        "turn": 7,
-        "player": "House-Bot",
-        "side": "YELLOW",
-        "col": 7,
-        "summary": "Answered col 7",
-        "move_id": "col7",
-        "player_move": "Answered col 7",
-        "bot_reply": ""
-      },
-      {
-        "turn": 8,
-        "player": "@Siyuan-Zhu",
-        "side": "RED",
-        "col": 5,
-        "summary": "Dropped in col 5",
-        "move_id": "col5",
-        "player_move": "Dropped in col 5",
-        "bot_reply": "Answered col 5"
-      },
-      {
-        "turn": 8,
-        "player": "House-Bot",
-        "side": "YELLOW",
-        "col": 5,
-        "summary": "Answered col 5",
-        "move_id": "col5",
-        "player_move": "Answered col 5",
-        "bot_reply": ""
-      },
-      {
-        "turn": 9,
-        "player": "@Siyuan-Zhu",
-        "side": "RED",
-        "col": 5,
-        "summary": "Dropped in col 5",
-        "move_id": "col5",
-        "player_move": "Dropped in col 5",
-        "bot_reply": "Answered col 5"
-      },
-      {
-        "turn": 9,
-        "player": "House-Bot",
-        "side": "YELLOW",
-        "col": 5,
-        "summary": "Answered col 5",
-        "move_id": "col5",
-        "player_move": "Answered col 5",
-        "bot_reply": ""
-      },
-      {
-        "turn": 10,
-        "player": "@Siyuan-Zhu",
-        "side": "RED",
-        "col": 7,
-        "summary": "Dropped in col 7",
-        "move_id": "col7",
-        "player_move": "Dropped in col 7",
-        "bot_reply": "Answered col 4"
-      },
-      {
-        "turn": 10,
-        "player": "House-Bot",
-        "side": "YELLOW",
-        "col": 4,
-        "summary": "Answered col 4",
-        "move_id": "col4",
-        "player_move": "Answered col 4",
-        "bot_reply": ""
-      },
-      {
-        "turn": 11,
-        "player": "@Siyuan-Zhu",
-        "side": "RED",
-        "col": 6,
-        "summary": "Dropped in col 6",
-        "move_id": "col6",
-        "player_move": "Dropped in col 6",
-        "bot_reply": "Answered col 4"
-      },
-      {
-        "turn": 11,
-        "player": "House-Bot",
-        "side": "YELLOW",
-        "col": 4,
-        "summary": "Answered col 4",
-        "move_id": "col4",
-        "player_move": "Answered col 4",
-        "bot_reply": ""
-      },
-      {
-        "turn": 12,
-        "player": "@Siyuan-Zhu",
-        "side": "RED",
-        "col": 4,
-        "summary": "Dropped in col 4",
-        "move_id": "col4",
-        "player_move": "Dropped in col 4",
-        "bot_reply": "Answered col 4"
-      },
-      {
-        "turn": 12,
-        "player": "House-Bot",
-        "side": "YELLOW",
-        "col": 4,
-        "summary": "Answered col 4",
-        "move_id": "col4",
-        "player_move": "Answered col 4",
-        "bot_reply": ""
-      }
-    ],
-    "game_key": "connect4",
     "board": [
       [
         0,
@@ -990,7 +986,11 @@
         2
       ]
     ],
-    "schema_version": "2.0",
-    "updated_at": "2026-11-06T03:23:55Z"
+    "updated_at": "2026-11-06T03:23:55Z",
+    "rate_limits": {},
+    "last_challenger_move": "col4",
+    "red_contributors": {
+      "Siyuan-Zhu": 12
+    }
   }
 }

@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-09",
-  "word": "Numen",
-  "gloss": "The felt presence of divine immanence.",
-  "archetype": "KYOTO_TANKOBON",
+  "date": "2026-11-10",
+  "word": "Hamartia",
+  "gloss": "Tragic flaws unmasking the hunger for deliverance.",
+  "archetype": "LITERARY_JOURNAL",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "1435107cd3f8bcf1d5f686d7dc99e05cfd44498eff9050b882b4ceb5f3ca314b",
-    "assets/daily_pulse_dark.webp": "791b03c20f304d339e110195e8964fb5851bb5da76c4d0b2d2550aafc226cceb",
-    "assets/daily_pulse.svg": "7abce54ccb74efd3b4fa3c19d3d8838a9fbd0954aed93805e8335c9d1ffe5ec7",
-    "assets/pulse/2026-11-09.webp": "131339acc01a3d3f3e007743fd707885ed229712f220208b3a5d0ac32158c349"
+    "assets/daily_pulse_light.webp": "452773f772990c470430e2d30273b07d7d90286ffe18297855fec5b3455e6cfc",
+    "assets/daily_pulse_dark.webp": "2dbe56dc1606a9b1cd2415b1f49e86a341cdb972ab58dbef76c3449e8c59cf63",
+    "assets/daily_pulse.svg": "3bd9e52146d89b9389ecb4d358e4265de7a872893ad1c7cdbdafe9d909c7a2b2",
+    "assets/pulse/2026-11-10.webp": "3bce7b26a34b54c15371f647a83c31ceb14431e0dcd288916fe5233538f5e720"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "KXtMGheovdw",
-    "source_url": "https://unsplash.com/photos/KXtMGheovdw",
-    "camera_make": "FUJIFILM",
-    "camera_model": "X-T1",
+    "asset_id": "FMNRnXT4ffg",
+    "source_url": "https://unsplash.com/photos/FMNRnXT4ffg",
+    "camera_make": "NIKON CORPORATION",
+    "camera_model": "NIKON D810",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "761c1a9243d98ed3192e"
+  "publication_id": "8dba7b63f06aa3f838da"
 }
