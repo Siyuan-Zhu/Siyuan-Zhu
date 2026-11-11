@@ -1,10 +1,10 @@
 {
-  "curated_o3_cursor": 4,
-  "rss_o3_cursor": 4,
-  "state_version": 14,
-  "updated_at": "2026-11-10T08:46:45.438137+00:00",
+  "curated_o3_cursor": 0,
+  "rss_o3_cursor": 0,
+  "state_version": 15,
+  "updated_at": "2026-11-11T08:46:53.816162+00:00",
   "handles": {
-    "casholman": {
+    "alejandro.arrias": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -12,15 +12,23 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "tomfoxcatalog": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "papitaa_criolla": {
+    "modelcontextprotocol": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
     "mpfaffenberger": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "_nutealla_": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "benjamindane": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "gospelpartner.app": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -32,11 +40,15 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "myleshendrik": {
+    "camilla_greenwell": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "emilyjaynemay": {
+    "elleusa": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "clubkidmovie": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -44,11 +56,11 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "alejandro.arrias": {
+    "casholman": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "modelcontextprotocol": {
+    "papitaa_criolla": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -56,11 +68,11 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "benjamindane": {
+    "emilyjaynemay": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "clubkidmovie": {
+    "tomfoxcatalog": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -69,18 +81,6 @@
       "tier": "O4_SCOUT"
     },
     "dsfaccini": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "_nutealla_": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "camilla_greenwell": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "pai.chi": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     }

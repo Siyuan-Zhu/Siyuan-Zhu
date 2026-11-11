@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-10",
-  "word": "Hamartia",
-  "gloss": "Tragic flaws unmasking the hunger for deliverance.",
-  "archetype": "LITERARY_JOURNAL",
+  "date": "2026-11-11",
+  "word": "KENOSIS",
+  "gloss": "Power surrendered in moral vulnerability.",
+  "archetype": "POETIC_CINEMA",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "452773f772990c470430e2d30273b07d7d90286ffe18297855fec5b3455e6cfc",
-    "assets/daily_pulse_dark.webp": "2dbe56dc1606a9b1cd2415b1f49e86a341cdb972ab58dbef76c3449e8c59cf63",
-    "assets/daily_pulse.svg": "3bd9e52146d89b9389ecb4d358e4265de7a872893ad1c7cdbdafe9d909c7a2b2",
-    "assets/pulse/2026-11-10.webp": "3bce7b26a34b54c15371f647a83c31ceb14431e0dcd288916fe5233538f5e720"
+    "assets/daily_pulse_light.webp": "54394c8fc8d897affc5cfc8b473c1b57d12412f5f5b43f84328a05f6833b36bb",
+    "assets/daily_pulse_dark.webp": "54394c8fc8d897affc5cfc8b473c1b57d12412f5f5b43f84328a05f6833b36bb",
+    "assets/daily_pulse.svg": "adb73afcc416d647d3de02a05bfa9f6889692c251594f72a34bb497b433fd444",
+    "assets/pulse/2026-11-11.webp": "40bf23bc3b7a86279cf5e4c2e7409d2775bb55225ea1363dd55d494b4223d24a"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "FMNRnXT4ffg",
-    "source_url": "https://unsplash.com/photos/FMNRnXT4ffg",
-    "camera_make": "NIKON CORPORATION",
-    "camera_model": "NIKON D810",
+    "asset_id": "TZIfSXLgqv0",
+    "source_url": "https://unsplash.com/photos/TZIfSXLgqv0",
+    "camera_make": "SONY",
+    "camera_model": "ILCE-7M4",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "8dba7b63f06aa3f838da"
+  "publication_id": "5d397f34a1bb79071c07"
 }

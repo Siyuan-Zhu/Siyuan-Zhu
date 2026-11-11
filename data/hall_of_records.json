@@ -1,5 +1,10 @@
 {
-  "round_id": 1,
+  "active_game_key": "connect4",
+  "past_rounds": [],
+  "current_round_log": [],
+  "active_stakes": {},
+  "state_version": 1,
+  "schema_version": "1.0",
   "recent_rounds": [
     {
       "settled_at": "2026-11-06T05:50:38Z",
@@ -14,21 +19,16 @@
       "house_delta": 3
     }
   ],
-  "active_stakes": {},
-  "current_round_log": [],
-  "state_version": 1,
-  "schema_version": "1.0",
-  "past_rounds": [],
-  "bot_elo": 1203,
   "players": {
     "Siyuan-Zhu": {
+      "draws": 0,
       "finishes": 0,
-      "wins": 0,
-      "last_played_at": "2026-11-06T05:50:38Z",
-      "elo": 797,
       "losses": 1,
-      "draws": 0
+      "elo": 797,
+      "last_played_at": "2026-11-06T05:50:38Z",
+      "wins": 0
     }
   },
-  "active_game_key": "connect4"
+  "bot_elo": 1203,
+  "round_id": 1
 }
