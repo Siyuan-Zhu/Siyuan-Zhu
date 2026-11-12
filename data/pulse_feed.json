@@ -2,6 +2,88 @@
   "entries": [
     {
       "24h_shift": 0.24,
+      "artwork_artist": "Tracey Parish",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Chrysalis",
+      "artwork_url": "https://unsplash.com/photos/N638YNcpDRA",
+      "cluster_keywords": [
+        "samson",
+        "complicated character",
+        "how complicated",
+        "points humanity",
+        "heart desires"
+      ],
+      "commissioned_thesis": "The archetypal tragedy of Samson reflects humanity's perennial tension between primal, destructive appetite and divine consecration. By examining a consecrated figure who repeatedly compromises his calling, the narrative highlights the necessity of a redemptive archetype whose desires remain uncorrupted.",
+      "critic_scores": {
+        "semantic_alignment": 0.74,
+        "composite": 0.702
+      },
+      "date": "2026-11-12",
+      "dominant_category": "AI & Distributed Systems",
+      "dominant_signal_type": "HYBRID",
+      "fallback_webp_path": "assets/pulse/2026-11-12.webp",
+      "flux_model": null,
+      "gloss": "The volatile vessel bridging ruin and renewal.",
+      "headline": "Chrysalis \u2014 The volatile vessel bridging ruin and renewal.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/N638YNcpDRA",
+      "macro_contribution_pct": 38.0,
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_contribution_pct": 62.0,
+      "orbit_sources_matched": [],
+      "orbit_weight_ratio": 0.62,
+      "publication_id": "c2d188818ab47b5060a8",
+      "published_at": "2026-11-12T08:49:31.904526Z",
+      "quote": "The volatile vessel bridging ruin and renewal.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "The archetypal tragedy of Samson reflects humanity's perennial tension between primal, destructive appetite and divine consecration. By examining a consecrated figure who repeatedly compromises his calling, the narrative highlights the necessity of a redemptive archetype whose desires remain uncorrupted.",
+      "top_macro_themes": [
+        "samson",
+        "complicated character",
+        "how complicated",
+        "points humanity",
+        "heart desires"
+      ],
+      "top_orbit_themes": [
+        "samson",
+        "complicated character",
+        "how complicated",
+        "points humanity",
+        "heart desires"
+      ],
+      "unsplash_photographer": "Tracey Parish",
+      "unsplash_profile_url": "https://unsplash.com/@tip_to",
+      "updated_at": "2026-11-12T08:49:31.904526Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Chrysalis",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "N638YNcpDRA",
+        "source_url": "https://unsplash.com/photos/N638YNcpDRA",
+        "camera_make": "Canon",
+        "camera_model": "Canon EOS 80D",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
+      "24h_shift": 0.24,
       "artwork_artist": "Hrithik Sarker",
       "artwork_source": "Unsplash",
       "artwork_title": "KENOSIS",
@@ -896,6 +978,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-11T08:48:47.488617Z",
+  "updated_at": "2026-11-12T08:49:31.904526Z",
   "version": "2.0"
 }

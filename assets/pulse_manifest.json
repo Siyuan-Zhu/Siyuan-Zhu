@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-11",
-  "word": "KENOSIS",
-  "gloss": "Power surrendered in moral vulnerability.",
-  "archetype": "POETIC_CINEMA",
+  "date": "2026-11-12",
+  "word": "Chrysalis",
+  "gloss": "The volatile vessel bridging ruin and renewal.",
+  "archetype": "STUDIO_MONOGRAPH",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "54394c8fc8d897affc5cfc8b473c1b57d12412f5f5b43f84328a05f6833b36bb",
-    "assets/daily_pulse_dark.webp": "54394c8fc8d897affc5cfc8b473c1b57d12412f5f5b43f84328a05f6833b36bb",
-    "assets/daily_pulse.svg": "adb73afcc416d647d3de02a05bfa9f6889692c251594f72a34bb497b433fd444",
-    "assets/pulse/2026-11-11.webp": "40bf23bc3b7a86279cf5e4c2e7409d2775bb55225ea1363dd55d494b4223d24a"
+    "assets/daily_pulse_light.webp": "cc967e676a19f56c0ed08b8e5f2af8f2954e5cf3a720d1a334a46d99ed2bfc29",
+    "assets/daily_pulse_dark.webp": "a3998c265b0e089c1d0f8f9890434819a79e52e640ced4b86e72acd0b75cce6e",
+    "assets/daily_pulse.svg": "02d83b09a791e8eeccd63f32cf75c7c5ada41069d97daf7ac097b6ab4c107cd3",
+    "assets/pulse/2026-11-12.webp": "d3df4175bd1a7125847125f3113c3aca7bd4df1dbb8d71cf340b88a82eb1bf48"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "TZIfSXLgqv0",
-    "source_url": "https://unsplash.com/photos/TZIfSXLgqv0",
-    "camera_make": "SONY",
-    "camera_model": "ILCE-7M4",
+    "asset_id": "N638YNcpDRA",
+    "source_url": "https://unsplash.com/photos/N638YNcpDRA",
+    "camera_make": "Canon",
+    "camera_model": "Canon EOS 80D",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "5d397f34a1bb79071c07"
+  "publication_id": "c2d188818ab47b5060a8"
 }
