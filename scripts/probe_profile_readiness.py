@@ -40,9 +40,16 @@ class ReadOnlySpendStore:
 
 def probe(env, *, root=ROOT, now=None):
     """Return no private data; any failed dependency fails the entire probe."""
-    if (env.get('GITHUB_EVENT_NAME') != 'workflow_dispatch'
-            or env.get('GITHUB_ACTOR') != 'Siyuan-Zhu'
-            or env.get('GITHUB_REPOSITORY') not in {
+    repository = env.get('GITHUB_REPOSITORY')
+    owner_dispatch = (env.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+                      and env.get('GITHUB_ACTOR') == 'Siyuan-Zhu')
+    # The evening canary is the only scheduled caller; it is identified by its
+    # own workflow file in the same repository, never by the (variable) actor.
+    canary_schedule = (env.get('GITHUB_EVENT_NAME') == 'schedule'
+                       and env.get('GITHUB_WORKFLOW_REF', '').startswith(
+                           f'{repository}/.github/workflows/provider_canary.yml@'))
+    if (not (owner_dispatch or canary_schedule)
+            or repository not in {
                 'Siyuan-Zhu/readme-live-sandbox', 'Siyuan-Zhu/Siyuan-Zhu'}):
         raise RuntimeError('Owner manual dispatch required')
     if configuration_errors(env, daily=True, visitor=True):

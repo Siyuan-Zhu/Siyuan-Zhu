@@ -1,0 +1,50 @@
+name: Provider Canary
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+      timezone: "America/New_York"
+  workflow_dispatch:
+
+concurrency:
+  group: provider-canary
+  cancel-in-progress: false
+
+jobs:
+  provider-canary:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Check canonical profile and metadata without writes
+        env:
+          COMMUNITY_GAME_ENABLED: ${{ vars.COMMUNITY_GAME_ENABLED }}
+          PULSE_VOTE_SALT: ${{ secrets.PULSE_VOTE_SALT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
+          SPEND_POLICY_SHA256: "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
+          ZEITGEIST_LIVE_LLM: "1"
+          ZEITGEIST_LIVE_COLLECT: "1"
+          ZEITGEIST_LIVE_UNSPLASH: "1"
+          # Owner-approved quality exception expires after this edition; safety remains mandatory.
+          ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-06"
+          TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        run: python3 scripts/probe_profile_readiness.py

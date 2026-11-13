@@ -81,6 +81,75 @@ def test_bad_configuration_stops_before_any_factory_or_provider(field,value,monk
     with pytest.raises(RuntimeError):probe.probe(env)
 
 
+CANARY_REF='Siyuan-Zhu/Siyuan-Zhu/.github/workflows/provider_canary.yml@refs/heads/main'
+
+
+class PastGuard(Exception):
+    """Sentinel: the owner guard accepted the environment."""
+
+
+def reaches_past_guard(env,monkeypatch):
+    def sentinel(*args,**kwargs):raise PastGuard
+    monkeypatch.setattr(probe,'configuration_errors',sentinel)
+    try:probe.probe(env)
+    except PastGuard:return True
+    except RuntimeError as error:
+        assert str(error)=='Owner manual dispatch required'
+        return False
+    raise AssertionError('probe neither refused nor reached the sentinel')
+
+
+@pytest.mark.parametrize('repo,ref',[
+ ('Siyuan-Zhu/Siyuan-Zhu',CANARY_REF),
+ ('Siyuan-Zhu/readme-live-sandbox',
+  'Siyuan-Zhu/readme-live-sandbox/.github/workflows/provider_canary.yml@refs/heads/main')])
+def test_canary_schedule_event_is_accepted(monkeypatch,repo,ref):
+    env=environment();env.update(GITHUB_EVENT_NAME='schedule',GITHUB_REPOSITORY=repo,
+        GITHUB_WORKFLOW_REF=ref,GITHUB_ACTOR='github-actions[bot]')
+    assert reaches_past_guard(env,monkeypatch)
+
+
+@pytest.mark.parametrize('ref',[
+ None,'',
+ 'Siyuan-Zhu/Siyuan-Zhu/.github/workflows/daily_zeitgeist.yml@refs/heads/main',
+ 'Siyuan-Zhu/Siyuan-Zhu/.github/workflows/provider_canary.yml.evil@refs/heads/main',
+ 'Siyuan-Zhu/other/.github/workflows/provider_canary.yml@refs/heads/main',
+ 'Siyuan-Zhu/readme-live-sandbox/.github/workflows/provider_canary.yml@refs/heads/main'])
+def test_schedule_from_other_workflow_refused(monkeypatch,ref):
+    env=environment();env.update(GITHUB_EVENT_NAME='schedule',GITHUB_REPOSITORY='Siyuan-Zhu/Siyuan-Zhu')
+    if ref is not None:env['GITHUB_WORKFLOW_REF']=ref
+    assert not reaches_past_guard(env,monkeypatch)
+
+
+def test_canary_schedule_from_wrong_repository_refused(monkeypatch):
+    env=environment();env.update(GITHUB_EVENT_NAME='schedule',GITHUB_REPOSITORY='Siyuan-Zhu/other',
+        GITHUB_WORKFLOW_REF='Siyuan-Zhu/other/.github/workflows/provider_canary.yml@refs/heads/main')
+    assert not reaches_past_guard(env,monkeypatch)
+
+
+@pytest.mark.parametrize('event',['workflow_dispatch','push','pull_request'])
+def test_non_owner_dispatch_still_refused(monkeypatch,event):
+    env=environment();env.update(GITHUB_EVENT_NAME=event,GITHUB_ACTOR='someone-else',
+        GITHUB_WORKFLOW_REF=CANARY_REF)
+    assert not reaches_past_guard(env,monkeypatch)
+    owner=environment()
+    assert reaches_past_guard(owner,monkeypatch)
+
+
+def test_canary_workflow_mirrors_preflight_job_without_writes():
+    text=(ROOT/'.github/workflows/provider_canary.yml').read_text()
+    daily=(ROOT/'.github/workflows/daily_zeitgeist.yml').read_text()
+    template=daily.split('  profile-preflight:\n',1)[1].split('  studio-footer:',1)[0]
+    steps=lambda block:block.split('    runs-on: ubuntu-latest\n',1)[1]
+    assert steps(text.split('\njobs:\n',1)[1].split('\n',1)[1])==steps(template)
+    assert 'cron: "0 20 * * *"' in text and 'timezone: "America/New_York"' in text
+    assert 'workflow_dispatch:' in text and 'group: provider-canary' in text
+    assert 'contents: read' in text and 'id-token: write' in text
+    assert 'e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f' in text
+    for forbidden in ('inputs.','upload-artifact','--apply','run_zeitgeist.py','build_readme.py','contents: write'):
+        assert forbidden not in text
+
+
 @pytest.mark.parametrize('change',['missing','identity','word','local_asset','unsplash','policy'])
 def test_missing_or_divergent_authority_and_provider_metadata_fail_closed(tmp_path,monkeypatch,change):
     client,wire,env=fixture(tmp_path,monkeypatch)
