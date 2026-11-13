@@ -6,6 +6,7 @@ import copy
 from datetime import datetime, timezone
 import hashlib
 import json
+import httpx
 from types import SimpleNamespace
 
 import pytest
@@ -86,7 +87,7 @@ def test_terminal_stable_run_settles_once_and_repeat_reconciles(monkeypatch, unk
     wire.unknown_post = 1 if unknown else None
     runs = stable()
     result = hold.reconcile(wire.store, sha, fetch_run=runs, reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
-    assert result == {'status': 'applied_or_reconciled', 'actual_gross_usd': '0.0034'}
+    assert result == {'status': 'applied_or_reconciled', 'actual_gross_usd': '0.0034', 'basis': 'run_usage'}
     assert runs.calls == [hold.RUN_ID, hold.RUN_ID]
     after = wire.docs['2026-11']
     settled = after['reservations'][hold.RESERVATION_ID]
@@ -120,7 +121,7 @@ def test_terminal_stable_run_settles_once_and_repeat_reconciles(monkeypatch, unk
 def test_plan_reads_the_run_but_writes_nothing(monkeypatch):
     wire, sha, ledger, _ = setup(monkeypatch)
     result = hold.reconcile(wire.store, sha, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, now=NOW)
-    assert result == {'status': 'planned', 'actual_gross_usd': '0.0034'}
+    assert result == {'status': 'planned', 'actual_gross_usd': '0.0034', 'basis': 'run_usage'}
     assert not wire.posts and wire.docs['2026-11'] == ledger and hold.RECEIPT_ID not in wire.docs
 
 
@@ -258,9 +259,130 @@ def test_cli_prints_only_status_and_amount(monkeypatch, capsys):
     monkeypatch.setenv('SPEND_POLICY_SHA256', sha)
     assert hold.main(['--apply'], store=wire.store, fetch_run=stable(), reader_fingerprint=NEW_TOKEN) == 0
     printed = capsys.readouterr().out
-    assert json.loads(printed) == {'status': 'applied_or_reconciled', 'actual_gross_usd': '0.0034'}
+    assert json.loads(printed) == {'status': 'applied_or_reconciled', 'actual_gross_usd': '0.0034', 'basis': 'run_usage'}
     for private in (USER, OLD_TOKEN, NEW_TOKEN, hold.RUN_ID):
         assert private not in printed
+
+
+OLDEST_AFTER = '2026-11-04T01:00:00.000Z'
+
+
+class Purged:
+    def __init__(self, error=None):
+        self.calls = []
+        self.error = error
+
+    def __call__(self, run_id):
+        self.calls.append(run_id)
+        raise self.error or hold.RunNotFound()
+
+
+class Oldest:
+    def __init__(self, value=OLDEST_AFTER):
+        self.value, self.calls = value, 0
+
+    def __call__(self):
+        self.calls += 1
+        if isinstance(self.value, Exception):
+            raise self.value
+        return self.value
+
+
+def purged_expected(ledger):
+    expected = copy.deepcopy(ledger)
+    expected['reservations'][hold.RESERVATION_ID].update(status='settled', actual_gross_usd='0.16')
+    return expected
+
+
+@pytest.mark.parametrize('unknown', [False, True])
+def test_purged_run_settles_at_full_bound_once(monkeypatch, unknown):
+    wire, sha, ledger, _ = setup(monkeypatch)
+    wire.unknown_post = 1 if unknown else None
+    oldest = Oldest()
+    result = hold.reconcile(wire.store, sha, fetch_run=Purged(), oldest_retained_run_started_at=oldest,
+                            reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    assert result == {'status': 'applied_or_reconciled', 'actual_gross_usd': '0.16', 'basis': 'full_bound_purged'}
+    after = wire.docs['2026-11']
+    settled = after['reservations'][hold.RESERVATION_ID]
+    assert settled['status'] == 'settled' and settled['actual_gross_usd'] == '0.16'
+    assert 'reconciliation_required' not in after
+    receipt = settled['usage_receipt']
+    assert receipt['accounted_gross_usd'] == '0.16' and receipt['credential_fingerprint'] == NEW_TOKEN
+    assert receipt['accounting_basis'] == 'conservative_response_usage'
+    assert receipt['completion_basis'] == 'provider_record_purged_full_reserved_bound'
+    assert receipt['evidence_sha256'] == lifecycle.request_digest(
+        {'id': hold.RUN_ID, 'status': 'purged_by_provider_retention',
+         'oldest_retained_run_started_at': OLDEST_AFTER, 'reserved_gross_usd': '0.16'})
+    assert set(receipt) - {'completion_basis'} == set(lifecycle.usage_receipt(
+        SimpleNamespace(reservation_id='r', credential_fingerprint=NEW_TOKEN), 'apify', OPERATION, 'x', 'y', '1', {}))
+    stripped = {k: v for k, v in settled.items() if k not in ('billing_reference', 'usage_receipt')}
+    assert {k: v for k, v in after.items() if k != 'reservations'} == {k: v for k, v in ledger.items() if k != 'reservations'}
+    assert stripped == {**reservation(), 'status': 'settled', 'actual_gross_usd': '0.16'}
+    journal = wire.docs[hold.RECEIPT_ID]
+    assert journal['usage_receipt'] == receipt and journal['reservation_credential_fingerprint'] == OLD_TOKEN
+    again = hold.reconcile(wire.store, sha, fetch_run=FakeRuns(), apply=True, now=NOW)
+    assert again == result and len(wire.posts) == 1 and oldest.calls == 1
+
+
+@pytest.mark.parametrize('oldest', [
+    Oldest('2026-11-02T07:16:32.713319+00:00'), Oldest('2026-11-01T00:00:00Z'), Oldest(''), Oldest(None), None,
+    Oldest(RuntimeError('no retained runs')), Oldest('not a time')])
+def test_404_without_purge_proof_blocks(monkeypatch, oldest):
+    wire, sha, ledger, _ = setup(monkeypatch)
+    with pytest.raises((RuntimeError, SpendBlocked)):
+        hold.reconcile(wire.store, sha, fetch_run=Purged(), oldest_retained_run_started_at=oldest,
+                       reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    assert not wire.posts and wire.docs['2026-11'] == ledger and hold.RECEIPT_ID not in wire.docs
+
+
+@pytest.mark.parametrize('code', [401, 403, 429, 500])
+def test_other_http_error_blocks(monkeypatch, code):
+    wire, sha, ledger, _ = setup(monkeypatch)
+    request = httpx.Request('GET', 'https://api.apify.com/v2/actor-runs/' + hold.RUN_ID)
+    error = httpx.HTTPStatusError('private detail', request=request, response=httpx.Response(code, request=request))
+    oldest = Oldest()
+    with pytest.raises(httpx.HTTPStatusError):
+        hold.reconcile(wire.store, sha, fetch_run=Purged(error), oldest_retained_run_started_at=oldest,
+                       reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    assert not wire.posts and wire.docs['2026-11'] == ledger and oldest.calls == 0
+
+
+def test_found_run_still_uses_reported_usage(monkeypatch):
+    wire, sha, _, _ = setup(monkeypatch)
+    oldest = Oldest()
+    result = hold.reconcile(wire.store, sha, fetch_run=stable(), oldest_retained_run_started_at=oldest,
+                            reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    receipt = wire.docs['2026-11']['reservations'][hold.RESERVATION_ID]['usage_receipt']
+    assert result['basis'] == 'run_usage' and result['actual_gross_usd'] == '0.0034'
+    assert receipt['accounting_basis'] == 'provider_settled_cost' and 'completion_basis' not in receipt
+    assert oldest.calls == 0
+
+
+def test_apify_reads_map_404_to_not_found_and_pass_other_errors_through(monkeypatch):
+    seen = []
+    def handler(request):
+        seen.append((request.url.path, dict(request.url.params), request.headers['authorization']))
+        if request.url.path.endswith('/actor-runs'):
+            return httpx.Response(200, json={'data': {'items': [{'startedAt': OLDEST_AFTER}]}})
+        return httpx.Response(int(request.url.path.rsplit('/', 1)[1][-3:]), json={})
+    real = httpx.Client
+    monkeypatch.setattr(hold.httpx, 'Client', lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    with pytest.raises(hold.RunNotFound):
+        hold.apify_fetch('tok')('x404')
+    with pytest.raises(httpx.HTTPStatusError):
+        hold.apify_fetch('tok')('x500')
+    assert hold.apify_oldest_started_at('tok')() == OLDEST_AFTER
+    assert seen[-1][0] == '/v2/actor-runs' and seen[-1][1] == {'desc': '0', 'limit': '1'}
+    assert seen[-1][2] == 'Bearer tok'
+
+
+def test_cli_reports_the_purged_basis(monkeypatch, capsys):
+    wire, sha, _, _ = setup(monkeypatch)
+    monkeypatch.setenv('SPEND_POLICY_SHA256', sha)
+    assert hold.main(['--apply'], store=wire.store, fetch_run=Purged(), oldest_retained_run_started_at=Oldest(),
+                     reader_fingerprint=NEW_TOKEN) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        'status': 'applied_or_reconciled', 'actual_gross_usd': '0.16', 'basis': 'full_bound_purged'}
 
 
 def test_no_literal_dollar_sign_in_the_tool_or_its_tests():

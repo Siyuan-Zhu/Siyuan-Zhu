@@ -7,7 +7,9 @@ usage cycle rolls over. This reads the same authenticated run twice, requires a
 terminal, stable cost inside the reserved bound for the verified account, and
 settles through the unchanged shared admission rule (admit_usage_receipt), which
 binds the receipt to the ledger account's current credential. The reservation's
-own creation facts stay as created. One conditional commit writes the ledger and a
+own creation facts stay as created. If Apify has purged the run (404 and the account's oldest
+retained run began after the hold was created) the cost can never be proven, so the full
+reserved bound is booked with conservative accounting. One conditional commit writes the ledger and a
 durable receipt; a repeated or uncertain dispatch reconciles from that receipt.
 """
 import argparse
@@ -22,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import httpx
 from src.state_store import _commit_documents, PublicationOutcomeUnknown
 from src.zeitgeist import provider_lifecycle as lifecycle
-from src.zeitgeist.automatic_spend import admit_usage_receipt, digest, validate_policy
+from src.zeitgeist.automatic_spend import _time, admit_usage_receipt, digest, validate_policy
 from src.zeitgeist.automatic_spend_runtime import PrivateFirestoreStore
 
 RESERVATION_ID = 'c14e610a08cb4b15b0ef19bc2e667849'
@@ -32,14 +34,21 @@ MAX = '0.16'
 RECEIPT_ID = 'apify_hold_reconcile_20261102'
 MONTH = '2026-11'
 OPERATION = 'instagram-post-scraper'
+PURGED_BASIS = 'provider_record_purged_full_reserved_bound'
+PURGED_STATUS = 'purged_by_provider_retention'
+
+
+class RunNotFound(Exception):
+    """Apify answered 404 for the run itself (not any other HTTP failure)."""
 
 
 def _reference(receipt):
     return 'provider_usage_v1:' + digest({k: v for k, v in receipt.items() if k != 'observed_at'})
 
 
-def _result(status, amount):
-    return {'status': status, 'actual_gross_usd': amount}
+def _result(status, amount, receipt):
+    basis = 'full_bound_purged' if receipt.get('completion_basis') == PURGED_BASIS else 'run_usage'
+    return {'status': status, 'actual_gross_usd': amount, 'basis': basis}
 
 
 def _reconciled(prior, ledger, status):
@@ -53,7 +62,7 @@ def _reconciled(prior, ledger, status):
             or record.get('actual_gross_usd') != prior.get('actual_gross_usd')
             or receipt.get('accounted_gross_usd') != prior.get('actual_gross_usd')):
         raise RuntimeError('Hold receipt requires reconciliation')
-    return _result(status, prior['actual_gross_usd'])
+    return _result(status, prior['actual_gross_usd'], receipt)
 
 
 def _check_reservation(record):
@@ -67,6 +76,16 @@ def _check_reservation(record):
     metadata = record.get('submission_metadata') or {}
     if not metadata.get('user_id') or not metadata.get('build'):
         raise RuntimeError('Reservation submission metadata lacks the account or build pin')
+
+
+def _purge_proof(oldest_retained_run_started_at):
+    """The account's oldest retained run began after this hold was created."""
+    if oldest_retained_run_started_at is None:
+        raise RuntimeError('Run is missing and retention cannot be proven')
+    oldest = oldest_retained_run_started_at()
+    if not isinstance(oldest, str) or not oldest or _time(oldest) <= _time(CREATED_AT):
+        raise RuntimeError('Run is missing but retention does not cover the hold')
+    return oldest
 
 
 def _confirmed_cost(policy, record, first, second):
@@ -88,7 +107,8 @@ def _confirmed_cost(policy, record, first, second):
     return cost
 
 
-def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, apply=False, now=None):
+def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, oldest_retained_run_started_at=None,
+              apply=False, now=None):
     now = now or datetime.now(timezone.utc)
     policy = store.read('policy_' + policy_sha).to_dict()
     validate_policy(policy, policy_sha, now)
@@ -105,10 +125,22 @@ def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, apply=Fa
     if (not reader_fingerprint
             or reader_fingerprint != ledger['providers']['apify'].get('credential_fingerprint')):
         raise RuntimeError('Reading credential is not the ledger account credential')
-    first = fetch_run(RUN_ID)
-    second = fetch_run(RUN_ID)
-    cost = _confirmed_cost(policy, record, first, second)
-    evidence = {key: second.get(key) for key in ('id', 'status', 'usageTotalUsd', 'finishedAt')}
+    try:
+        first = fetch_run(RUN_ID)
+    except RunNotFound:
+        # Provider retention deleted the run: the cost can never be proven, so book the full bound.
+        oldest = _purge_proof(oldest_retained_run_started_at)
+        cost = Decimal(MAX)
+        evidence = {'id': RUN_ID, 'status': PURGED_STATUS, 'oldest_retained_run_started_at': oldest,
+                    'reserved_gross_usd': MAX}
+        basis = {'accounting_basis': 'conservative_response_usage', 'completion_basis': PURGED_BASIS}
+        facts = {'run_status': PURGED_STATUS, 'oldest_retained_run_started_at': oldest}
+    else:
+        second = fetch_run(RUN_ID)
+        cost = _confirmed_cost(policy, record, first, second)
+        evidence = {key: second.get(key) for key in ('id', 'status', 'usageTotalUsd', 'finishedAt')}
+        basis = {'accounting_basis': 'provider_settled_cost'}
+        facts = {'run_status': str(second['status']), 'finished_at': str(second['finishedAt'])}
     receipt = {
         'schema_version': 1, 'accounting_policy': 'provider_usage_v1',
         'reservation_id': RESERVATION_ID, 'provider': 'apify', 'operation': record['operation'],
@@ -117,8 +149,7 @@ def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, apply=Fa
         'credential_fingerprint': ledger['providers']['apify']['credential_fingerprint'],
         'provider_request_id': RUN_ID, 'request_sha256': record['request_sha256'],
         'observed_at': now.isoformat(), 'accounted_gross_usd': str(cost),
-        'accounting_basis': 'provider_settled_cost',
-        'evidence_sha256': lifecycle.request_digest(evidence)}
+        'evidence_sha256': lifecycle.request_digest(evidence), **basis}
     after = admit_usage_receipt(ledger, policy, receipt, expected_policy_sha=policy_sha, now=now)
     untouched = {key: value for key, value in after.items() if key != 'reservations'}
     others = {key: value for key, value in after['reservations'].items() if key != RESERVATION_ID}
@@ -129,8 +160,7 @@ def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, apply=Fa
     amount = after['reservations'][RESERVATION_ID]['actual_gross_usd']
     document = {'schema_version': 1, 'reservation_id': RESERVATION_ID, 'run_id': RUN_ID, 'month': MONTH,
                 'policy_sha256': policy_sha, 'observed_at': receipt['observed_at'],
-                'reservation_credential_fingerprint': record['credential_fingerprint'],
-                'run_status': str(second['status']), 'finished_at': str(second['finishedAt']),
+                'reservation_credential_fingerprint': record['credential_fingerprint'], **facts,
                 'actual_gross_usd': amount, 'usage_receipt': receipt,
                 'before_sha256': digest(ledger), 'after_sha256': digest(after)}
     if apply:
@@ -141,28 +171,44 @@ def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, apply=Fa
             pass
         if journal.get().to_dict() != document or store.read(MONTH).to_dict() != after:
             raise RuntimeError('Hold outcome unresolved; read before any further action')
-    return _result(status, amount)
+    return _result(status, amount, receipt)
 
 
 def apify_fetch(token):
     def fetch_run(run_id):
         with httpx.Client(follow_redirects=False, timeout=20) as client:
-            return lifecycle._run_body(client.get(
-                'https://api.apify.com/v2/actor-runs/' + run_id,
-                headers={'Authorization': 'Bearer ' + token}))
+            response = client.get('https://api.apify.com/v2/actor-runs/' + run_id,
+                                  headers={'Authorization': 'Bearer ' + token})
+            if response.status_code == 404:
+                raise RunNotFound()
+            return lifecycle._run_body(response)
     return fetch_run
 
 
-def main(argv=None, *, store=None, fetch_run=None, reader_fingerprint=None):
+def apify_oldest_started_at(token):
+    def oldest():
+        with httpx.Client(follow_redirects=False, timeout=20) as client:
+            items = lifecycle._run_body(client.get(
+                'https://api.apify.com/v2/actor-runs', params={'desc': '0', 'limit': '1'},
+                headers={'Authorization': 'Bearer ' + token})).get('items')
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            raise RuntimeError('No retained Apify run to prove retention')
+        return items[0].get('startedAt')
+    return oldest
+
+
+def main(argv=None, *, store=None, fetch_run=None, reader_fingerprint=None, oldest_retained_run_started_at=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args(argv)
     if fetch_run is None:
         token = os.environ['APIFY_TOKEN']
         fetch_run = apify_fetch(token)
+        oldest_retained_run_started_at = apify_oldest_started_at(token)
         reader_fingerprint = hashlib.sha256(token.encode()).hexdigest()[:16]
     result = reconcile(store or PrivateFirestoreStore(), os.environ['SPEND_POLICY_SHA256'],
-                       fetch_run=fetch_run, reader_fingerprint=reader_fingerprint, apply=args.apply)
+                       fetch_run=fetch_run, reader_fingerprint=reader_fingerprint,
+                       oldest_retained_run_started_at=oldest_retained_run_started_at, apply=args.apply)
     print(json.dumps(result))
     return 0
 
