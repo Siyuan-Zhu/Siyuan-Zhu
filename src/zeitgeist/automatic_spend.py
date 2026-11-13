@@ -203,9 +203,16 @@ def _rebind_credential(ledger, provider, account, pinned, fresh, observed_at):
     if (provider not in REBINDABLE_CREDENTIALS or not re.fullmatch('[a-f0-9]{16}', token)
             or not verified_account or fresh.get('account_fingerprint') != verified_account):
         raise SpendBlocked('Provider metadata or credential binding failed')
-    if any(record.get('provider') == provider and not _known(record)
-           for record in ledger.get('reservations', {}).values()):
-        raise SpendBlocked('Credential change waits until open requests for this provider settle')
+    # A request created within the provider's maximum duration may still be in flight under
+    # the old token. Older unsettled holds stay reserved at their full bound, bound to the old
+    # token (conservative), and need separate reconciliation; they cannot be in flight.
+    in_flight_after = _time(observed_at) - timedelta(seconds=int(account['max_request_duration_seconds']))
+    for record in ledger.get('reservations', {}).values():
+        if record.get('provider') != provider or _known(record):
+            continue
+        created = record.get('created_at')
+        if not created or _time(created) > in_flight_after:
+            raise SpendBlocked('Credential change waits until open requests for this provider settle')
     account.setdefault('credential_rebinds', []).append(
         {'from': account['credential_fingerprint'], 'to': token, 'at': observed_at})
     account['credential_fingerprint'] = token

@@ -434,3 +434,30 @@ def test_settled_apify_history_does_not_block_a_rebind_and_both_rebinds_are_kept
     obs2=copy.deepcopy(obs); obs2['apify']['credential_fingerprint']='9'*16
     second=refresh(first,policy,obs2)
     assert [r['to'] for r in second['providers']['apify']['credential_rebinds']]==['f'*16,'9'*16]
+
+
+def stale_apify_hold(**changes):
+    record=dict(hold('apify','.16'),created_at=(NOW-timedelta(days=11)).isoformat(),
+        provider_request_id='stale-run',credential_fingerprint='c'*16)
+    record.update(changes)
+    return record
+
+
+def test_a_stale_unsettled_apify_hold_stays_held_at_full_bound_and_does_not_block_a_rebind():
+    """2026-11-13: a never-settled Nov 2 request (cannot still be in flight) blocked the re-bind."""
+    ledger,policy,obs=fixtures()
+    ledger['reservations']['stale']=stale_apify_hold()
+    obs['apify']['credential_fingerprint']='f'*16
+    after=refresh(ledger,policy,obs)
+    assert after['providers']['apify']['credential_fingerprint']=='f'*16
+    assert after['reservations']['stale']==ledger['reservations']['stale']
+
+
+@pytest.mark.parametrize('created',['recent','missing'])
+def test_a_possibly_in_flight_apify_hold_still_blocks_a_rebind(created):
+    ledger,policy,obs=fixtures()
+    record=stale_apify_hold(created_at=(NOW-timedelta(seconds=299)).isoformat())
+    if created=='missing': record.pop('created_at')
+    ledger['reservations']['open']=record
+    obs['apify']['credential_fingerprint']='f'*16
+    with pytest.raises(SpendBlocked,match='open requests'): refresh(ledger,policy,obs)
