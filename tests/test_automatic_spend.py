@@ -461,3 +461,101 @@ def test_a_possibly_in_flight_apify_hold_still_blocks_a_rebind(created):
     ledger['reservations']['open']=record
     obs['apify']['credential_fingerprint']='f'*16
     with pytest.raises(SpendBlocked,match='open requests'): refresh(ledger,policy,obs)
+
+
+# Gemini price check: compare the rates in effect, not the hash of the whole pricing page.
+PRICE_BLOCK='Primary price snapshot changed, stale or missing'
+
+
+def contract_for(*, through='2026-12-31', rates=('0.30','2.50'), op=OP, **extra):
+    operation={'input_token_usd_per_million':rates[0],'output_token_usd_per_million':rates[1],
+               'published_current_rate_through_date':through}
+    operation.update(extra)
+    return {'operations':{op:operation}}
+
+
+def observe_contract(obs, contract, **overrides):
+    snapshot=obs['price_snapshots']['gemini']
+    snapshot.update(sha256=auto.digest(contract),contract=contract)
+    snapshot.update(overrides)
+
+
+def test_future_rate_announcement_passes_and_is_recorded():
+    ledger,policy,obs=fixtures()
+    contract=contract_for(future_input_token_usd_per_million='0.50',future_output_token_usd_per_million='4.00',
+                          future_rate_effective_date='2027-01-01')
+    observe_contract(obs,contract)
+    assert obs['price_snapshots']['gemini']['sha256']!=policy['providers']['gemini']['price_snapshot_sha256']
+    account=refresh(ledger,policy,obs)['providers']['gemini']
+    assert account['price_observed_sha256']==auto.digest(contract)
+    assert account['price_observed_at']==NOW.isoformat()
+
+
+def test_unchanged_pinned_hash_does_not_record_a_rate_observation():
+    ledger,policy,obs=fixtures()
+    account=refresh(ledger,policy,obs)['providers']['gemini']
+    assert 'price_observed_sha256' not in account and 'price_observed_at' not in account
+
+
+def test_lower_current_rate_passes():
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=('0.25','2.00')))
+    assert refresh(ledger,policy,obs)['providers']['gemini']['price_observed_at']==NOW.isoformat()
+
+
+def test_input_only_operation_without_output_rate_counts_as_zero():
+    ledger,policy,obs=fixtures()
+    contract=contract_for(billing_basis='input_tokens')
+    contract['operations'][OP].pop('output_token_usd_per_million')
+    observe_contract(obs,contract)
+    refresh(ledger,policy,obs)
+    contract=contract_for()
+    contract['operations'][OP].pop('output_token_usd_per_million')
+    observe_contract(obs,contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+@pytest.mark.parametrize('rates',[('0.31','2.50'),('0.30','2.51')])
+def test_higher_current_rate_blocks(rates):
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=rates))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_renamed_operation_blocks():
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(op='generate_content:gemini-2.5-flash-renamed'))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_rate_through_date_before_validity_blocks():
+    ledger,policy,obs=fixtures()
+    ledger['providers']['gemini']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    policy['providers']['gemini']['account']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    observe_contract(obs,contract_for(through='2026-12-30'))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+    observe_contract(obs,contract_for(through='2026-12-31'))
+    refresh(ledger,policy,obs)
+
+
+def test_contract_digest_mismatch_blocks():
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(),sha256='f'*64)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+@pytest.mark.parametrize('change',['source_url','stale'])
+def test_rate_comparison_still_requires_the_pinned_source_and_fresh_observation(change):
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for())
+    if change=='source_url': obs['price_snapshots']['gemini']['source_url']='https://ai.google.dev/other'
+    if change=='stale': obs['price_snapshots']['gemini']['observed_at']=(NOW-timedelta(hours=25)).isoformat()
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_bfl_tariff_change_still_blocks():
+    ledger,policy,obs=fixtures()
+    contract=contract_for()
+    obs['price_snapshots']['bfl'].update(sha256=auto.digest(contract),contract=contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)

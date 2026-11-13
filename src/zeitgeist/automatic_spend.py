@@ -6,7 +6,8 @@ reviewed operation. API observation times never replace manual evidence times.
 """
 from __future__ import annotations
 import copy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
@@ -60,6 +61,44 @@ def digest(value):
 
 def _time(value):
     return BudgetGuard._timestamp(value)
+
+
+def gemini_rates_within_approval(account, pinned, price, now):
+    """True when Gemini's published current rates do not exceed the approved rates.
+
+    The hash of the whole pricing page changes with wording and announced future
+    rates; only the rates in effect matter. Equal or lower rates pass, any increase
+    or missing operation blocks. Fields prefixed future_ are never read.
+    """
+    try:
+        contract = price.get('contract')
+        if (not isinstance(contract, dict) or price.get('sha256') != digest(contract) or
+                price.get('source_url') != pinned['price_source_url'] or
+                not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24)):
+            return False
+        published = contract['operations']
+        limits = account.get('request_limits', {})
+        for operation in set(limits) | set(account.get('operation_caps_usd', {})):
+            observed = published.get(operation)
+            if not isinstance(observed, dict):
+                return False
+            approved = limits.get(operation, {})
+            for key in ('input_token_usd_per_million', 'output_token_usd_per_million'):
+                rate = observed.get(key)
+                # Input-only operations (embeddings) publish no output rate: that is zero.
+                if rate is None and key == 'output_token_usd_per_million' and observed.get('billing_basis') == 'input_tokens':
+                    rate = '0'
+                if key in approved:
+                    rate, ceiling = Decimal(str(rate)), Decimal(str(approved[key]))
+                    if not rate.is_finite() or not ceiling.is_finite() or rate > ceiling:
+                        return False
+            if approved.get('pricing_valid_until') is not None:
+                through = date.fromisoformat(observed['published_current_rate_through_date'])
+                if through < _time(approved['pricing_valid_until']).date():
+                    return False
+        return True
+    except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError, SpendBlocked):
+        return False
 
 
 def validate_policy(policy, expected_policy_sha, now):
@@ -250,7 +289,11 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
         if pinned['price_evidence_mode'] == 'dynamic_snapshot':
             price = observation.get('price_snapshots', {}).get(provider, {})
             if price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
-                raise SpendBlocked('Primary price snapshot changed, stale or missing')
+                # Gemini edits its pricing page without changing rates: compare the rates in effect.
+                if provider != 'gemini' or not gemini_rates_within_approval(account, pinned, price, now):
+                    raise SpendBlocked('Primary price snapshot changed, stale or missing')
+                account['price_observed_sha256'] = price['sha256']
+                account['price_observed_at'] = price['observed_at']
         baseline = money(account['credit_baseline_usd'])
         confirmed = _confirmed(candidate, provider)
         if provider == 'gemini':
