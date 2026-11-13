@@ -26,7 +26,7 @@ FINISHED = '2026-11-02T07:18:00.000Z'
 
 def run_body(**changes):
     body = {'id': hold.RUN_ID, 'userId': USER, 'actId': lifecycle.APIFY_ACTOR_ID,
-            'status': 'SUCCEEDED', 'finishedAt': FINISHED, 'usageTotalUsd': 0.0034,
+            'status': 'SUCCEEDED', 'buildNumber': '0.0.648', 'finishedAt': FINISHED, 'usageTotalUsd': 0.0034,
             'chargedEventCounts': {'post': 2}, 'accountedChargedEventCounts': {'post': 2}}
     body.update(changes)
     return body
@@ -85,7 +85,7 @@ def test_terminal_stable_run_settles_once_and_repeat_reconciles(monkeypatch, unk
     wire, sha, ledger, policy = setup(monkeypatch)
     wire.unknown_post = 1 if unknown else None
     runs = stable()
-    result = hold.reconcile(wire.store, sha, fetch_run=runs, apply=True, now=NOW)
+    result = hold.reconcile(wire.store, sha, fetch_run=runs, reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert result == {'status': 'applied_or_reconciled', 'actual_gross_usd': '0.0034'}
     assert runs.calls == [hold.RUN_ID, hold.RUN_ID]
     after = wire.docs['2026-11']
@@ -111,14 +111,15 @@ def test_terminal_stable_run_settles_once_and_repeat_reconciles(monkeypatch, unk
         {'id': hold.RUN_ID, 'status': 'SUCCEEDED', 'usageTotalUsd': 0.0034, 'finishedAt': FINISHED})
     journal = wire.docs[hold.RECEIPT_ID]
     assert journal['usage_receipt'] == receipt and journal['reservation_id'] == hold.RESERVATION_ID
+    assert journal['reservation_credential_fingerprint'] == OLD_TOKEN
     # Repeat or uncertain dispatch reconciles from the durable receipt: no new read, no new write.
-    again = hold.reconcile(wire.store, sha, fetch_run=FakeRuns(), apply=True, now=NOW)
+    again = hold.reconcile(wire.store, sha, fetch_run=FakeRuns(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert again == result and len(wire.posts) == 1
 
 
 def test_plan_reads_the_run_but_writes_nothing(monkeypatch):
     wire, sha, ledger, _ = setup(monkeypatch)
-    result = hold.reconcile(wire.store, sha, fetch_run=stable(), now=NOW)
+    result = hold.reconcile(wire.store, sha, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, now=NOW)
     assert result == {'status': 'planned', 'actual_gross_usd': '0.0034'}
     assert not wire.posts and wire.docs['2026-11'] == ledger and hold.RECEIPT_ID not in wire.docs
 
@@ -131,7 +132,7 @@ def test_plan_reads_the_run_but_writes_nothing(monkeypatch):
 def test_preliminary_cost_does_not_settle(monkeypatch, second):
     wire, sha, ledger, _ = setup(monkeypatch)
     with pytest.raises(RuntimeError, match='cost|terminal'):
-        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(run_body(), second), apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(run_body(), second), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert not wire.posts and wire.docs['2026-11'] == ledger
 
 
@@ -143,8 +144,40 @@ def test_preliminary_cost_does_not_settle(monkeypatch, second):
 def test_other_account_run_blocks(monkeypatch, bodies):
     wire, sha, ledger, _ = setup(monkeypatch)
     with pytest.raises((RuntimeError, ValueError)):
-        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(*bodies), apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(*bodies), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert not wire.posts and wire.docs['2026-11'] == ledger
+
+
+def test_run_on_unverified_build_blocks(monkeypatch):
+    wire, sha, ledger, _ = setup(monkeypatch)
+    other = run_body(buildNumber='0.0.1')
+    with pytest.raises(ValueError, match='build'):
+        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(other, other), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    missing = run_body(buildNumber=None)
+    with pytest.raises(ValueError, match='build'):
+        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(missing, missing), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    assert not wire.posts and wire.docs['2026-11'] == ledger
+
+
+@pytest.mark.parametrize('metadata', [
+    {'actor_id': lifecycle.APIFY_ACTOR_ID, 'build': '0.0.648'},
+    {'actor_id': lifecycle.APIFY_ACTOR_ID, 'build': '0.0.648', 'user_id': ''},
+    {'actor_id': lifecycle.APIFY_ACTOR_ID, 'user_id': USER}, {}])
+def test_missing_submission_user_id_blocks(monkeypatch, metadata):
+    wire, sha, ledger, _ = setup(monkeypatch, submission_metadata=metadata)
+    runs = stable()
+    with pytest.raises(RuntimeError, match='submission'):
+        hold.reconcile(wire.store, sha, fetch_run=runs, reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    assert not wire.posts and not runs.calls
+
+
+@pytest.mark.parametrize('reader', [OLD_TOKEN, 'e' * 16, '', None])
+def test_reader_token_must_be_the_current_credential(monkeypatch, reader):
+    wire, sha, ledger, _ = setup(monkeypatch)
+    runs = stable()
+    with pytest.raises(RuntimeError, match='credential'):
+        hold.reconcile(wire.store, sha, fetch_run=runs, reader_fingerprint=reader, apply=True, now=NOW)
+    assert not wire.posts and not runs.calls and wire.docs['2026-11'] == ledger
 
 
 def test_policy_account_fingerprint_must_match_the_run_owner(monkeypatch):
@@ -155,7 +188,7 @@ def test_policy_account_fingerprint_must_match_the_run_owner(monkeypatch):
     wire.versions['policy_' + changed] = 1
     wire.docs['2026-11']['automatic_policy_sha256'] = changed
     with pytest.raises(RuntimeError, match='account'):
-        hold.reconcile(wire.store, changed, fetch_run=stable(), apply=True, now=NOW)
+        hold.reconcile(wire.store, changed, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert not wire.posts
 
 
@@ -166,7 +199,7 @@ def test_changed_reservation_blocks(monkeypatch, change):
     wire, sha, ledger, _ = setup(monkeypatch, **change)
     runs = stable()
     with pytest.raises((RuntimeError, SpendBlocked)):
-        hold.reconcile(wire.store, sha, fetch_run=runs, apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=runs, reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert not wire.posts and not runs.calls
 
 
@@ -174,7 +207,7 @@ def test_missing_reservation_blocks(monkeypatch):
     wire, sha, _, _ = setup(monkeypatch)
     wire.docs['2026-11']['reservations'] = {}
     with pytest.raises(RuntimeError):
-        hold.reconcile(wire.store, sha, fetch_run=stable(), apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert not wire.posts
 
 
@@ -182,14 +215,14 @@ def test_cost_above_bound_blocks(monkeypatch):
     wire, sha, ledger, _ = setup(monkeypatch)
     runs = FakeRuns(run_body(usageTotalUsd=0.17), run_body(usageTotalUsd=0.17))
     with pytest.raises(RuntimeError, match='bound'):
-        hold.reconcile(wire.store, sha, fetch_run=runs, apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=runs, reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert not wire.posts and wire.docs['2026-11'] == ledger
 
 
 def test_cost_exactly_at_the_bound_settles(monkeypatch):
     wire, sha, _, _ = setup(monkeypatch)
     runs = FakeRuns(run_body(usageTotalUsd='0.16'), run_body(usageTotalUsd='0.16'))
-    assert hold.reconcile(wire.store, sha, fetch_run=runs, apply=True, now=NOW)['actual_gross_usd'] == '0.16'
+    assert hold.reconcile(wire.store, sha, fetch_run=runs, reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)['actual_gross_usd'] == '0.16'
     assert 'reconciliation_required' not in wire.docs['2026-11']
 
 
@@ -197,9 +230,9 @@ def test_dispatch_that_never_landed_is_unresolved_then_retries_cleanly(monkeypat
     wire, sha, ledger, _ = setup(monkeypatch)
     wire.unknown_before_post = 1
     with pytest.raises(RuntimeError, match='unresolved'):
-        hold.reconcile(wire.store, sha, fetch_run=stable(), apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert wire.docs['2026-11'] == ledger and hold.RECEIPT_ID not in wire.docs
-    assert hold.reconcile(wire.store, sha, fetch_run=stable(), apply=True, now=NOW)['actual_gross_usd'] == '0.0034'
+    assert hold.reconcile(wire.store, sha, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)['actual_gross_usd'] == '0.0034'
 
 
 def test_ledger_changed_between_read_and_commit_is_refused(monkeypatch):
@@ -208,22 +241,22 @@ def test_ledger_changed_between_read_and_commit_is_refused(monkeypatch):
         w.versions['2026-11'] += 1
     wire.before_post = touch
     with pytest.raises(Exception):
-        hold.reconcile(wire.store, sha, fetch_run=stable(), apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     assert wire.docs['2026-11']['reservations'][hold.RESERVATION_ID]['status'] == 'reserved'
 
 
 def test_receipt_that_disagrees_with_the_ledger_blocks_instead_of_reporting_success(monkeypatch):
     wire, sha, _, _ = setup(monkeypatch)
-    hold.reconcile(wire.store, sha, fetch_run=stable(), apply=True, now=NOW)
+    hold.reconcile(wire.store, sha, fetch_run=stable(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
     wire.docs['2026-11']['reservations'][hold.RESERVATION_ID]['actual_gross_usd'] = '0.16'
     with pytest.raises(RuntimeError, match='reconciliation'):
-        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(), apply=True, now=NOW)
+        hold.reconcile(wire.store, sha, fetch_run=FakeRuns(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
 
 
 def test_cli_prints_only_status_and_amount(monkeypatch, capsys):
     wire, sha, _, _ = setup(monkeypatch)
     monkeypatch.setenv('SPEND_POLICY_SHA256', sha)
-    assert hold.main(['--apply'], store=wire.store, fetch_run=stable()) == 0
+    assert hold.main(['--apply'], store=wire.store, fetch_run=stable(), reader_fingerprint=NEW_TOKEN) == 0
     printed = capsys.readouterr().out
     assert json.loads(printed) == {'status': 'applied_or_reconciled', 'actual_gross_usd': '0.0034'}
     for private in (USER, OLD_TOKEN, NEW_TOKEN, hold.RUN_ID):

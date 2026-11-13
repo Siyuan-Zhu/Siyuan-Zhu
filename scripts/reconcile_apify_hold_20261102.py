@@ -63,12 +63,16 @@ def _check_reservation(record):
             or record.get('credit_excluded') or record.get('billing_reference')
             or 'usage_receipt' in record or 'actual_gross_usd' in record):
         raise RuntimeError('Reservation differs from the reviewed stale hold')
+    # The submission's own account and build are the pins; an absent pin is never a skipped check.
+    metadata = record.get('submission_metadata') or {}
+    if not metadata.get('user_id') or not metadata.get('build'):
+        raise RuntimeError('Reservation submission metadata lacks the account or build pin')
 
 
 def _confirmed_cost(policy, record, first, second):
     metadata = record.get('submission_metadata') or {}
     for run in (first, second):
-        lifecycle._run_identity(run, run_id=RUN_ID, user_id=metadata.get('user_id'))
+        lifecycle._run_identity(run, run_id=RUN_ID, user_id=metadata['user_id'], build=metadata['build'])
         if run.get('status') not in lifecycle.APIFY_TERMINAL:
             raise RuntimeError('Apify run is not terminal')
         owner = hashlib.sha256(run['userId'].encode()).hexdigest()[:16]
@@ -84,7 +88,7 @@ def _confirmed_cost(policy, record, first, second):
     return cost
 
 
-def reconcile(store, policy_sha, *, fetch_run, apply=False, now=None):
+def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, apply=False, now=None):
     now = now or datetime.now(timezone.utc)
     policy = store.read('policy_' + policy_sha).to_dict()
     validate_policy(policy, policy_sha, now)
@@ -97,6 +101,10 @@ def reconcile(store, policy_sha, *, fetch_run, apply=False, now=None):
         return _reconciled(prior.to_dict(), ledger, status)
     record = ledger.get('reservations', {}).get(RESERVATION_ID)
     _check_reservation(record)
+    # The receipt claims the ledger's current credential; the token that reads the run must be it.
+    if (not reader_fingerprint
+            or reader_fingerprint != ledger['providers']['apify'].get('credential_fingerprint')):
+        raise RuntimeError('Reading credential is not the ledger account credential')
     first = fetch_run(RUN_ID)
     second = fetch_run(RUN_ID)
     cost = _confirmed_cost(policy, record, first, second)
@@ -121,6 +129,7 @@ def reconcile(store, policy_sha, *, fetch_run, apply=False, now=None):
     amount = after['reservations'][RESERVATION_ID]['actual_gross_usd']
     document = {'schema_version': 1, 'reservation_id': RESERVATION_ID, 'run_id': RUN_ID, 'month': MONTH,
                 'policy_sha256': policy_sha, 'observed_at': receipt['observed_at'],
+                'reservation_credential_fingerprint': record['credential_fingerprint'],
                 'run_status': str(second['status']), 'finished_at': str(second['finishedAt']),
                 'actual_gross_usd': amount, 'usage_receipt': receipt,
                 'before_sha256': digest(ledger), 'after_sha256': digest(after)}
@@ -144,12 +153,16 @@ def apify_fetch(token):
     return fetch_run
 
 
-def main(argv=None, *, store=None, fetch_run=None):
+def main(argv=None, *, store=None, fetch_run=None, reader_fingerprint=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args(argv)
+    if fetch_run is None:
+        token = os.environ['APIFY_TOKEN']
+        fetch_run = apify_fetch(token)
+        reader_fingerprint = hashlib.sha256(token.encode()).hexdigest()[:16]
     result = reconcile(store or PrivateFirestoreStore(), os.environ['SPEND_POLICY_SHA256'],
-                       fetch_run=fetch_run or apify_fetch(os.environ['APIFY_TOKEN']), apply=args.apply)
+                       fetch_run=fetch_run, reader_fingerprint=reader_fingerprint, apply=args.apply)
     print(json.dumps(result))
     return 0
 
