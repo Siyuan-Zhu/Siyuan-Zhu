@@ -68,7 +68,7 @@ jobs:
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
-          SPEND_POLICY_SHA256: "5a5e5fd1a04688a0870c321906bc3eea00713fe8110865249d52df1bff0f2aaf"
+          SPEND_POLICY_SHA256: "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
           ZEITGEIST_LIVE_LLM: "1"
           ZEITGEIST_LIVE_COLLECT: "1"
           ZEITGEIST_LIVE_UNSPLASH: "1"
@@ -184,7 +184,7 @@ jobs:
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
-          SPEND_POLICY_SHA256: "5a5e5fd1a04688a0870c321906bc3eea00713fe8110865249d52df1bff0f2aaf"
+          SPEND_POLICY_SHA256: "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
           ZEITGEIST_LIVE_LLM: "1"
           ZEITGEIST_LIVE_COLLECT: "1"
           ZEITGEIST_LIVE_UNSPLASH: "1"
