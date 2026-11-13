@@ -49,7 +49,11 @@ class EditionExecution:
                 raise RuntimeError('Another edition claim is active')
             if prior['stage']=='blocked' and prior.get('source_revision')==source_revision:
                 raise RuntimeError('Deterministic failure already recorded for this source revision')
-            if prior.get('attempt',0)>=3:raise RuntimeError('Edition attempt bound reached; inspect before recovery')
+            # The bound caps attempts that may reach paid inference. Spend maintenance runs
+            # before any provider call, so its block (with a new source revision) never counts.
+            pre_inference=prior['stage']=='blocked' and prior.get('failure_category')=='spend_maintenance'
+            if prior.get('attempt',0)>=3 and not pre_inference:
+                raise RuntimeError('Edition attempt bound reached; inspect before recovery')
         value={'schema_version':1,'edition_date':self.edition,'owner':self.owner,
             'source_revision':source_revision,'trigger':trigger,'stage':'preflight',
             'attempt':prior.get('attempt',0)+1,'started_at':now.isoformat(),

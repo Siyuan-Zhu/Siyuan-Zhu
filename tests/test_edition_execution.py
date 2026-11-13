@@ -83,3 +83,30 @@ def test_director_timeout_never_repeats_paid_call():
     with pytest.raises(TimeoutError):
         commission_daily_zeitgeist(top_clusters=[],history_words_30d=[],llm_callable=timeout)
     assert len(calls)==1
+
+
+def at_bound(monkeypatch, failure_category):
+    memory,a,b=claim(monkeypatch)
+    memory.value.update(stage='blocked',failure_category=failure_category,attempt=3,
+                        lease_until=(NOW+timedelta(minutes=20)).isoformat())
+    return memory,b
+
+
+def test_pre_inference_spend_maintenance_blocks_do_not_exhaust_the_attempt_bound(monkeypatch):
+    """2026-11-13: three spend-maintenance blocks (no provider call) exhausted the edition."""
+    memory,b=at_bound(monkeypatch,'spend_maintenance')
+    b.claim(now=NOW+timedelta(minutes=21),source_revision='fixed',trigger='workflow_dispatch')
+    assert memory.value['stage']=='preflight' and memory.value['attempt']==4
+
+
+@pytest.mark.parametrize('category',['pricing','generation','freshness'])
+def test_other_failures_still_stop_at_the_attempt_bound(monkeypatch,category):
+    memory,b=at_bound(monkeypatch,category)
+    with pytest.raises(RuntimeError,match='attempt bound'):
+        b.claim(now=NOW+timedelta(minutes=21),source_revision='fixed',trigger='workflow_dispatch')
+
+
+def test_a_spend_maintenance_block_still_needs_a_new_source_revision(monkeypatch):
+    memory,b=at_bound(monkeypatch,'spend_maintenance')
+    with pytest.raises(RuntimeError,match='Deterministic failure'):
+        b.claim(now=NOW+timedelta(minutes=21),source_revision='abc',trigger='workflow_dispatch')
