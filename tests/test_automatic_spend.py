@@ -471,7 +471,8 @@ def contract_for(*, through='2026-12-31', rates=('0.30','2.50'), op=OP, **extra)
     operation={'input_token_usd_per_million':rates[0],'output_token_usd_per_million':rates[1],
                'published_current_rate_through_date':through}
     operation.update(extra)
-    return {'operations':{op:operation}}
+    return {'schema_version':2,'provider':'gemini','api':'gemini_developer_api','currency':'USD',
+            'service_tier':'paid_standard','unit':'1000000_tokens','operations':{op:operation}}
 
 
 def observe_contract(obs, contract, **overrides):
@@ -503,12 +504,8 @@ def test_lower_current_rate_passes():
     assert refresh(ledger,policy,obs)['providers']['gemini']['price_observed_at']==NOW.isoformat()
 
 
-def test_input_only_operation_without_output_rate_counts_as_zero():
+def test_generation_operation_without_published_output_rate_blocks():
     ledger,policy,obs=fixtures()
-    contract=contract_for(billing_basis='input_tokens')
-    contract['operations'][OP].pop('output_token_usd_per_million')
-    observe_contract(obs,contract)
-    refresh(ledger,policy,obs)
     contract=contract_for()
     contract['operations'][OP].pop('output_token_usd_per_million')
     observe_contract(obs,contract)
@@ -558,4 +555,86 @@ def test_bfl_tariff_change_still_blocks():
     ledger,policy,obs=fixtures()
     contract=contract_for()
     obs['price_snapshots']['bfl'].update(sha256=auto.digest(contract),contract=contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+EMBED='embed_content:gemini-embedding-001'
+
+
+def add_caps_only_embedding(ledger,policy,obs):
+    """An approved, budgeted operation that carries no approved rate at all."""
+    ledger['providers']['gemini']['operation_caps_usd'][EMBED]='.05'
+    policy['providers']['gemini']['account']['operation_caps_usd'][EMBED]='.05'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    obs['gemini']['available_required_models']['gemini-embedding-001']=['embedContent']
+
+
+def test_caps_only_operation_without_approved_rate_blocks():
+    ledger,policy,obs=fixtures();add_caps_only_embedding(ledger,policy,obs)
+    contract=contract_for()
+    contract['operations'][EMBED]={'input_token_usd_per_million':'9.99','billing_basis':'input_tokens'}
+    observe_contract(obs,contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+@pytest.mark.parametrize('approved',[{'input_token_usd_per_million':'0.15'},
+                                     {'input_token_usd_per_million':'0.15','output_token_usd_per_million':'0'}])
+def test_input_only_operation_passes_with_input_rate_and_absent_or_zero_output(approved):
+    ledger,policy,obs=fixtures();add_caps_only_embedding(ledger,policy,obs)
+    for target in (ledger['providers']['gemini'],policy['providers']['gemini']['account']):
+        target['request_limits'][EMBED]=dict(approved)
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    contract=contract_for()
+    contract['operations'][EMBED]={'input_token_usd_per_million':'0.15','billing_basis':'input_tokens'}
+    observe_contract(obs,contract)
+    refresh(ledger,policy,obs)
+
+
+def test_input_only_operation_with_nonzero_approved_output_or_without_input_blocks():
+    for approved in ({'input_token_usd_per_million':'0.15','output_token_usd_per_million':'1'},
+                     {'output_token_usd_per_million':'0'}):
+        ledger,policy,obs=fixtures();add_caps_only_embedding(ledger,policy,obs)
+        for target in (ledger['providers']['gemini'],policy['providers']['gemini']['account']):
+            target['request_limits'][EMBED]=dict(approved)
+        ledger['automatic_policy_sha256']=auto.digest(policy)
+        contract=contract_for()
+        contract['operations'][EMBED]={'input_token_usd_per_million':'0.15','billing_basis':'input_tokens'}
+        observe_contract(obs,contract)
+        with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_generation_operation_without_approved_output_rate_blocks():
+    ledger,policy,obs=fixtures()
+    for target in (ledger['providers']['gemini'],policy['providers']['gemini']['account']):
+        target['request_limits'][OP].pop('output_token_usd_per_million')
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    observe_contract(obs,contract_for())
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+@pytest.mark.parametrize('field,value',[('unit','1000_tokens'),('unit',None),('currency','EUR'),
+    ('service_tier','paid_priority'),('api','vertex'),('schema_version',3),('provider','other')])
+def test_contract_unit_or_currency_change_blocks(field,value):
+    ledger,policy,obs=fixtures()
+    contract=contract_for()
+    if value is None: contract.pop(field)
+    else: contract[field]=value
+    observe_contract(obs,contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_hash_match_clears_stale_rate_audit_fields():
+    ledger,policy,obs=fixtures()
+    ledger['providers']['gemini'].update(price_observed_sha256='f'*64,price_observed_at='2026-11-01T00:00:00+00:00')
+    account=refresh(ledger,policy,obs)['providers']['gemini']
+    assert 'price_observed_sha256' not in account and 'price_observed_at' not in account
+
+
+@pytest.mark.parametrize('rate',['not-a-number',None,'NaN','Infinity',''])
+def test_non_numeric_or_missing_current_rate_blocks(rate):
+    ledger,policy,obs=fixtures()
+    contract=contract_for()
+    if rate is None: contract['operations'][OP].pop('input_token_usd_per_million')
+    else: contract['operations'][OP]['input_token_usd_per_million']=rate
+    observe_contract(obs,contract)
     with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)

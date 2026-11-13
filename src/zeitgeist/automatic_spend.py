@@ -63,6 +63,10 @@ def _time(value):
     return BudgetGuard._timestamp(value)
 
 
+GEMINI_CONTRACT_CONSTANTS = {'schema_version': 2, 'provider': 'gemini', 'api': 'gemini_developer_api',
+                             'currency': 'USD', 'service_tier': 'paid_standard', 'unit': '1000000_tokens'}
+
+
 def gemini_rates_within_approval(account, pinned, price, now):
     """True when Gemini's published current rates do not exceed the approved rates.
 
@@ -76,6 +80,10 @@ def gemini_rates_within_approval(account, pinned, price, now):
                 price.get('source_url') != pinned['price_source_url'] or
                 not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24)):
             return False
+        # Exactly the constants gemini_tariff.normalize_gemini_tariff emits: a change of unit,
+        # currency, tier or schema means the rates below no longer mean what was approved.
+        if any(contract.get(key) != value for key, value in GEMINI_CONTRACT_CONSTANTS.items()):
+            return False
         published = contract['operations']
         limits = account.get('request_limits', {})
         for operation in set(limits) | set(account.get('operation_caps_usd', {})):
@@ -83,10 +91,18 @@ def gemini_rates_within_approval(account, pinned, price, now):
             if not isinstance(observed, dict):
                 return False
             approved = limits.get(operation, {})
+            input_only = observed.get('billing_basis') == 'input_tokens'
+            # Every budgeted operation needs an approved rate to be compared against.
+            if 'input_token_usd_per_million' not in approved:
+                return False
+            if 'output_token_usd_per_million' not in approved and not input_only:
+                return False
+            if input_only and Decimal(str(approved.get('output_token_usd_per_million', '0'))) != 0:
+                return False
             for key in ('input_token_usd_per_million', 'output_token_usd_per_million'):
                 rate = observed.get(key)
                 # Input-only operations (embeddings) publish no output rate: that is zero.
-                if rate is None and key == 'output_token_usd_per_million' and observed.get('billing_basis') == 'input_tokens':
+                if rate is None and key == 'output_token_usd_per_million' and input_only:
                     rate = '0'
                 if key in approved:
                     rate, ceiling = Decimal(str(rate)), Decimal(str(approved[key]))
@@ -294,6 +310,10 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
                     raise SpendBlocked('Primary price snapshot changed, stale or missing')
                 account['price_observed_sha256'] = price['sha256']
                 account['price_observed_at'] = price['observed_at']
+            else:
+                # The pinned hash matched: no rate-only audit trail applies to this refresh.
+                account.pop('price_observed_sha256', None)
+                account.pop('price_observed_at', None)
         baseline = money(account['credit_baseline_usd'])
         confirmed = _confirmed(candidate, provider)
         if provider == 'gemini':
