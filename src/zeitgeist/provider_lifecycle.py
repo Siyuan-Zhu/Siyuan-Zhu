@@ -15,6 +15,8 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlsplit
 
 APIFY_START_URL = "https://api.apify.com/v2/actors/apify~instagram-post-scraper/runs"
+# Longest the start POST may wait for the provider; a run can begin that long after submission.
+APIFY_START_REQUEST_SECONDS = 30.0
 APIFY_ACTOR_ID = "nH2AHrwxeTRJoN5hX"  # Public Actor identifier. gitleaks:allow
 APIFY_TERMINAL = frozenset({"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"})
 BFL_API_HOST = re.compile(r"api\.(?:(?:isr|(?:eu|us)(?:[1-9][0-9]*)?)\.)?bfl\.ai\Z")
@@ -273,7 +275,7 @@ def fetch_apify_lifecycle(
                 "timeout": 300,
             },
             json=payload,
-            timeout=min(float(timeout_s), 30.0),
+            timeout=min(float(timeout_s), APIFY_START_REQUEST_SECONDS),
         )
     )
     run_id = started.get("id")

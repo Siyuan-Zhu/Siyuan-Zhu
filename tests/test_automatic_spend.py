@@ -463,6 +463,33 @@ def test_a_possibly_in_flight_apify_hold_still_blocks_a_rebind(created):
     with pytest.raises(SpendBlocked,match='open requests'): refresh(ledger,policy,obs)
 
 
+@pytest.mark.parametrize('submitted_ago,blocked',[(310,True),(329,True),(331,False)])
+def test_hold_submitted_late_is_still_in_flight_for_rebind(submitted_ago,blocked):
+    """The window runs from the later of creation and submission, plus the start-request margin."""
+    from src.zeitgeist import provider_lifecycle as lifecycle
+    ledger,policy,obs=fixtures()
+    duration=int(ledger['providers']['apify']['max_request_duration_seconds'])
+    assert lifecycle.APIFY_START_REQUEST_SECONDS==30.0
+    ledger['reservations']['late']=stale_apify_hold(
+        created_at=(NOW-timedelta(days=11)).isoformat(),submitted_at=(NOW-timedelta(seconds=submitted_ago)).isoformat())
+    assert duration==300
+    obs['apify']['credential_fingerprint']='f'*16
+    if blocked:
+        with pytest.raises(SpendBlocked,match='open requests'): refresh(ledger,policy,obs)
+    else:
+        assert refresh(ledger,policy,obs)['providers']['apify']['credential_fingerprint']=='f'*16
+
+
+def test_rebind_window_ignores_a_submission_time_older_than_creation_and_blocks_a_malformed_one():
+    ledger,policy,obs=fixtures()
+    obs['apify']['credential_fingerprint']='f'*16
+    ledger['reservations']['open']=stale_apify_hold(
+        created_at=(NOW-timedelta(seconds=299)).isoformat(),submitted_at=(NOW-timedelta(days=11)).isoformat())
+    with pytest.raises(SpendBlocked,match='open requests'): refresh(ledger,policy,obs)
+    ledger['reservations']['open']=stale_apify_hold(submitted_at='not a time')
+    with pytest.raises(SpendBlocked): refresh(ledger,policy,obs)
+
+
 # Gemini price check: compare the rates in effect, not the hash of the whole pricing page.
 PRICE_BLOCK='Primary price snapshot changed, stale or missing'
 

@@ -261,12 +261,21 @@ def _rebind_credential(ledger, provider, account, pinned, fresh, observed_at):
     # A request created within the provider's maximum duration may still be in flight under
     # the old token. Older unsettled holds stay reserved at their full bound, bound to the old
     # token (conservative), and need separate reconciliation; they cannot be in flight.
-    in_flight_after = _time(observed_at) - timedelta(seconds=int(account['max_request_duration_seconds']))
+    # The window starts when the request could have reached the provider: the later of creation and
+    # submission, and the start POST itself may have taken up to its own timeout to land.
+    from .provider_lifecycle import APIFY_START_REQUEST_SECONDS
+    in_flight_after = _time(observed_at) - timedelta(
+        seconds=int(account['max_request_duration_seconds']) + APIFY_START_REQUEST_SECONDS)
     for record in ledger.get('reservations', {}).values():
         if record.get('provider') != provider or _known(record):
             continue
         created = record.get('created_at')
-        if not created or _time(created) > in_flight_after:
+        if not created:
+            raise SpendBlocked('Credential change waits until open requests for this provider settle')
+        began = _time(created)
+        if record.get('submitted_at'):
+            began = max(began, _time(record['submitted_at']))
+        if began > in_flight_after:
             raise SpendBlocked('Credential change waits until open requests for this provider settle')
     account.setdefault('credential_rebinds', []).append(
         {'from': account['credential_fingerprint'], 'to': token, 'at': observed_at})
