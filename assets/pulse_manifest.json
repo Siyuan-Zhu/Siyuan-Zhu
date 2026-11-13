@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-12",
-  "word": "Chrysalis",
-  "gloss": "The volatile vessel bridging ruin and renewal.",
-  "archetype": "STUDIO_MONOGRAPH",
+  "date": "2026-11-13",
+  "word": "Epiphany",
+  "gloss": "Manifesting the invisible spirit into form.",
+  "archetype": "POETIC_CINEMA",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "cc967e676a19f56c0ed08b8e5f2af8f2954e5cf3a720d1a334a46d99ed2bfc29",
-    "assets/daily_pulse_dark.webp": "a3998c265b0e089c1d0f8f9890434819a79e52e640ced4b86e72acd0b75cce6e",
-    "assets/daily_pulse.svg": "02d83b09a791e8eeccd63f32cf75c7c5ada41069d97daf7ac097b6ab4c107cd3",
-    "assets/pulse/2026-11-12.webp": "d3df4175bd1a7125847125f3113c3aca7bd4df1dbb8d71cf340b88a82eb1bf48"
+    "assets/daily_pulse_light.webp": "8867649d1b92509c1f7c21b793be2a3386cfe701dddb81ae821e74a491649608",
+    "assets/daily_pulse_dark.webp": "8867649d1b92509c1f7c21b793be2a3386cfe701dddb81ae821e74a491649608",
+    "assets/daily_pulse.svg": "61776ea76cf5840db3394a060e9995329dd94c9d7a6b961273b5d266dec37bbe",
+    "assets/pulse/2026-11-13.webp": "710f754b38ed35a898df6585ae676b058b0a15755a5595c186693b078343b640"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "N638YNcpDRA",
-    "source_url": "https://unsplash.com/photos/N638YNcpDRA",
+    "asset_id": "oiXkO7p2UfI",
+    "source_url": "https://unsplash.com/photos/oiXkO7p2UfI",
     "camera_make": "Canon",
-    "camera_model": "Canon EOS 80D",
+    "camera_model": "Canon EOS 6D",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "c2d188818ab47b5060a8"
+  "publication_id": "20482fff6ba4631bcf5a"
 }
