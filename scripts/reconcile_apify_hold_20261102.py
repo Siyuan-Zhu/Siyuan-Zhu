@@ -78,14 +78,21 @@ def _check_reservation(record):
         raise RuntimeError('Reservation submission metadata lacks the account or build pin')
 
 
-def _purge_proof(oldest_retained_run_started_at):
-    """The account's oldest retained run began after this hold was created."""
-    if oldest_retained_run_started_at is None:
+def _purge_proof(oldest_retained_run, policy):
+    """The account's oldest retained run (same account) began after this hold was created."""
+    if oldest_retained_run is None:
         raise RuntimeError('Run is missing and retention cannot be proven')
-    oldest = oldest_retained_run_started_at()
-    if not isinstance(oldest, str) or not oldest or _time(oldest) <= _time(CREATED_AT):
+    oldest = oldest_retained_run()
+    if not isinstance(oldest, dict):
+        raise RuntimeError('Run is missing and retention cannot be proven')
+    user = oldest.get('userId')
+    if (not isinstance(user, str) or not user or hashlib.sha256(user.encode()).hexdigest()[:16]
+            != policy['providers']['apify'].get('account_fingerprint')):
+        raise RuntimeError('Retained run belongs to a different Apify account')
+    started = oldest.get('startedAt')
+    if not isinstance(started, str) or not started or _time(started) <= _time(CREATED_AT):
         raise RuntimeError('Run is missing but retention does not cover the hold')
-    return oldest
+    return started
 
 
 def _confirmed_cost(policy, record, first, second):
@@ -129,7 +136,14 @@ def reconcile(store, policy_sha, *, fetch_run, reader_fingerprint=None, oldest_r
         first = fetch_run(RUN_ID)
     except RunNotFound:
         # Provider retention deleted the run: the cost can never be proven, so book the full bound.
-        oldest = _purge_proof(oldest_retained_run_started_at)
+        # A second read must agree; any other answer, including an error, leaves the hold untouched.
+        try:
+            fetch_run(RUN_ID)
+        except RunNotFound:
+            pass
+        else:
+            raise RuntimeError('Run presence is inconsistent; not treated as purged')
+        oldest = _purge_proof(oldest_retained_run_started_at, policy)
         cost = Decimal(MAX)
         evidence = {'id': RUN_ID, 'status': PURGED_STATUS, 'oldest_retained_run_started_at': oldest,
                     'reserved_gross_usd': MAX}
@@ -186,6 +200,7 @@ def apify_fetch(token):
 
 
 def apify_oldest_started_at(token):
+    """The account's oldest retained run: its start time and owner, for the purge proof."""
     def oldest():
         with httpx.Client(follow_redirects=False, timeout=20) as client:
             items = lifecycle._run_body(client.get(
@@ -193,7 +208,7 @@ def apify_oldest_started_at(token):
                 headers={'Authorization': 'Bearer ' + token})).get('items')
         if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
             raise RuntimeError('No retained Apify run to prove retention')
-        return items[0].get('startedAt')
+        return {'startedAt': items[0].get('startedAt'), 'userId': items[0].get('userId')}
     return oldest
 
 

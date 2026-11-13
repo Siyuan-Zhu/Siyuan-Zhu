@@ -278,14 +278,16 @@ class Purged:
 
 
 class Oldest:
-    def __init__(self, value=OLDEST_AFTER):
-        self.value, self.calls = value, 0
+    def __init__(self, value=OLDEST_AFTER, user=USER):
+        self.value, self.user, self.calls = value, user, 0
 
     def __call__(self):
         self.calls += 1
         if isinstance(self.value, Exception):
             raise self.value
-        return self.value
+        if self.value is None or isinstance(self.value, dict):
+            return self.value
+        return {'startedAt': self.value, 'userId': self.user}
 
 
 def purged_expected(ledger):
@@ -326,7 +328,8 @@ def test_purged_run_settles_at_full_bound_once(monkeypatch, unknown):
 
 @pytest.mark.parametrize('oldest', [
     Oldest('2026-11-02T07:16:32.713319+00:00'), Oldest('2026-11-01T00:00:00Z'), Oldest(''), Oldest(None), None,
-    Oldest(RuntimeError('no retained runs')), Oldest('not a time')])
+    Oldest(RuntimeError('no retained runs')), Oldest('not a time'), Oldest({'startedAt': OLDEST_AFTER}),
+    Oldest({'userId': USER})])
 def test_404_without_purge_proof_blocks(monkeypatch, oldest):
     wire, sha, ledger, _ = setup(monkeypatch)
     with pytest.raises((RuntimeError, SpendBlocked)):
@@ -347,6 +350,43 @@ def test_other_http_error_blocks(monkeypatch, code):
     assert not wire.posts and wire.docs['2026-11'] == ledger and oldest.calls == 0
 
 
+@pytest.mark.parametrize('user', ['SomeoneElse9', '', None])
+def test_oldest_run_from_another_account_blocks(monkeypatch, user):
+    wire, sha, ledger, _ = setup(monkeypatch)
+    oldest = Oldest(user=user)
+    with pytest.raises(RuntimeError, match='account'):
+        hold.reconcile(wire.store, sha, fetch_run=Purged(), oldest_retained_run_started_at=oldest,
+                       reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    assert oldest.calls == 1 and not wire.posts and wire.docs['2026-11'] == ledger
+
+
+class Sequence:
+    def __init__(self, *steps):
+        self.steps = list(steps)
+
+    def __call__(self, run_id):
+        step = self.steps.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+def test_purge_needs_two_404s(monkeypatch):
+    request = httpx.Request('GET', 'https://api.apify.com/v2/actor-runs/' + hold.RUN_ID)
+    server = httpx.HTTPStatusError('private', request=request, response=httpx.Response(500, request=request))
+    for second in (run_body(), server, TimeoutError('private')):
+        wire, sha, ledger, _ = setup(monkeypatch)
+        oldest = Oldest()
+        with pytest.raises((RuntimeError, httpx.HTTPStatusError, TimeoutError)):
+            hold.reconcile(wire.store, sha, fetch_run=Sequence(hold.RunNotFound(), second),
+                           oldest_retained_run_started_at=oldest, reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+        assert not wire.posts and wire.docs['2026-11'] == ledger and oldest.calls == 0
+    wire, sha, _, _ = setup(monkeypatch)
+    result = hold.reconcile(wire.store, sha, fetch_run=Sequence(hold.RunNotFound(), hold.RunNotFound()),
+                            oldest_retained_run_started_at=Oldest(), reader_fingerprint=NEW_TOKEN, apply=True, now=NOW)
+    assert result['basis'] == 'full_bound_purged'
+
+
 def test_found_run_still_uses_reported_usage(monkeypatch):
     wire, sha, _, _ = setup(monkeypatch)
     oldest = Oldest()
@@ -363,7 +403,7 @@ def test_apify_reads_map_404_to_not_found_and_pass_other_errors_through(monkeypa
     def handler(request):
         seen.append((request.url.path, dict(request.url.params), request.headers['authorization']))
         if request.url.path.endswith('/actor-runs'):
-            return httpx.Response(200, json={'data': {'items': [{'startedAt': OLDEST_AFTER}]}})
+            return httpx.Response(200, json={'data': {'items': [{'startedAt': OLDEST_AFTER, 'userId': USER}]}})
         return httpx.Response(int(request.url.path.rsplit('/', 1)[1][-3:]), json={})
     real = httpx.Client
     monkeypatch.setattr(hold.httpx, 'Client', lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
@@ -371,7 +411,7 @@ def test_apify_reads_map_404_to_not_found_and_pass_other_errors_through(monkeypa
         hold.apify_fetch('tok')('x404')
     with pytest.raises(httpx.HTTPStatusError):
         hold.apify_fetch('tok')('x500')
-    assert hold.apify_oldest_started_at('tok')() == OLDEST_AFTER
+    assert hold.apify_oldest_started_at('tok')() == {'startedAt': OLDEST_AFTER, 'userId': USER}
     assert seen[-1][0] == '/v2/actor-runs' and seen[-1][1] == {'desc': '0', 'limit': '1'}
     assert seen[-1][2] == 'Bearer tok'
 
