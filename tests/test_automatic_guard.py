@@ -252,3 +252,14 @@ def test_reserved_request_links_to_execution_without_exposing_prompt(monkeypatch
     record=next(iter(guard.ledger.document['reservations'].values()))
     assert record['execution_owner']=='github-12345-2'
     assert 'Synthetic bounded request' not in str(record)
+
+
+def test_runtime_admits_apify_only_with_the_rebound_token():
+    guard=budget()
+    guard.begin_provider_request('apify','batch','.01',request_digest({'control':'unchanged token'}))
+    guard=budget()
+    guard.ledger.document['providers']['apify']['credential_fingerprint']='f'*16
+    with pytest.raises(SpendBlocked,match='Runtime credential'):
+        guard.begin_provider_request('apify','batch','.01',request_digest({'old':'token'}))
+    guard.credential_fingerprints['apify']='f'*16
+    guard.begin_provider_request('apify','batch','.01',request_digest({'new':'token'}))

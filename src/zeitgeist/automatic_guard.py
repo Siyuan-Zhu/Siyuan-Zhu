@@ -110,7 +110,7 @@ class AutomaticBudgetGuard(BudgetGuard):
         accounting.validate_policy(self.automatic_policy, self.expected_policy_sha, created)
         account = document['providers'][provider]
         pinned = self.automatic_policy['providers'][provider]['account']
-        if (any(account.get(k) != pinned.get(k) for k in accounting.STATIC)
+        if (any(account.get(k) != pinned.get(k) for k in accounting.pinned_keys(provider))
             or record.get('credential_fingerprint') != self._credential_fingerprint(provider)):
             raise SpendBlocked('Completion account or credential binding changed')
         return record
@@ -141,7 +141,7 @@ class AutomaticBudgetGuard(BudgetGuard):
             raise SpendBlocked('Automatic ledger epoch or cash ceiling mismatch')
         account = document.get('providers', {}).get(provider)
         pinned = policy['providers'].get(provider, {}).get('account', {})
-        if not isinstance(account, dict) or any(account.get(k) != pinned.get(k) for k in accounting.STATIC):
+        if not isinstance(account, dict) or any(account.get(k) != pinned.get(k) for k in accounting.pinned_keys(provider)):
             raise SpendBlocked('Automatic provider policy or identity changed')
         import hmac
         if not hmac.compare_digest(str(account.get('credential_fingerprint', '')), self._credential_fingerprint(provider)):

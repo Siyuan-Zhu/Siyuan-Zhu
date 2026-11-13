@@ -238,6 +238,7 @@ class SpendBlocked(RuntimeError):
         "Usage receipt timestamp outside request window": "automatic-usage-receipt-timestamp-outside-request-window",
         "Authenticated Gemini usage exceeds the admitted request policy": "automatic-authenticated-gemini-usage-exceeds-the-admitted-request-policy",
         "Authenticated usage requires spending reconciliation": "automatic-authenticated-usage-requires-spending-reconciliation",
+        "Credential change waits until open requests for this provider settle": "automatic-credential-change-waits-until-open-requests-for-this-provider-settle",
         "Completion account or credential binding changed": "automatic-completion-account-or-credential-binding-changed",
         "Completion cannot precede reservation creation": "automatic-completion-cannot-precede-reservation-creation",
         "Completion requires the active owned automatic reservation": "automatic-completion-requires-the-active-owned-automatic-reservation",

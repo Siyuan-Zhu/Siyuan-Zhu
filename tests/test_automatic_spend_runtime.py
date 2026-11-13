@@ -415,3 +415,41 @@ def test_gemini_current_tariff_is_observed_without_credentials_or_future_embeddi
     assert calls==['anonymous_gemini_tariff'] and set(mapped['price_snapshots'])=={'gemini'}
     assert mapped['price_snapshots']['gemini']==obs['price_snapshots']['gemini']
     assert policy==before and 'published_contract' not in policy['providers']['gemini']
+
+
+class _NoNetworkClient:
+    def __init__(self, **kwargs): pass
+    def __enter__(self): return self
+    def __exit__(self, *exc): return False
+
+
+@pytest.mark.parametrize('provider,blocked', [('apify', False), ('gemini', True), ('bfl', True)])
+def test_observer_leaves_apify_token_binding_to_the_ledger_but_pins_other_keys(monkeypatch, provider, blocked):
+    """2026-11-13: a replacement Apify token must reach the ledger re-bind, not die in the observer."""
+    from scripts import provider_preflight
+    ledger, policy, obs = fixtures()
+    obs[provider]['credential_fingerprint'] = 'f'*16
+    monkeypatch.setattr(runtime.httpx, 'Client', _NoNetworkClient)
+    monkeypatch.setattr(provider_preflight, 'run_preflight', lambda *a, **k: copy.deepcopy(obs))
+    if blocked:
+        with pytest.raises(SpendBlocked, match='credential binding failed'):
+            runtime.observe_provider_metadata(policy, {}, NOW)
+    else:
+        try:
+            runtime.observe_provider_metadata(policy, {}, NOW)
+        except SpendBlocked as error:
+            assert 'credential binding' not in str(error)
+
+
+def test_maintenance_applies_an_apify_rebind_once_and_stays_stable(monkeypatch):
+    """Production path: maintain_spend_control --apply persists the re-bind; the next night is a no-op re-bind."""
+    wire, sha, observe, obs = setup(monkeypatch)
+    obs["apify"]["credential_fingerprint"] = "f"*16
+    first = run(wire, sha, observe)
+    assert first.public_status()["status"] == "refreshed"
+    apify = wire.docs["2026-10"]["providers"]["apify"]
+    assert apify["credential_fingerprint"] == "f"*16
+    assert [r["to"] for r in apify["credential_rebinds"]] == ["f"*16]
+    assert wire.docs["policy_"+sha]["providers"]["apify"]["account"]["credential_fingerprint"] == "c"*16
+    run(wire, sha, observe)
+    assert len(wire.docs["2026-10"]["providers"]["apify"]["credential_rebinds"]) == 1

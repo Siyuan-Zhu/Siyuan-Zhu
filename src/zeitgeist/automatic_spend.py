@@ -17,6 +17,19 @@ from .spend_guard import BudgetGuard, SpendBlocked, money
 
 STATIC = ('account_id', 'plan_id', 'credential_fingerprint', 'credit_kind',
           'operation_caps_usd', 'request_limits', 'max_request_duration_seconds')
+# Apify proves its account on every refresh (account fingerprint, plan, grant, build), so
+# its token may be replaced: the ledger re-binds to a new token for the same verified
+# account. Gemini and BFL expose no account identity, so their exact key stays pinned.
+REBINDABLE_CREDENTIALS = frozenset({'apify'})
+
+
+def pinned_keys(provider):
+    """Account fields the ledger must keep equal to the approved policy."""
+    if provider in REBINDABLE_CREDENTIALS:
+        return tuple(key for key in STATIC if key != 'credential_fingerprint')
+    return STATIC
+
+
 TARGET = {'project_id': 'git-readme-features', 'database_id': '(default)', 'collection': 'spend_control'}
 MODES = {'gemini': 'cash_only', 'bfl': 'nonrenewable_prepaid', 'apify': 'recurring_free'}
 PRICE_HOSTS = {'gemini': {'ai.google.dev'}, 'bfl': {'bfl.ai', 'docs.bfl.ai', 'help.bfl.ai'}, 'apify': {'apify.com', 'api.apify.com', 'docs.apify.com'}}
@@ -183,6 +196,21 @@ def assert_credit_only_funding(ledger, *, now=None):
                 raise SpendBlocked('Credit-only provider collateral is outside its verified allowance period')
 
 
+def _rebind_credential(ledger, provider, account, pinned, fresh, observed_at):
+    """Bind a replacement token only to the same verified account, with nothing in flight."""
+    token = str(fresh.get('credential_fingerprint', ''))
+    verified_account = pinned.get('account_fingerprint')
+    if (provider not in REBINDABLE_CREDENTIALS or not re.fullmatch('[a-f0-9]{16}', token)
+            or not verified_account or fresh.get('account_fingerprint') != verified_account):
+        raise SpendBlocked('Provider metadata or credential binding failed')
+    if any(record.get('provider') == provider and not _known(record)
+           for record in ledger.get('reservations', {}).values()):
+        raise SpendBlocked('Credential change waits until open requests for this provider settle')
+    account.setdefault('credential_rebinds', []).append(
+        {'from': account['credential_fingerprint'], 'to': token, 'at': observed_at})
+    account['credential_fingerprint'] = token
+
+
 def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
     """Fresh authenticated metadata + unchanged approved policy -> pure candidate.
 
@@ -205,11 +233,13 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
     candidate = copy.deepcopy(ledger)
     for provider, pinned in policy['providers'].items():
         account = candidate['providers'][provider]
-        if any(account.get(key) != pinned['account'][key] for key in STATIC):
+        if any(account.get(key) != pinned['account'][key] for key in pinned_keys(provider)):
             raise SpendBlocked('Pinned provider identity, tariff or request policy changed')
         fresh = observation.get(provider, {})
-        if fresh.get('status') != 'metadata_verified' or fresh.get('credential_fingerprint') != account['credential_fingerprint']:
+        if fresh.get('status') != 'metadata_verified':
             raise SpendBlocked('Provider metadata or credential binding failed')
+        if fresh.get('credential_fingerprint') != account['credential_fingerprint']:
+            _rebind_credential(candidate, provider, account, pinned, fresh, observation['observed_at'])
         if pinned['price_evidence_mode'] == 'dynamic_snapshot':
             price = observation.get('price_snapshots', {}).get(provider, {})
             if price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
@@ -343,7 +373,7 @@ def admit_usage_receipt(ledger, policy, receipt, *, expected_policy_sha, now):
     # requiring enough lifetime to start another full request at completion.
     validate_policy(policy, expected_policy_sha, _time(original['created_at']))
     provider = original['provider']; account = ledger['providers'][provider]
-    if any(account.get(k) != policy['providers'][provider]['account'][k] for k in STATIC) or original['operation'] not in account['operation_caps_usd']:
+    if any(account.get(k) != policy['providers'][provider]['account'][k] for k in pinned_keys(provider)) or original['operation'] not in account['operation_caps_usd']:
         raise SpendBlocked('Usage receipt policy changed after reservation')
     for field in ('provider', 'operation', 'credential_fingerprint', 'provider_request_id', 'request_sha256'):
         expected = account['credential_fingerprint'] if field == 'credential_fingerprint' else original.get(field)

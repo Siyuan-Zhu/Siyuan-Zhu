@@ -74,10 +74,13 @@ def observe_provider_metadata(policy, env: Mapping[str, str], now):
         report = run_preflight(client, private_env, now=now, required_models=models)
     # A known authentication/configuration failure must not be hidden by a later
     # transient anonymous pricing read. Reuse the refresh validator's exact gate.
+    # A re-bindable provider's token is bound to the ledger by prepare_refresh, after
+    # its account identity is verified; the policy keeps only its first fingerprint.
+    from .automatic_spend import REBINDABLE_CREDENTIALS
     for name, pinned in policy["providers"].items():
         fresh = report.get(name, {})
-        if (fresh.get("status") != "metadata_verified" or
-                fresh.get("credential_fingerprint") != pinned["account"]["credential_fingerprint"]):
+        if (fresh.get("status") != "metadata_verified" or (name not in REBINDABLE_CREDENTIALS and
+                fresh.get("credential_fingerprint") != pinned["account"]["credential_fingerprint"])):
             raise SpendBlocked("Provider metadata or credential binding failed")
     report["price_snapshots"] = {}
     for name, pinned in policy["providers"].items():

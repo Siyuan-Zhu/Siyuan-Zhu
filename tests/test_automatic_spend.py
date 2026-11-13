@@ -385,3 +385,52 @@ def test_explicit_published_validity_uses_original_contract_without_restamping_i
     policy['providers']['gemini']['published_contract']['valid_until']='2026-11-01T00:00:00Z'
     ledger['automatic_policy_sha256']=auto.digest(policy)
     with pytest.raises(SpendBlocked,match='validity commitment'): refresh(ledger,policy,obs)
+
+
+# 2026-11-13 incident: Apify invalidated the token value; a replacement token for the same
+# verified account could never be used, because the ledger bound the exact token hash.
+def test_new_apify_token_for_the_same_verified_account_rebinds_without_policy_change():
+    ledger,policy,obs=fixtures()
+    obs['apify']['credential_fingerprint']='f'*16
+    policy_before=copy.deepcopy(policy)
+    after=refresh(ledger,policy,obs)
+    apify=after['providers']['apify']
+    assert apify['credential_fingerprint']=='f'*16
+    assert apify['credential_rebinds']==[{'from':'c'*16,'to':'f'*16,'at':obs['observed_at']}]
+    assert policy==policy_before
+    assert after['providers']['bfl']['credential_fingerprint']=='b'*16
+    assert refresh(after,policy,copy.deepcopy(obs))['providers']['apify']['credential_fingerprint']=='f'*16
+
+
+@pytest.mark.parametrize('change',['other_account','unverified','malformed','open_hold','no_account_identity'])
+def test_apify_rebind_requires_same_verified_account_wellformed_token_and_no_open_hold(change):
+    ledger,policy,obs=fixtures()
+    obs['apify']['credential_fingerprint']='f'*16
+    if change=='other_account': obs['apify']['account_fingerprint']='another-account'
+    if change=='unverified': obs['apify']['status']='incomplete'
+    if change=='malformed': obs['apify']['credential_fingerprint']='F'*16
+    if change=='open_hold': ledger['reservations']['open-apify']=hold('apify','.10',credential_fingerprint='c'*16)
+    if change=='no_account_identity':
+        policy['providers']['apify'].pop('account_fingerprint'); obs['apify']['account_fingerprint']=None
+        ledger['automatic_policy_sha256']=auto.digest(policy)
+    before=copy.deepcopy(ledger)
+    with pytest.raises(SpendBlocked): refresh(ledger,policy,obs)
+    assert ledger==before
+
+
+@pytest.mark.parametrize('name',['gemini','bfl'])
+def test_gemini_and_bfl_keys_stay_bound_to_the_exact_token(name):
+    ledger,policy,obs=fixtures()
+    obs[name]['credential_fingerprint']='f'*16
+    with pytest.raises(SpendBlocked,match='credential binding'): refresh(ledger,policy,obs)
+
+
+def test_settled_apify_history_does_not_block_a_rebind_and_both_rebinds_are_kept():
+    ledger,policy,obs=fixtures()
+    ledger['reservations']['done']=dict(hold('apify','.10'),status='settled',actual_gross_usd='.05',
+        billing_reference='apify-run-1',credential_fingerprint='c'*16)
+    obs['apify']['credential_fingerprint']='f'*16
+    first=refresh(ledger,policy,obs)
+    obs2=copy.deepcopy(obs); obs2['apify']['credential_fingerprint']='9'*16
+    second=refresh(first,policy,obs2)
+    assert [r['to'] for r in second['providers']['apify']['credential_rebinds']]==['f'*16,'9'*16]
