@@ -42,7 +42,7 @@ class PrivateFirestoreStore:
         )
 
     def read(self, document_id):
-        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103|apify_build_repair_20261106)", document_id):
+        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103|apify_build_repair_20261106|price_repair_20261113)", document_id):
             raise SpendBlocked("Unapproved private spend document")
         return self.client.collection("spend_control").document(document_id).get()
 
@@ -168,7 +168,7 @@ def _reconcile_pending(store, intent_id, intent_snapshot, *, apply):
 
 
 # Reviewed one-time policy successors, in the order they were applied.
-POLICY_REPAIR_RECEIPTS = ("price_repair_20261103", "apify_build_repair_20261106")
+POLICY_REPAIR_RECEIPTS = ("price_repair_20261103", "apify_build_repair_20261106", "price_repair_20261113")
 
 
 def _successor_policy(store, policy_sha, month):

@@ -102,3 +102,11 @@ def test_handoff_continuity_rejects_other_month_or_broken_chain(monkeypatch, sec
         'price_repair_20261103': {'month': '2026-11', 'old_policy_sha256': 'a', 'new_policy_sha256': 'b'},
         'apify_build_repair_20261106': second})
     assert runtime._successor_policy(store, 'a', '2026-11') == 'b'
+
+
+def test_handoff_continuity_follows_the_november_13_price_repin(monkeypatch):
+    store = receipts(monkeypatch, {
+        'price_repair_20261103': {'month': '2026-11', 'old_policy_sha256': 'a', 'new_policy_sha256': 'b'},
+        'apify_build_repair_20261106': {'month': '2026-11', 'old_policy_sha256': 'b', 'new_policy_sha256': 'c'},
+        'price_repair_20261113': {'month': '2026-11', 'old_policy_sha256': 'c', 'new_policy_sha256': 'd'}})
+    assert runtime._successor_policy(store, 'a', '2026-11') == 'd'
