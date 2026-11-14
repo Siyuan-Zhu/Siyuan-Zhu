@@ -1,6 +1,7 @@
 """Provider adapters over real HTTP transports; no paid dispatch or ledger writes."""
 
 from datetime import datetime, timezone, timedelta
+import copy
 import json
 
 import httpx
@@ -367,9 +368,9 @@ def test_missing_returned_polling_url_keeps_known_job_without_guess_or_new_post(
     assert len(requests)==1 and len(guard.handle.submissions)==1 and not guard.handle.receipts
 
 
-def real_bfl_guard(monkeypatch):
+def real_bfl_guard(monkeypatch,observed=None):
     import copy
-    from tests.test_automatic_guard import budget
+    from tests.test_automatic_guard import budget, bfl_audit
     from src.zeitgeist import automatic_spend as accounting
     guard=budget();operation='generate_image:flux-3-image'
     account=guard.automatic_policy['providers']['bfl']['account']
@@ -377,12 +378,14 @@ def real_bfl_guard(monkeypatch):
     guard.expected_policy_sha=accounting.digest(guard.automatic_policy)
     guard.ledger.document['automatic_policy_sha256']=guard.expected_policy_sha
     guard.ledger.document['providers']['bfl'].update(copy.deepcopy(account))
+    if observed is not None:
+        guard.ledger.document['providers']['bfl']['price_band_audit']=bfl_audit(observed)
     monkeypatch.setattr(lifecycle,'utc_now',lambda:guard.now().isoformat())
     return guard
 
 
-def real_bfl_request(monkeypatch):
-    guard=real_bfl_guard(monkeypatch)
+def real_bfl_request(monkeypatch,observed=None):
+    guard=real_bfl_guard(monkeypatch,observed)
     digest=lifecycle.request_digest({'provider':'bfl','shape':'fixed-single-image-fixture'})
     operation='generate_image:flux-3-image'
     handle=guard.begin_provider_request('bfl',operation,None,digest)
@@ -596,3 +599,41 @@ def test_apify_transitional_missing_build_waits_but_terminal_build_is_required(
     )
     assert len(guard.handle.receipts) == 1
     assert len([request for request in requests if request.method == "POST"]) == 1
+
+
+READY={'id':'task123','status':'Ready','result':{'sample':'https://delivery.eu2.bfl.ai/private?signature=secret'}}
+
+
+def test_bfl_eight_credit_image_fits_under_the_grown_cap(monkeypatch):
+    guard,handle,digest=real_bfl_request(monkeypatch,'0.08')
+    assert lifecycle._ready_full_bound_receipt(handle,digest,'task123',READY) is True
+    r=guard.ledger.document['reservations'][handle.reservation_id]
+    assert r['actual_gross_usd']=='0.08' and r['max_gross_usd']=='0.08'
+    assert not guard.ledger.document.get('reconciliation_required')
+
+
+def test_bfl_full_bound_receipt_rejects_a_hold_unequal_to_its_recorded_rate(monkeypatch):
+    guard,handle,digest=real_bfl_request(monkeypatch,'0.08')
+    guard.ledger.document['reservations'][handle.reservation_id]['max_gross_usd']='0.0805'
+    before=copy.deepcopy(guard.ledger.document)
+    assert lifecycle._ready_full_bound_receipt(handle,digest,'task123',READY) is False
+    assert guard.ledger.document==before
+
+
+def test_bfl_full_bound_receipt_rejects_a_tampered_recorded_rate(monkeypatch):
+    guard,handle,digest=real_bfl_request(monkeypatch,'0.08')
+    record=guard.ledger.document['reservations'][handle.reservation_id]
+    record['max_gross_usd']=record['request_context']['unit_price_usd']='0.0806'
+    assert lifecycle._ready_full_bound_receipt(handle,digest,'task123',READY) is False
+
+
+def test_bfl_full_bound_receipt_accepts_a_hold_made_before_the_band(monkeypatch):
+    guard,handle,digest=real_bfl_request(monkeypatch)
+    del guard.ledger.document['reservations'][handle.reservation_id]['request_context']
+    assert lifecycle._ready_full_bound_receipt(handle,digest,'task123',READY) is True
+
+
+def test_bfl_at_approved_price_keeps_the_0_07_hold_and_receipt(monkeypatch):
+    guard,handle,digest=real_bfl_request(monkeypatch)
+    assert guard.ledger.document['reservations'][handle.reservation_id]['max_gross_usd']=='0.07'
+    assert lifecycle._ready_full_bound_receipt(handle,digest,'task123',READY) is True

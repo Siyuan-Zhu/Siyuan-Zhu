@@ -404,3 +404,185 @@ def test_bfl_hold_records_charged_and_approved_unit_rate():
     h=guard.begin_provider_request('bfl',BFL_OP,None,'a'*64)
     r=ledger.document['reservations'][h.reservation_id]
     assert r['max_gross_usd']=='0.07' and r['request_context']=={'unit_price_usd':'0.07','approved_unit_price_usd':'0.07'}
+
+
+# Per-call caps grow with the band; ceilings and credit bounds do not.
+PRICE_BLOCK='Primary price snapshot changed, stale or missing'
+TARIFF_BLOCK='Request exceeds verified operation tariff'
+EMBED_OP='embed_content:gemini-embedding-test'
+GEMINI_CTX={'admitted_input_tokens':65536,'max_output_tokens':1500,
+    'input_token_usd_per_million':'0.825','output_token_usd_per_million':'4.125',
+    'approved_input_token_usd_per_million':'0.75','approved_output_token_usd_per_million':'3.75'}
+
+
+def bfl_audit(observed):
+    return {'schema_version':1,'tolerance':'0.15','basis':'policy_approved_rate','observed_sha256':'e'*64,
+        'observed_at':NOW.isoformat(),
+        'above_approval':[{'operation':BFL_OP,'rate':'unit_price_usd','approved':'0.07','observed':observed}]}
+
+
+def bfl_guard(observed=None):
+    guard=budget();ledger=guard.ledger
+    account=guard.automatic_policy['providers']['bfl']['account']
+    account['operation_caps_usd']={BFL_OP:'0.07'}
+    guard.expected_policy_sha=auto.digest(guard.automatic_policy)
+    ledger.document['automatic_policy_sha256']=guard.expected_policy_sha
+    ledger.document['providers']['bfl'].update(copy.deepcopy(account))
+    if observed is not None:
+        ledger.document['providers']['bfl']['price_band_audit']=bfl_audit(observed)
+    return guard
+
+
+def test_effective_cap_is_the_policy_cap_without_an_in_band_rate():
+    guard=budget(rates=('0.70','3.50'))
+    acct=guard.ledger.document['providers']['gemini']
+    assert auto.effective_cap(acct,'gemini',OP)==Decimal('0.054777')
+    assert auto.effective_cap(budget().ledger.document['providers']['gemini'],'gemini',OP)==Decimal('0.054777')
+    assert auto.effective_cap(bfl_guard().ledger.document['providers']['bfl'],'bfl',BFL_OP)==Decimal('0.07')
+    assert auto.effective_cap(guard.ledger.document['providers']['apify'],'apify','batch')==Decimal('0.20')
+
+
+def test_effective_cap_grows_by_the_provider_band_while_in_band():
+    acct=budget(rates=IN_BAND).ledger.document['providers']['gemini']
+    assert auto.effective_cap(acct,'gemini',OP)==Decimal('0.0602547')
+    assert auto.effective_cap(bfl_guard('0.08').ledger.document['providers']['bfl'],'bfl',BFL_OP)==Decimal('0.0805')
+
+
+def test_largest_gemini_request_at_ten_percent_fits_the_grown_cap():
+    guard=budget(rates=IN_BAND);calls=[]
+    def target(**kwargs):
+        calls.append(kwargs);return sdk_result()
+    raw=SimpleNamespace(models=SimpleNamespace(generate_content=target,count_tokens=fake(65536)))
+    generate(guard_genai_client(raw,guard))
+    assert len(calls)==1
+    r=next(iter(guard.ledger.document['reservations'].values()))
+    assert r['max_gross_usd']=='0.0602547'
+
+
+def test_largest_embedding_batch_at_ten_percent_fits():
+    guard=budget(rates=IN_BAND);document=guard.ledger.document
+    account=guard.automatic_policy['providers']['gemini']['account']
+    account['operation_caps_usd'][EMBED_OP]='0.03072'
+    account['request_limits'][EMBED_OP]={'input_token_usd_per_million':'0.15','output_token_usd_per_million':'0',
+        'max_input_bytes':2000000,'max_input_tokens':204800,'max_output_tokens':0,
+        'count_tokens_reference':'https://ai.google.dev/gemini-api/docs/billing#is-gettokens-billed',
+        'pricing_reference':'https://ai.google.dev/gemini-api/docs/pricing'}
+    guard.expected_policy_sha=auto.digest(guard.automatic_policy)
+    document['automatic_policy_sha256']=guard.expected_policy_sha
+    audit=document['providers']['gemini']['price_band_audit']
+    document['providers']['gemini'].update(copy.deepcopy(account))
+    document['providers']['gemini']['price_band_audit']=audit
+    audit['above_approval'].append({'operation':EMBED_OP,'rate':'input_token_usd_per_million',
+        'approved':'0.15','observed':'0.165'})
+    raw=SimpleNamespace(models=SimpleNamespace(count_tokens=fake(2048),
+        embed_content=lambda **kw:types.EmbedContentResponse(embeddings=[types.ContentEmbedding(values=[.1])]*100)))
+    guard_genai_client(raw,guard).models.embed_content(model='gemini-embedding-test',contents=['x']*100)
+    r=next(iter(guard.ledger.document['reservations'].values()))
+    assert r['max_gross_usd']=='0.033792'
+
+
+def test_rate_at_ten_point_zero_one_percent_blocks_at_the_price_check_before_any_hold():
+    ledger,policy,obs=fixtures(NOW)
+    settings=limits();settings['allowed_response_model_versions']=['gemini-3.8-flash']
+    account=policy['providers']['gemini']['account']
+    account['request_limits']={OP:settings};account['operation_caps_usd']={OP:'0.054777'}
+    ledger['providers']['gemini'].update(copy.deepcopy(account))
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    obs['gemini']['available_required_models']={'gemini-3.8-flash':['generateContent']}
+    observe_contract(obs,contract_for(rates=('0.825075','4.125'),op=OP))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK):
+        auto.prepare_refresh(ledger,policy,obs,expected_policy_sha=auto.digest(policy),now=NOW)
+    assert 'price_band_audit' not in ledger['providers']['gemini'] and ledger['reservations']=={}
+
+
+def test_hold_above_the_effective_cap_blocks_without_a_reservation():
+    ok=budget(rates=IN_BAND)
+    ok.reserve('gemini',OP,'0.0602547',context=GEMINI_CTX)
+    guard=budget(rates=IN_BAND)
+    with pytest.raises(SpendBlocked,match=TARIFF_BLOCK):
+        guard.reserve('gemini',OP,'0.0602548',context=GEMINI_CTX)
+    assert guard.ledger.document['reservations']=={}
+
+
+@pytest.mark.parametrize('change',[
+    {'unit_price_usd':'0.0806'}, {'unit_price_usd':'0.06'}, {'unit_price_usd':'NaN'}, {'unit_price_usd':'x'},
+    {'approved_unit_price_usd':'0.08'}, {'approved_unit_price_usd':'0.069'}, {'approved_unit_price_usd':None}])
+def test_hold_cap_rejects_a_tampered_recorded_rate(change):
+    acct=bfl_guard('0.08').ledger.document['providers']['bfl']
+    ctx={'unit_price_usd':'0.08','approved_unit_price_usd':'0.07'}
+    ctx.update(change)
+    record={'operation':BFL_OP,'request_context':ctx}
+    with pytest.raises(SpendBlocked) as raised:
+        auto.hold_cap(acct,'bfl',record)
+    assert str(raised.value)==TARIFF_BLOCK
+
+
+def test_hold_cap_rejects_a_tampered_gemini_output_rate():
+    acct=budget(rates=IN_BAND).ledger.document['providers']['gemini']
+    assert auto.hold_cap(acct,'gemini',{'operation':OP,'request_context':GEMINI_CTX})==Decimal('0.0602547')
+    for key,value in (('output_token_usd_per_million','4.2'),('approved_output_token_usd_per_million','4.0')):
+        with pytest.raises(SpendBlocked,match=TARIFF_BLOCK):
+            auto.hold_cap(acct,'gemini',{'operation':OP,'request_context':dict(GEMINI_CTX,**{key:value})})
+
+
+def test_hold_cap_without_recorded_rates_or_a_band_is_the_policy_cap():
+    guard=budget(rates=IN_BAND);accounts=guard.ledger.document['providers']
+    for record in ({'operation':OP},{'operation':OP,'request_context':{}},
+                   {'operation':OP,'request_context':{'admitted_input_tokens':10,'max_output_tokens':1500}}):
+        assert auto.hold_cap(accounts['gemini'],'gemini',record)==Decimal('0.054777')
+    assert auto.hold_cap(accounts['apify'],'apify',{'operation':'batch','request_context':{}})==Decimal('0.20')
+    equal=dict(GEMINI_CTX,input_token_usd_per_million='0.75',output_token_usd_per_million='3.75')
+    assert auto.hold_cap(accounts['gemini'],'gemini',{'operation':OP,'request_context':equal})==Decimal('0.054777')
+
+
+def test_grown_cap_hold_stays_valid_after_the_audit_clears():
+    guard=bfl_guard('0.08')
+    h=guard.begin_provider_request('bfl',BFL_OP,None,'a'*64)
+    record=guard.ledger.document['reservations'][h.reservation_id]
+    acct=guard.ledger.document['providers']['bfl']
+    acct.pop('price_band_audit')
+    assert auto.hold_cap(acct,'bfl',record)==Decimal('0.0805')
+    assert auto.effective_cap(acct,'bfl',BFL_OP)==Decimal('0.07')
+
+
+def test_bfl_hold_uses_the_observed_unit_rate_and_records_it():
+    guard=bfl_guard('0.075');ledger=guard.ledger
+    h=guard.begin_provider_request('bfl',BFL_OP,None,'a'*64)
+    r=ledger.document['reservations'][h.reservation_id]
+    assert r['max_gross_usd']=='0.075' and r['request_context']=={'unit_price_usd':'0.075','approved_unit_price_usd':'0.07'}
+
+
+def test_bfl_at_approved_price_keeps_the_0_07_hold():
+    guard=bfl_guard();h=guard.begin_provider_request('bfl',BFL_OP,None,'a'*64)
+    r=guard.ledger.document['reservations'][h.reservation_id]
+    assert r['max_gross_usd']=='0.07'
+
+
+def test_monthly_ceiling_still_blocks_when_reached_in_band():
+    guard=budget(rates=IN_BAND);document=guard.ledger.document
+    document['reservations']['existing']={'provider':'gemini','operation':OP,'max_gross_usd':'2.49',
+        'status':'reserved','created_at':NOW.isoformat(),'request_context':{}}
+    with pytest.raises(SpendBlocked,match='Call would exceed approved monthly cash ceiling'):
+        guard.reserve('gemini',OP,'0.0602547',context=GEMINI_CTX)
+    assert list(document['reservations'])==['existing']
+
+
+def test_bfl_prepaid_credit_bound_still_blocks_in_band():
+    guard=bfl_guard('0.08');document=guard.ledger.document
+    policy=guard.automatic_policy
+    policy.update(cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'])
+    policy['providers']['gemini'].pop('top_up_disabled_attestation',None)
+    policy['providers']['gemini']['billing_account_id']='AAAAAA-BBBBBB-CCCCCC'
+    policy['providers']['gemini']['bounded_auto_reload_attestation']={'automatic_top_up_enabled':True,
+        'billing_account_id':'AAAAAA-BBBBBB-CCCCCC','trigger_balance_usd':'5','reload_amount_usd':'5',
+        'monthly_auto_charge_limit_usd':'10','observed_at':'2026-10-30T15:30:00Z',
+        'reference':'explicit-owner-approved-current-reload-settings'}
+    guard.expected_policy_sha=auto.digest(policy)
+    document.update(cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'],
+        automatic_policy_sha256=guard.expected_policy_sha)
+    document['providers']['bfl'].update(credit_baseline_usd='0.07',remaining_credit_usd='0.07')
+    document['reservations']['settled']={'provider':'bfl','operation':BFL_OP,'max_gross_usd':'0.07',
+        'actual_gross_usd':'0.07','status':'settled','created_at':NOW.isoformat(),'request_context':{}}
+    with pytest.raises(SpendBlocked,match='Credit-only'):
+        guard.reserve('bfl',BFL_OP,'0.08',context={'unit_price_usd':'0.08','approved_unit_price_usd':'0.07'})
+    assert list(document['reservations'])==['settled']

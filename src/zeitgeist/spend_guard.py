@@ -582,8 +582,9 @@ class BudgetGuard:
                 else account.get("operation_caps_usd", {}).get(operation)
             )
             if self.require_credential_binding or doc.get("credential_binding_required"):
-                approved = account.get("operation_caps_usd", {}).get(operation)
-                if approved is None or cap > money(approved):
+                from .automatic_spend import hold_cap
+                candidate = {"provider": provider, "operation": operation, "request_context": context or {}}
+                if cap > hold_cap(account, provider, candidate):
                     raise SpendBlocked("Request exceeds verified operation tariff")
             if cap == 0:
                 free_ops = account.get("verified_free_operations", [])

@@ -146,6 +146,68 @@ def charged_rate(account, provider, operation, rate_key):
     return approved
 
 
+# The rates of one hold, each paired with the key under which the hold records its approved rate.
+_RATE_PAIRS = {'gemini': (('input_token_usd_per_million', 'approved_input_token_usd_per_million'),
+                          ('output_token_usd_per_million', 'approved_output_token_usd_per_million')),
+               'bfl': (('unit_price_usd', 'approved_unit_price_usd'),)}
+
+
+def effective_cap(account, provider, operation):
+    """The per-call cap a new hold may use now: base * (1 + band) while any charged rate is above approved.
+
+    The base is the policy cap. A provider with no band, or no audited rate above its
+    approval for this operation, keeps the base. An audit that fails verification blocks.
+    """
+    base = money(account.get('operation_caps_usd', {}).get(operation))
+    band = PRICE_TOLERANCE.get(provider)
+    if band is None:
+        return base
+    for key, _ in _RATE_PAIRS[provider]:
+        try:
+            approved = approved_rate(account, provider, operation, key)
+        except KeyError:
+            continue  # No approved rate for this key (an embedding has no output rate).
+        if charged_rate(account, provider, operation, key) > approved:
+            return base * (1 + band)
+    return base
+
+
+def hold_cap(account, provider, record):
+    """The per-call cap a hold was admitted under, from the rates the hold itself recorded.
+
+    Pure: it reads the record and the policy rates only, never the current audit, so a
+    grown-cap hold stays valid after the audit clears. A hold that records no rates (made
+    before the band, Apify, an embedding without them) has the policy cap. A recorded
+    approved rate that differs from the policy, or a charged rate below its approved rate
+    or outside the band, blocks.
+    """
+    tariff = 'Request exceeds verified operation tariff'
+    try:
+        base = money(account['operation_caps_usd'][record['operation']])
+    except (KeyError, TypeError):
+        raise SpendBlocked(tariff) from None
+    band = PRICE_TOLERANCE.get(provider)
+    if band is None:
+        return base
+    context = record.get('request_context', {})
+    if not isinstance(context, dict):
+        raise SpendBlocked(tariff)
+    grown = False
+    for charged_key, approved_key in _RATE_PAIRS[provider]:
+        if charged_key not in context and approved_key not in context:
+            continue
+        try:
+            approved = approved_rate(account, provider, record['operation'], charged_key)
+            recorded_approved, charged = Decimal(str(context[approved_key])), Decimal(str(context[charged_key]))
+        except (InvalidOperation, KeyError, TypeError, ValueError):
+            raise SpendBlocked(tariff) from None
+        if (not recorded_approved.is_finite() or recorded_approved != approved or not charged.is_finite()
+                or charged < approved or not within_price_band(provider, charged, approved)):
+            raise SpendBlocked(tariff)
+        grown = grown or charged > approved
+    return base * (1 + band) if grown else base
+
+
 def gemini_rates_within_approval(account, pinned, price, now):
     """True when Gemini's published current rates are within the approved rates and their band."""
     return gemini_rate_excess(account, pinned, price, now) is not None

@@ -134,6 +134,16 @@ def read_bfl_result(client, polling_url, task_id, *, timeout=15.0):
         timeout=timeout)
 
 
+def _cap_within_hold(cap, account, record):
+    """True when `cap` fits the per-call cap the hold's own recorded rates allow."""
+    from .automatic_spend import hold_cap
+    from .spend_guard import SpendBlocked
+    try:
+        return cap <= hold_cap(account, "bfl", record)
+    except SpendBlocked:
+        return False
+
+
 def _ready_full_bound_receipt(handle, digest, task_id, result, *, observed_at=None):
     """A completed priced image books its full bound, never an invoice estimate."""
     guard = getattr(handle, "guard", None)
@@ -156,13 +166,18 @@ def _ready_full_bound_receipt(handle, digest, task_id, result, *, observed_at=No
     policy = guard.automatic_policy["providers"]["bfl"]
     metadata = record.get("submission_metadata", {})
     cap = decimal_cost(record.get("max_gross_usd"))
+    # The hold's own recorded per-image rate; a hold with none was made at the policy cap.
+    context = record.get("request_context", {})
+    recorded = decimal_cost(
+        context.get("unit_price_usd", policy["account"]["operation_caps_usd"].get(operation))
+        if isinstance(context, dict) else None)
     if (record.get("provider") != "bfl" or record.get("operation") != operation
         or record.get("provider_request_id") != task_id or record.get("request_sha256") != digest
         or record.get("credential_fingerprint") != handle.credential_fingerprint
         or record.get("automatic_policy_sha256") != guard.expected_policy_sha
         or policy.get("price_source_url") != "https://bfl.ai/pricing"
         or not re.fullmatch(r"[a-f0-9]{64}", str(policy.get("price_snapshot_sha256", "")))
-        or cap != Decimal("0.07") or decimal_cost(policy["account"]["operation_caps_usd"].get(operation)) != cap
+        or cap is None or cap != recorded or not _cap_within_hold(cap, policy["account"], record)
         or metadata.get("resolution") != "1.5k" or metadata.get("aspect_ratio") != "3:2"):
         return False
     evidence = {"id": task_id, "status": "Ready", "request_sha256": digest,
