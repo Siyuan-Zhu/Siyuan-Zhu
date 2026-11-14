@@ -71,6 +71,16 @@ GEMINI_CONTRACT_CONSTANTS = {'schema_version': 2, 'provider': 'gemini', 'api': '
 # approved * (1 + band) passes. The base is always the policy-approved rate, never an observation.
 # A provider with no entry (Apify) has no band.
 PRICE_TOLERANCE = {'gemini': Decimal('0.10'), 'bfl': Decimal('0.15')}
+# David (2026-11-13): "if the spend increase isn't significant enough to cause a more than 5 dollar
+# monthly increase, take it, prioritize production stability and reliability technically."
+# The director reads that as: a provider-reported charge above its hold settles at the reported cost
+# while the month's spend increase (month_spend_increase_usd) stays at or below this many USD, and the
+# monthly cash ceiling and every credit bound still hold.
+TOLERATED_MONTHLY_INCREASE_USD = money('5')
+# What the increase counts: 'overruns_only' sums the tolerated overruns above holds; 'both_together'
+# also sums the in-band price excess of the month's holds. Any other value blocks on first use.
+MONTHLY_INCREASE_BASIS = 'overruns_only'
+_INCREASE_BASES = frozenset({'overruns_only', 'both_together'})
 _AUDIT_KEYS = frozenset({'schema_version', 'tolerance', 'basis', 'observed_sha256', 'observed_at', 'above_approval'})
 _AUDIT_ENTRY_KEYS = frozenset({'operation', 'rate', 'approved', 'observed'})
 
@@ -206,6 +216,43 @@ def hold_cap(account, provider, record):
             raise SpendBlocked(tariff)
         grown = grown or charged > approved
     return base * (1 + band) if grown else base
+
+
+def in_band_excess_usd(record):
+    """The hold's cost above what the same hold costs at the approved rates, from its recorded fields.
+
+    Gemini: (admitted input x (charged - approved input rate) + max output x (charged - approved output
+    rate)) / 1e6. BFL: charged - approved. A hold that records no rates has none. It uses the hold's
+    bound, not the realized output: that over-counts, so it reaches the limit sooner. A malformed or
+    below-approved recorded rate blocks.
+    """
+    tariff = 'Request exceeds verified operation tariff'
+    context = record.get('request_context')
+    if context is None:
+        return Decimal('0')
+    if not isinstance(context, dict):
+        raise SpendBlocked(tariff)
+
+    def delta(charged_key, approved_key):
+        if charged_key not in context and approved_key not in context:
+            return None
+        try:
+            charged, approved = Decimal(str(context[charged_key])), Decimal(str(context[approved_key]))
+        except (InvalidOperation, KeyError, TypeError, ValueError):
+            raise SpendBlocked(tariff) from None
+        if not charged.is_finite() or not approved.is_finite() or approved < 0 or charged < approved:
+            raise SpendBlocked(tariff)
+        return charged - approved
+
+    excess = Decimal('0')
+    deltas = [delta(*pair) for pair in _RATE_PAIRS['gemini']]
+    if any(item is not None for item in deltas):
+        tokens = (context.get('admitted_input_tokens'), context.get('max_output_tokens'))
+        if any(type(item) is not int or item < 0 for item in tokens):
+            raise SpendBlocked(tariff)
+        excess += sum((Decimal(count) * (rate or 0) for count, rate in zip(tokens, deltas)), Decimal('0')) / 10**6
+    unit = delta(*_RATE_PAIRS['bfl'][0])
+    return excess + (unit or 0)
 
 
 def gemini_rates_within_approval(account, pinned, price, now):
@@ -401,13 +448,72 @@ def _known(record):
     return record.get('status') == 'settled' and 'actual_gross_usd' in record and bool(record.get('billing_reference'))
 
 
+_TOLERATED_KEYS = frozenset({'schema_version', 'held_usd', 'actual_usd', 'overrun_usd', 'month_increase_usd',
+                             'limit_usd', 'basis', 'observed_at'})
+
+
+def _tolerated_overrun(record):
+    """The overrun of a shape-valid overrun_tolerated record, or None.
+
+    Shape-valid: exactly the mark's keys, schema 1, held and actual equal the record's own
+    max_gross_usd and actual_gross_usd, overrun_usd equal to their difference and above zero (all exact
+    Decimal), the record settled and its receipt on the provider-settled-cost basis. It reads one record.
+    """
+    mark = record.get('overrun_tolerated')
+    if not isinstance(mark, dict) or set(mark) != _TOLERATED_KEYS \
+            or type(mark['schema_version']) is not int or mark['schema_version'] != 1:
+        return None
+    if not _known(record) or not isinstance(record.get('usage_receipt'), dict) \
+            or record['usage_receipt'].get('accounting_basis') != 'provider_settled_cost':
+        return None
+    try:
+        held, actual = Decimal(str(mark['held_usd'])), Decimal(str(mark['actual_usd']))
+        overrun = Decimal(str(mark['overrun_usd']))
+        max_gross, actual_gross = money(record['max_gross_usd']), money(record['actual_gross_usd'])
+    except (InvalidOperation, ValueError, TypeError, SpendBlocked):
+        return None
+    if not (held.is_finite() and actual.is_finite() and overrun.is_finite()):
+        return None
+    if held != max_gross or actual != actual_gross or overrun != actual_gross - max_gross or overrun <= 0:
+        return None
+    return overrun
+
+
+def month_spend_increase_usd(ledger):
+    """The month's spend increase: the only place the amount compared with 5 USD is summed.
+
+    The overrun_usd of every shape-valid overrun_tolerated record, plus (in 'both_together') the
+    in_band_excess_usd of every reservation that is not released. An unknown basis blocks, on every call.
+    """
+    if MONTHLY_INCREASE_BASIS not in _INCREASE_BASES:
+        raise SpendBlocked('Explicit approved automatic policy required')
+    total = Decimal('0')
+    for record in ledger.get('reservations', {}).values():
+        total += _tolerated_overrun(record) or 0
+        if MONTHLY_INCREASE_BASIS == 'both_together' and record.get('status') != 'released':
+            total += in_band_excess_usd(record)
+    return total
+
+
+def verified_tolerated_overrun(ledger, ident):
+    """True when the record's overrun was tolerated and still holds: shape-valid, unflagged, and the
+    month's spend increase is at or below the limit."""
+    record = ledger.get('reservations', {}).get(ident)
+    if not isinstance(record, dict) or _tolerated_overrun(record) is None:
+        return False
+    if record.get('reconciliation_required') or record.get('reconciliation_reasons') or 'usage_receipt_conflict' in record:
+        return False
+    return month_spend_increase_usd(ledger) <= TOLERATED_MONTHLY_INCREASE_USD
+
+
 def cash_exposure(ledger):
     """Expired-cycle unknowns cannot consume a new cycle's free allowance."""
     total = money(ledger.get('cash_spent_before_ledger_usd', '0'))
-    for record in ledger.get('reservations', {}).values():
+    for ident, record in ledger.get('reservations', {}).items():
         if record.get('provider') not in ledger['providers']:
             raise SpendBlocked('Unknown provider liability cannot be discarded')
-        if _known(record) and money(record['actual_gross_usd']) > money(record['max_gross_usd']):
+        if (_known(record) and money(record['actual_gross_usd']) > money(record['max_gross_usd'])
+                and not verified_tolerated_overrun(ledger, ident)):
             raise SpendBlocked('Confirmed overrun requires reconciliation')
     for provider, account in ledger['providers'].items():
         eligible = money(0)
@@ -707,7 +813,30 @@ def admit_usage_receipt(ledger, policy, receipt, *, expected_policy_sha, now):
         record.update(status='settled', actual_gross_usd=str(amount), billing_reference=reference,
                       usage_receipt=copy.deepcopy(receipt))
     overrun = money(record['actual_gross_usd']) > money(record['max_gross_usd'])
-    if conflict or overrun:
+    tolerated = False
+    if (overrun and not conflict and receipt['accounting_basis'] == 'provider_settled_cost'
+            and not record.get('reconciliation_required') and not record.get('reconciliation_reasons')):
+        # A provider-settled charge above its hold settles while the month's spend increase stays at or
+        # below the limit (M2). Count the month with this record settled but not yet marked, so a
+        # re-observation does not count it twice; then check the ceiling and credit bounds on the
+        # marked candidate. A failure removes the mark and falls through to the freeze below, because
+        # raising here would discard the evidence the caller must persist.
+        record.pop('overrun_tolerated', None)
+        extra = money(record['actual_gross_usd']) - money(record['max_gross_usd'])
+        total = month_spend_increase_usd(candidate) + extra
+        if total <= TOLERATED_MONTHLY_INCREASE_USD:
+            record['overrun_tolerated'] = {'schema_version': 1, 'held_usd': record['max_gross_usd'],
+                'actual_usd': record['actual_gross_usd'], 'overrun_usd': str(extra), 'month_increase_usd': str(total),
+                'limit_usd': str(TOLERATED_MONTHLY_INCREASE_USD), 'basis': MONTHLY_INCREASE_BASIS,
+                'observed_at': receipt['observed_at']}
+            try:
+                assert_credit_only_funding(candidate, now=now)
+                if cash_exposure(candidate) > money(policy['cash_ceiling_usd']):
+                    raise SpendBlocked('Retained liabilities exhaust the approved monthly cash ceiling')
+                tolerated = True
+            except SpendBlocked:
+                del record['overrun_tolerated']
+    if conflict or (overrun and not tolerated):
         candidate['reconciliation_required'] = True
         record['reconciliation_required'] = True
         reasons = set(record.get('reconciliation_reasons', []))

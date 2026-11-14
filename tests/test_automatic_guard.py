@@ -586,3 +586,31 @@ def test_bfl_prepaid_credit_bound_still_blocks_in_band():
     with pytest.raises(SpendBlocked,match='Credit-only'):
         guard.reserve('bfl',BFL_OP,'0.08',context={'unit_price_usd':'0.08','approved_unit_price_usd':'0.07'})
     assert list(document['reservations'])==['settled']
+
+
+# The monthly increase limit also bounds new holds when in-band price excess counts (both_together).
+def inband_existing(input_tokens):
+    """A hold whose recorded in-band excess is its input tokens x 0.10 USD per million."""
+    return {'provider':'gemini','operation':OP,'max_gross_usd':'0.01','status':'reserved',
+        'created_at':NOW.isoformat(),'request_context':{'admitted_input_tokens':input_tokens,
+        'max_output_tokens':0,'input_token_usd_per_million':'0.85','output_token_usd_per_million':'3.75',
+        'approved_input_token_usd_per_million':'0.75','approved_output_token_usd_per_million':'3.75'}}
+
+
+def test_both_together_reserve_blocks_past_the_increase_limit(monkeypatch):
+    # The largest valid in-band Gemini hold here adds 0.0054777 (65536 in, 1500 out at the grown cap).
+    assert auto.in_band_excess_usd({'request_context':GEMINI_CTX})==Decimal('0.0054777')
+    monkeypatch.setattr(auto,'MONTHLY_INCREASE_BASIS','both_together')
+    guard=budget(rates=IN_BAND);document=guard.ledger.document
+    document['reservations']['within']=inband_existing(49_900_000)
+    assert auto.month_spend_increase_usd(document)==Decimal('4.99')
+    guard.reserve('gemini',OP,'0.0602547',context=GEMINI_CTX)  # 4.99 + 0.0054777 stays within 5
+    guard=budget(rates=IN_BAND);document=guard.ledger.document
+    document['reservations']['over']=inband_existing(49_960_000)
+    assert auto.month_spend_increase_usd(document)==Decimal('4.996')
+    with pytest.raises(SpendBlocked,match=TARIFF_BLOCK):  # 4.996 + 0.0054777 is above 5
+        guard.reserve('gemini',OP,'0.0602547',context=GEMINI_CTX)
+    assert list(document['reservations'])==['over']
+    monkeypatch.setattr(auto,'MONTHLY_INCREASE_BASIS','overruns_only')
+    guard.reserve('gemini',OP,'0.0602547',context=GEMINI_CTX)
+    assert len(guard.ledger.document['reservations'])==2

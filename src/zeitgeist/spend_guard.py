@@ -582,9 +582,15 @@ class BudgetGuard:
                 else account.get("operation_caps_usd", {}).get(operation)
             )
             if self.require_credential_binding or doc.get("credential_binding_required"):
-                from .automatic_spend import hold_cap
+                from . import automatic_spend as accounting
                 candidate = {"provider": provider, "operation": operation, "request_context": context or {}}
-                if cap > hold_cap(account, provider, candidate):
+                if cap > accounting.hold_cap(account, provider, candidate):
+                    raise SpendBlocked("Request exceeds verified operation tariff")
+                # doc does not hold the new record yet, so its in-band excess is added exactly once.
+                increase = accounting.month_spend_increase_usd(doc)
+                if accounting.MONTHLY_INCREASE_BASIS == "both_together":
+                    increase += accounting.in_band_excess_usd(candidate)
+                if increase > accounting.TOLERATED_MONTHLY_INCREASE_USD:
                     raise SpendBlocked("Request exceeds verified operation tariff")
             if cap == 0:
                 free_ops = account.get("verified_free_operations", [])

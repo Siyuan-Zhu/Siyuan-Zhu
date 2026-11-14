@@ -637,3 +637,13 @@ def test_bfl_at_approved_price_keeps_the_0_07_hold_and_receipt(monkeypatch):
     guard,handle,digest=real_bfl_request(monkeypatch)
     assert guard.ledger.document['reservations'][handle.reservation_id]['max_gross_usd']=='0.07'
     assert lifecycle._ready_full_bound_receipt(handle,digest,'task123',READY) is True
+
+
+def test_bfl_surcharge_within_tolerance_settles_without_freezing(monkeypatch):
+    guard,handle,digest=real_bfl_request(monkeypatch)
+    result={'id':'task123','status':'Ready','result':{'sample':'https://delivery.us7.bfl.ai/private'}}
+    assert lifecycle.submit_bfl_receipt(handle,digest,'task123',dict(result,cost=8)) is True
+    r=guard.ledger.document['reservations'][handle.reservation_id]
+    assert r['actual_gross_usd']=='0.08' and r['max_gross_usd']=='0.07'
+    assert r['overrun_tolerated']['overrun_usd']=='0.01'
+    assert not guard.ledger.document.get('reconciliation_required') and not r.get('reconciliation_required')

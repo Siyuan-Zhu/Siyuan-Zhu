@@ -927,3 +927,46 @@ def test_non_numeric_or_missing_current_rate_blocks(rate):
     else: contract['operations'][OP]['input_token_usd_per_million']=rate
     observe_contract(obs,contract)
     with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+# Month handoff with tolerated provider overruns (P5, I2). The fixture lives with the overrun tests.
+HANDOFF_NOW=datetime(2026,11,1,0,1,tzinfo=timezone.utc)
+
+
+def tolerated_handoff(prior):
+    from tests.test_usage_receipt_overrun import tolerance_fixture
+    ledger,policy,obs=tolerance_fixture(prior=prior,now=HANDOFF_NOW)
+    plan=auto.prepare_month_handoff(ledger,policy,obs,expected_policy_sha=auto.digest(policy),
+        source_identity=dict(auto.TARGET,document_id='2026-10',update_time=HANDOFF_NOW.isoformat()),now=HANDOFF_NOW)
+    return ledger,policy,plan
+
+
+def test_handoff_succeeds_with_tolerated_records_and_frozen_copy_passes():
+    ledger,policy,plan=tolerated_handoff(['1.00','2.00'])
+    assert plan['source_after']['closed_for_rollover'] is True
+    assert auto.cash_exposure(plan['source_after'])<=Decimal(ledger['cash_ceiling_usd'])
+    assert auto.month_spend_increase_usd(plan['source_after'])==Decimal('3.00')
+
+
+def test_new_month_starts_with_the_full_increase_allowance():
+    ledger,policy,plan=tolerated_handoff(['1.00','2.00'])
+    destination=plan['destination_after']
+    assert set(destination['reservations'])=={'open-hold'}
+    assert auto.month_spend_increase_usd(destination)==Decimal('0')
+
+
+def test_carried_hold_overrun_counts_against_the_new_month():
+    from tests.test_usage_receipt_overrun import open_receipt, admit
+    ledger,policy,plan=tolerated_handoff(['1.00','2.00'])
+    receipt=open_receipt('0.08',observed_at=HANDOFF_NOW)
+    c=admit(plan['destination_after'],policy,receipt,HANDOFF_NOW)
+    assert c['reservations']['open-hold']['overrun_tolerated']['month_increase_usd']=='0.01'
+    assert not c.get('reconciliation_required')
+
+
+def test_handoff_baseline_drops_by_the_actual_amount_including_overrun():
+    ledger,policy,plan=tolerated_handoff(['0.01'])
+    assert ledger['reservations']['prior-0']['actual_gross_usd']=='0.08'
+    src_baseline=ledger['providers']['bfl']['credit_baseline_usd']
+    dest=plan['destination_after']
+    assert Decimal(dest['providers']['bfl']['credit_baseline_usd'])==Decimal(src_baseline)-Decimal('0.08')
