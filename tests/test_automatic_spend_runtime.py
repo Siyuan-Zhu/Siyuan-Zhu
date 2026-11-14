@@ -453,3 +453,32 @@ def test_maintenance_applies_an_apify_rebind_once_and_stays_stable(monkeypatch):
     assert wire.docs["policy_"+sha]["providers"]["apify"]["account"]["credential_fingerprint"] == "c"*16
     run(wire, sha, observe)
     assert len(wire.docs["2026-10"]["providers"]["apify"]["credential_rebinds"]) == 1
+
+
+# Private owner-notice hook (5b): only a committed refresh, or a handoff, exposes notices.
+def test_maintenance_result_exposes_notices_only_after_a_committed_refresh(monkeypatch):
+    from tests.test_automatic_spend import observe_contract, contract_for
+    wire, sha, observe, obs = setup(monkeypatch)
+    observe_contract(obs, contract_for(rates=('0.33','2.50')))
+    assert run(wire, sha, observe, apply=False).owner_spend_notices() == []
+    notices = run(wire, sha, observe, apply=True).owner_spend_notices()
+    assert len(notices) == 1 and notices[0]['kind'] == 'price_band' and notices[0]['provider'] == 'gemini'
+    assert runtime.MaintenanceResult('blocked', 'refresh', '2026-10', {'after': {}}).owner_spend_notices() == []
+
+
+def test_handoff_notices_include_a_last_day_overrun_from_the_frozen_source():
+    from tests.test_automatic_spend import tolerated_handoff
+    ledger, policy, plan = tolerated_handoff(['1.00'])
+    rid = 'prior-0'
+    assert rid not in plan['destination_after']['reservations']
+    r = runtime.MaintenanceResult('handed_off', 'handoff', '2026-12', plan)
+    assert rid in {x.get('reservation_id') for x in r.owner_spend_notices()}
+
+
+def test_handoff_notices_are_deduplicated_by_notice_id_source_first():
+    from tests.test_automatic_spend import tolerated_handoff
+    ledger, policy, plan = tolerated_handoff(['1.00'])
+    twin = dict(plan, destination_after=copy.deepcopy(plan['source_after']))
+    notices = runtime.MaintenanceResult('handed_off', 'handoff', '2026-12', twin).owner_spend_notices()
+    ids = [x['notice_id'] for x in notices]
+    assert len(ids) == len(set(ids)) == 1 and notices == auto.owner_spend_notices(plan['source_after'])

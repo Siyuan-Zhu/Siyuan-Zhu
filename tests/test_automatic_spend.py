@@ -970,3 +970,45 @@ def test_handoff_baseline_drops_by_the_actual_amount_including_overrun():
     src_baseline=ledger['providers']['bfl']['credit_baseline_usd']
     dest=plan['destination_after']
     assert Decimal(dest['providers']['bfl']['credit_baseline_usd'])==Decimal(src_baseline)-Decimal('0.08')
+
+
+# Private owner-notice hook (5b): a notice carries only what the ledger carries; nothing calls it yet.
+def notice_ledger(rates=('0.33','2.50'),with_overrun=True):
+    from tests.test_usage_receipt_overrun import tolerated_record
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=rates))
+    ledger=refresh(ledger,policy,obs)
+    if with_overrun: ledger['reservations']['prior-0']=tolerated_record(0,'0.01')
+    return ledger,policy,obs
+
+
+def test_owner_spend_notices_lists_band_and_overrun_kinds():
+    ledger,policy,obs=notice_ledger()
+    n=auto.owner_spend_notices(ledger)
+    rid='prior-0'
+    assert [x['kind'] for x in n]==['price_band','tolerated_overrun'] and n[0]['provider']=='gemini' and n[1]['reservation_id']==rid
+    audit=ledger['providers']['gemini']['price_band_audit']
+    mark=ledger['reservations'][rid]['overrun_tolerated']
+    assert n[0]=={'kind':'price_band','notice_id':auto.digest({'kind':'price_band','provider':'gemini',
+        'observed_sha256':audit['observed_sha256'],'above_approval':audit['above_approval']}),'provider':'gemini',**audit}
+    assert n[1]=={'kind':'tolerated_overrun','notice_id':auto.digest({'kind':'tolerated_overrun','reservation_id':rid,
+        'billing_reference':ledger['reservations'][rid]['billing_reference']}),'reservation_id':rid,**mark}
+
+
+def test_owner_spend_notices_is_pure_and_empty_without_audit_or_mark():
+    ledger,policy,obs=fixtures()
+    assert auto.owner_spend_notices(ledger)==[]
+    ledger,policy,obs=notice_ledger()
+    before=copy.deepcopy(ledger)
+    n=auto.owner_spend_notices(ledger)
+    n[0]['above_approval'].clear();n[1]['overrun_usd']='99'
+    assert ledger==before
+
+
+def test_notice_ids_are_stable_across_refreshes():
+    ledger,policy,obs=notice_ledger()
+    ids=lambda l:[x['notice_id'] for x in auto.owner_spend_notices(l)]
+    assert ids(refresh(ledger,policy,obs))==ids(ledger)
+    changed=copy.deepcopy(obs)
+    observe_contract(changed,contract_for(rates=('0.32','2.50')))
+    assert ids(refresh(ledger,policy,changed))!=ids(ledger)

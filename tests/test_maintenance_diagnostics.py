@@ -164,3 +164,41 @@ def test_maintenance_dispatch_is_exclusive_private_and_has_no_generation():
     for name in ('provider-metadata','bfl-contract-probe','isolated-staging-dryrun'):
         condition=workflow.split('  '+name+':\n',1)[1].split('\n',1)[0]
         assert 'inputs.maintenance_only != true' in condition
+
+
+# Price tolerance band: the private audit and overrun marks never reach the CLI or the edition.
+def test_public_status_never_carries_audit_or_overrun():
+    from src.zeitgeist.automatic_spend_runtime import MaintenanceResult
+    from tests.test_automatic_spend import notice_ledger
+    ledger,policy,obs=notice_ledger()
+    r=MaintenanceResult('refreshed','refresh','2026-10',{'after':ledger})
+    assert set(r.public_status())=={'status','operation','month'}
+    assert 'price_band' not in repr(r) and 'above_approval' not in repr(r)
+
+
+def test_cli_in_band_refresh_prints_only_public_status(monkeypatch,capsys):
+    from src.zeitgeist.automatic_spend_runtime import MaintenanceResult
+    from tests.test_automatic_spend import notice_ledger
+    ledger,policy,obs=notice_ledger()
+    observed_sha=ledger['providers']['gemini']['price_band_audit']['observed_sha256']
+    result=MaintenanceResult('refreshed','refresh','2026-10',{'after':ledger})
+    assert ledger['reservations']['prior-0']['overrun_tolerated'] and ledger['providers']['gemini']['price_band_audit']
+    monkeypatch.setattr(cli,'PrivateFirestoreStore',lambda:object())
+    monkeypatch.setattr(cli,'maintain_spend_control',lambda store,**kwargs:result)
+    assert cli.main(['--apply'])==0
+    out=capsys.readouterr().out
+    assert set(json.loads(out))=={'status','operation','month'}
+    assert all(s not in out for s in ('price_band','above_approval','overrun_tolerated','0.33','0.08',observed_sha))
+
+
+def test_tolerated_overrun_raises_nothing_into_edition_public_output(monkeypatch,caplog,capsys):
+    from src.zeitgeist import provider_lifecycle as lifecycle
+    from tests.test_provider_lifecycle_receipts import real_bfl_request
+    guard,handle,digest=real_bfl_request(monkeypatch)
+    result={'id':'task123','status':'Ready','result':{'sample':'https://delivery.us7.bfl.ai/private'},'cost':8}
+    caplog.set_level('DEBUG')
+    assert lifecycle.submit_bfl_receipt(handle,digest,'task123',result) is True
+    assert guard.ledger.document['reservations'][handle.reservation_id]['overrun_tolerated']
+    assert not [r for r in caplog.records if r.levelno>=30]
+    captured=capsys.readouterr()
+    assert captured.out=='' and captured.err==''

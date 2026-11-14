@@ -33,6 +33,24 @@ class MaintenanceResult:
         """Never return provider balances, account identities, holds, or errors."""
         return {"status": self.status, "operation": self.operation, "month": self.month}
 
+    def owner_spend_notices(self):
+        """Private notices for a future owner email; never public, logged or printed.
+
+        A refreshed plan yields the notices of its new ledger; a handoff yields those of the frozen
+        source and then the destination, de-duplicated by notice_id, so a last-day overrun is kept.
+        """
+        if self.status == "refreshed":
+            return accounting.owner_spend_notices(self.plan["after"])
+        if self.status == "handed_off":
+            seen, notices = set(), []
+            for key in ("source_after", "destination_after"):
+                for notice in accounting.owner_spend_notices(self.plan[key]):
+                    if notice["notice_id"] not in seen:
+                        seen.add(notice["notice_id"])
+                        notices.append(notice)
+            return notices
+        return []
+
 
 class PrivateFirestoreStore:
     """Fixed reviewed private target; no staging namespace or environment override."""

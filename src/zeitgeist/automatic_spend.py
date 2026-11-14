@@ -506,6 +506,34 @@ def verified_tolerated_overrun(ledger, ident):
     return month_spend_increase_usd(ledger) <= TOLERATED_MONTHLY_INCREASE_USD
 
 
+def owner_spend_notices(ledger):
+    """Private notices for the owner (5b): in-band price audits, then tolerated overruns.
+
+    Pure and read-only. A notice carries only what the ledger carries: an audit dict on a provider
+    account, an overrun_tolerated mark on a reservation. The result is private; never log or print it.
+    Providers and reservation ids are in sorted order. notice_id is stable across refreshes.
+    """
+    notices = []
+    providers = ledger.get('providers', {})
+    for provider in sorted(providers):
+        audit = providers[provider].get('price_band_audit')
+        if isinstance(audit, dict):
+            audit = copy.deepcopy(audit)
+            notices.append({'kind': 'price_band', 'notice_id': digest({
+                'kind': 'price_band', 'provider': provider, 'observed_sha256': audit.get('observed_sha256'),
+                'above_approval': audit.get('above_approval')}), 'provider': provider, **audit})
+    reservations = ledger.get('reservations', {})
+    for ident in sorted(reservations):
+        record = reservations[ident]
+        mark = record.get('overrun_tolerated') if isinstance(record, dict) else None
+        if isinstance(mark, dict):
+            notices.append({'kind': 'tolerated_overrun', 'notice_id': digest({
+                'kind': 'tolerated_overrun', 'reservation_id': ident,
+                'billing_reference': record.get('billing_reference')}),
+                'reservation_id': ident, **copy.deepcopy(mark)})
+    return notices
+
+
 def cash_exposure(ledger):
     """Expired-cycle unknowns cannot consume a new cycle's free allowance."""
     total = money(ledger.get('cash_spent_before_ledger_usd', '0'))
