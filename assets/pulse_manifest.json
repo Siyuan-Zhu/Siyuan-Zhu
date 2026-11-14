@@ -1,32 +1,32 @@
 {
   "version": 1,
-  "date": "2026-11-13",
-  "word": "Epiphany",
-  "gloss": "Manifesting the invisible spirit into form.",
-  "archetype": "POETIC_CINEMA",
-  "medium": "PHOTOGRAPHY",
+  "date": "2026-11-14",
+  "word": "Effigiation",
+  "gloss": "Giving tangible shape to the unseen.",
+  "archetype": "LITERARY_JOURNAL",
+  "medium": "UNVERIFIED_IMAGE",
   "files": {
-    "assets/daily_pulse_light.webp": "8867649d1b92509c1f7c21b793be2a3386cfe701dddb81ae821e74a491649608",
-    "assets/daily_pulse_dark.webp": "8867649d1b92509c1f7c21b793be2a3386cfe701dddb81ae821e74a491649608",
-    "assets/daily_pulse.svg": "61776ea76cf5840db3394a060e9995329dd94c9d7a6b961273b5d266dec37bbe",
-    "assets/pulse/2026-11-13.webp": "710f754b38ed35a898df6585ae676b058b0a15755a5595c186693b078343b640"
+    "assets/daily_pulse_light.webp": "41e4147e8acdbde647714734d957bb3b1a425cd9da066fe8f9c58922bdd21cdc",
+    "assets/daily_pulse_dark.webp": "6cc29b339ea10caa325d0996f08d6c30f3aa682305e31679e0825d9a9e45b855",
+    "assets/daily_pulse.svg": "c0e09bb22f78d47101d86a3eb3a9c75b787c96e99815bf0ef7e0416c9129963e",
+    "assets/pulse/2026-11-14.webp": "28a494d5eebc81543fe027f502bd106cc8677469c3db6bda80bd9cbe4197be96"
   },
   "media_provenance": {
     "version": 1,
-    "classification": "PHOTOGRAPHY",
-    "basis": "camera_reported",
+    "classification": "UNVERIFIED_IMAGE",
+    "basis": "insufficient_evidence",
     "provider": "unsplash",
-    "asset_id": "oiXkO7p2UfI",
-    "source_url": "https://unsplash.com/photos/oiXkO7p2UfI",
-    "camera_make": "Canon",
-    "camera_model": "Canon EOS 6D",
+    "asset_id": "qgJF8MsO_b4",
+    "source_url": "https://unsplash.com/photos/qgJF8MsO_b4",
+    "camera_make": "",
+    "camera_model": "",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
       "statement": ""
     },
     "source_statement_sha256": "",
-    "allowance_exception": false
+    "allowance_exception": true
   },
-  "publication_id": "20482fff6ba4631bcf5a"
+  "publication_id": "b064d9a04c5d00fa6e8c"
 }
