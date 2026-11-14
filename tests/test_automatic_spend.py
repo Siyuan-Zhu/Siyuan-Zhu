@@ -1,5 +1,6 @@
 """Offline automatic policy planning never refreshes manual facts or loses holds."""
 import copy
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 import pytest
 from src.zeitgeist import automatic_spend as auto
@@ -539,7 +540,7 @@ def test_generation_operation_without_published_output_rate_blocks():
     with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
 
 
-@pytest.mark.parametrize('rates',[('0.31','2.50'),('0.30','2.51')])
+@pytest.mark.parametrize('rates',[('0.34','2.50'),('0.30','2.76')])
 def test_higher_current_rate_blocks(rates):
     ledger,policy,obs=fixtures()
     observe_contract(obs,contract_for(rates=rates))
@@ -652,9 +653,111 @@ def test_contract_unit_or_currency_change_blocks(field,value):
 
 def test_hash_match_clears_stale_rate_audit_fields():
     ledger,policy,obs=fixtures()
-    ledger['providers']['gemini'].update(price_observed_sha256='f'*64,price_observed_at='2026-11-01T00:00:00+00:00')
+    ledger['providers']['gemini'].update(price_observed_sha256='f'*64,price_observed_at='2026-11-01T00:00:00+00:00',
+                                         price_band_audit={'schema_version':1})
     account=refresh(ledger,policy,obs)['providers']['gemini']
     assert 'price_observed_sha256' not in account and 'price_observed_at' not in account
+    assert 'price_band_audit' not in account
+
+
+# Price tolerance band: a current rate up to +10% of the approved rate passes and is audited privately.
+def band_audit(ledger,policy,obs,rates,**extra):
+    observe_contract(obs,contract_for(rates=rates,**extra))
+    return refresh(ledger,policy,obs)['providers']['gemini']['price_band_audit']
+
+
+def test_price_tolerance_is_the_owner_approved_per_provider_band():
+    assert auto.PRICE_TOLERANCE=={'gemini':Decimal('0.10'),'bfl':Decimal('0.15')}
+
+
+@pytest.mark.parametrize('rates,raised',[
+    (('0.33','2.50'),{('input_token_usd_per_million','0.33')}),
+    (('0.30','2.75'),{('output_token_usd_per_million','2.75')}),
+    (('0.33','2.75'),{('input_token_usd_per_million','0.33'),('output_token_usd_per_million','2.75')})])
+def test_rate_exactly_ten_percent_above_approval_passes(rates,raised):
+    ledger,policy,obs=fixtures()
+    audit=band_audit(ledger,policy,obs,rates)
+    assert {(e['rate'],e['observed']) for e in audit['above_approval']}==raised
+
+
+@pytest.mark.parametrize('rates',[('0.33003','2.50'),('0.30','2.75025')])
+def test_rate_just_above_ten_percent_blocks(rates):
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=rates))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_small_rise_within_band_passes():
+    ledger,policy,obs=fixtures()
+    assert band_audit(ledger,policy,obs,('0.31','2.50'))['tolerance']=='0.10'
+
+
+def test_band_is_measured_from_the_approved_rate_never_the_last_observation():
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=('0.327','2.725')))
+    first=refresh(ledger,policy,obs)
+    obs2=copy.deepcopy(obs)
+    observe_contract(obs2,contract_for(rates=('0.327','2.725'),future_rate_effective_date='2027-01-01'))
+    second=refresh(first,policy,obs2)
+    assert (second['providers']['gemini']['price_band_audit']['above_approval']
+            ==first['providers']['gemini']['price_band_audit']['above_approval'])
+    obs3=copy.deepcopy(obs)
+    observe_contract(obs3,contract_for(rates=('0.35643','2.97025')))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(second,policy,obs3)
+
+
+@pytest.mark.parametrize('case',['missing_input_rate','missing_output_rate','renamed_operation'])
+def test_in_band_values_never_excuse_a_missing_rate_or_operation(case):
+    ledger,policy,obs=fixtures()
+    contract=contract_for(rates=('0.315','2.625'),op=OP+'-renamed' if case=='renamed_operation' else OP)
+    if case=='missing_input_rate': contract['operations'][OP].pop('input_token_usd_per_million')
+    if case=='missing_output_rate': contract['operations'][OP].pop('output_token_usd_per_million')
+    observe_contract(obs,contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_zero_approved_output_rate_has_no_band():
+    ledger,policy,obs=fixtures()
+    for target in (ledger['providers']['gemini'],policy['providers']['gemini']['account']):
+        target['request_limits'][OP]['output_token_usd_per_million']='0'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    observe_contract(obs,contract_for(rates=('0.30','0.000001'),billing_basis='input_tokens'))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_2027_rates_never_pass_under_the_2026_approval():
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=('0.60','5.00')))
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_in_band_pass_records_private_audit():
+    ledger,policy,obs=fixtures()
+    contract=contract_for(rates=('0.33','2.50'))
+    observe_contract(obs,contract)
+    audit=refresh(ledger,policy,obs)['providers']['gemini']['price_band_audit']
+    assert audit=={'schema_version':1,'tolerance':'0.10','basis':'policy_approved_rate',
+        'observed_sha256':auto.digest(contract),'observed_at':NOW.isoformat(),
+        'above_approval':[{'operation':OP,'rate':'input_token_usd_per_million','approved':'0.3','observed':'0.33'}]}
+
+
+def test_verified_price_band_audit_rejects_out_of_band_or_malformed():
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=('0.33','2.50')))
+    account=refresh(ledger,policy,obs)['providers']['gemini']
+    assert auto.verified_price_band_audit(account,'gemini')
+    bad=copy.deepcopy(account);bad['price_band_audit']['above_approval'][0]['observed']='0.34'
+    assert auto.verified_price_band_audit(bad,'gemini') is False
+    bad=copy.deepcopy(account);bad['price_band_audit'].pop('basis')
+    assert auto.verified_price_band_audit(bad,'gemini') is False
+
+
+def test_rate_at_or_below_approval_clears_band_audit():
+    ledger,policy,obs=fixtures()
+    ledger['providers']['gemini']['price_band_audit']={'schema_version':1}
+    observe_contract(obs,contract_for(rates=('0.30','2.50'),future_rate_effective_date='2027-01-01'))
+    account=refresh(ledger,policy,obs)['providers']['gemini']
+    assert 'price_band_audit' not in account
 
 
 @pytest.mark.parametrize('rate',['not-a-number',None,'NaN','Infinity',''])

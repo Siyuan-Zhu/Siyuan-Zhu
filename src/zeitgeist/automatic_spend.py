@@ -67,38 +67,106 @@ GEMINI_CONTRACT_CONSTANTS = {'schema_version': 2, 'provider': 'gemini', 'api': '
                              'currency': 'USD', 'service_tier': 'paid_standard', 'unit': '1000000_tokens'}
 
 
+# Owner-approved price tolerance per provider (2a, P2 and 2d, 2026-11-13): a current rate up to
+# approved * (1 + band) passes. The base is always the policy-approved rate, never an observation.
+# A provider with no entry (Apify) has no band.
+PRICE_TOLERANCE = {'gemini': Decimal('0.10'), 'bfl': Decimal('0.15')}
+_AUDIT_KEYS = frozenset({'schema_version', 'tolerance', 'basis', 'observed_sha256', 'observed_at', 'above_approval'})
+_AUDIT_ENTRY_KEYS = frozenset({'operation', 'rate', 'approved', 'observed'})
+
+
+def within_price_band(provider, observed, approved):
+    """True when `observed <= approved * (1 + band)`. Exact Decimal; a bad or negative value is False."""
+    band = PRICE_TOLERANCE.get(provider)
+    if band is None:
+        return False
+    try:
+        observed, approved = Decimal(str(observed)), Decimal(str(approved))
+    except (InvalidOperation, ValueError, TypeError):
+        return False
+    if not observed.is_finite() or not approved.is_finite() or observed < 0 or approved < 0:
+        return False
+    return observed <= approved * (1 + band)
+
+
+def approved_rate(account, provider, operation, rate_key):
+    """The policy-approved rate as a Decimal. Raises KeyError or InvalidOperation when none is approved."""
+    if provider == 'gemini':
+        value = account['request_limits'][operation][rate_key]
+    elif provider == 'bfl' and rate_key == 'unit_price_usd':
+        value = account['operation_caps_usd'][operation]
+    else:
+        raise KeyError(rate_key)
+    return Decimal(str(value))
+
+
+def verified_price_band_audit(account, provider):
+    """True when the account's private price_band_audit is well formed and every entry is in band.
+
+    Each entry must sit above the account's approved rate and within the provider's band of it.
+    """
+    try:
+        audit = account.get('price_band_audit')
+        if (not isinstance(audit, dict) or set(audit) != _AUDIT_KEYS or audit['schema_version'] != 1 or
+                audit['tolerance'] != str(PRICE_TOLERANCE[provider]) or audit['basis'] != 'policy_approved_rate' or
+                not isinstance(audit['observed_sha256'], str) or not isinstance(audit['observed_at'], str)):
+            return False
+        entries = audit['above_approval']
+        if not isinstance(entries, list) or not entries:
+            return False
+        for entry in entries:
+            if (not isinstance(entry, dict) or set(entry) != _AUDIT_ENTRY_KEYS or
+                    not isinstance(entry['approved'], str) or not isinstance(entry['observed'], str)):
+                return False
+            approved = approved_rate(account, provider, entry['operation'], entry['rate'])
+            recorded, observed = Decimal(entry['approved']), Decimal(entry['observed'])
+            if recorded != approved or not approved < observed or not within_price_band(provider, observed, approved):
+                return False
+        return True
+    except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError):
+        return False
+
+
 def gemini_rates_within_approval(account, pinned, price, now):
-    """True when Gemini's published current rates do not exceed the approved rates.
+    """True when Gemini's published current rates are within the approved rates and their band."""
+    return gemini_rate_excess(account, pinned, price, now) is not None
+
+
+def gemini_rate_excess(account, pinned, price, now):
+    """In-band excess of Gemini's published current rates over the approved rates, or None to block.
 
     The hash of the whole pricing page changes with wording and announced future
-    rates; only the rates in effect matter. Equal or lower rates pass, any increase
-    or missing operation blocks. Fields prefixed future_ are never read.
+    rates; only the rates in effect matter. A rate above the band, a missing rate
+    or operation blocks (None). Otherwise the result lists every rate above its
+    approved rate (but within the band), sorted; it is empty when none is. Fields
+    prefixed future_ are never read.
     """
+    excess = []
     try:
         contract = price.get('contract')
         if (not isinstance(contract, dict) or price.get('sha256') != digest(contract) or
                 price.get('source_url') != pinned['price_source_url'] or
                 not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24)):
-            return False
+            return None
         # Exactly the constants gemini_tariff.normalize_gemini_tariff emits: a change of unit,
         # currency, tier or schema means the rates below no longer mean what was approved.
         if any(contract.get(key) != value for key, value in GEMINI_CONTRACT_CONSTANTS.items()):
-            return False
+            return None
         published = contract['operations']
         limits = account.get('request_limits', {})
         for operation in set(limits) | set(account.get('operation_caps_usd', {})):
             observed = published.get(operation)
             if not isinstance(observed, dict):
-                return False
+                return None
             approved = limits.get(operation, {})
             input_only = observed.get('billing_basis') == 'input_tokens'
             # Every budgeted operation needs an approved rate to be compared against.
             if 'input_token_usd_per_million' not in approved:
-                return False
+                return None
             if 'output_token_usd_per_million' not in approved and not input_only:
-                return False
+                return None
             if input_only and Decimal(str(approved.get('output_token_usd_per_million', '0'))) != 0:
-                return False
+                return None
             for key in ('input_token_usd_per_million', 'output_token_usd_per_million'):
                 rate = observed.get(key)
                 # Input-only operations (embeddings) publish no output rate: that is zero.
@@ -106,15 +174,19 @@ def gemini_rates_within_approval(account, pinned, price, now):
                     rate = '0'
                 if key in approved:
                     rate, ceiling = Decimal(str(rate)), Decimal(str(approved[key]))
-                    if not rate.is_finite() or not ceiling.is_finite() or rate > ceiling:
-                        return False
+                    if not rate.is_finite() or not ceiling.is_finite() or not within_price_band('gemini', rate, ceiling):
+                        return None
+                    if rate > ceiling:
+                        excess.append({'operation': operation, 'rate': key,
+                                       'approved': format(ceiling.normalize(), 'f'),
+                                       'observed': format(rate.normalize(), 'f')})
             if approved.get('pricing_valid_until') is not None:
                 through = date.fromisoformat(observed['published_current_rate_through_date'])
                 if through < _time(approved['pricing_valid_until']).date():
-                    return False
-        return True
+                    return None
+        return sorted(excess, key=lambda item: (item['operation'], item['rate']))
     except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError, SpendBlocked):
-        return False
+        return None
 
 
 def validate_policy(policy, expected_policy_sha, now):
@@ -315,14 +387,23 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
             price = observation.get('price_snapshots', {}).get(provider, {})
             if price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
                 # Gemini edits its pricing page without changing rates: compare the rates in effect.
-                if provider != 'gemini' or not gemini_rates_within_approval(account, pinned, price, now):
+                excess = gemini_rate_excess(account, pinned, price, now) if provider == 'gemini' else None
+                if excess is None:
                     raise SpendBlocked('Primary price snapshot changed, stale or missing')
                 account['price_observed_sha256'] = price['sha256']
                 account['price_observed_at'] = price['observed_at']
+                if excess:
+                    account['price_band_audit'] = {
+                        'schema_version': 1, 'tolerance': str(PRICE_TOLERANCE[provider]),
+                        'basis': 'policy_approved_rate', 'observed_sha256': price['sha256'],
+                        'observed_at': price['observed_at'], 'above_approval': excess}
+                else:
+                    account.pop('price_band_audit', None)
             else:
                 # The pinned hash matched: no rate-only audit trail applies to this refresh.
                 account.pop('price_observed_sha256', None)
                 account.pop('price_observed_at', None)
+                account.pop('price_band_audit', None)
         baseline = money(account['credit_baseline_usd'])
         confirmed = _confirmed(candidate, provider)
         if provider == 'gemini':
