@@ -586,6 +586,8 @@ class BudgetGuard:
                 candidate = {"provider": provider, "operation": operation, "request_context": context or {}}
                 if cap > accounting.hold_cap(account, provider, candidate):
                     raise SpendBlocked("Request exceeds verified operation tariff")
+                # A refresh since the caller read its rates keeps the reference; the rates show it.
+                accounting.assert_hold_rates_current(account, provider, operation, context)
                 # doc does not hold the new record yet, so its in-band excess is added exactly once.
                 increase = accounting.month_spend_increase_usd(doc)
                 if accounting.MONTHLY_INCREASE_BASIS == "both_together":

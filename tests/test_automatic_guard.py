@@ -429,7 +429,9 @@ def bfl_guard(observed=None):
     ledger.document['automatic_policy_sha256']=guard.expected_policy_sha
     ledger.document['providers']['bfl'].update(copy.deepcopy(account))
     if observed is not None:
-        ledger.document['providers']['bfl']['price_band_audit']=bfl_audit(observed)
+        audit=bfl_audit(observed)
+        ledger.document['providers']['bfl'].update(price_band_audit=audit,
+            price_observed_sha256=audit['observed_sha256'],price_observed_at=audit['observed_at'])
     return guard
 
 
@@ -613,4 +615,71 @@ def test_both_together_reserve_blocks_past_the_increase_limit(monkeypatch):
     assert list(document['reservations'])==['over']
     monkeypatch.setattr(auto,'MONTHLY_INCREASE_BASIS','overruns_only')
     guard.reserve('gemini',OP,'0.0602547',context=GEMINI_CTX)
+    assert len(guard.ledger.document['reservations'])==2
+
+
+# A refresh between the rate read and the reservation is caught by reserve itself (F1).
+BILLING_CHANGED='Billing policy changed after token counting; retry admission'
+
+
+def before_mutate(ledger,number,change):
+    """Run change(document) just before the ledger's number-th mutate from now (1 is the next one)."""
+    real,seen=ledger.mutate,[]
+    def mutate(fn):
+        seen.append(fn)
+        if len(seen)==number: change(ledger.document)
+        return real(fn)
+    ledger.mutate=mutate
+
+
+def test_audit_added_between_admission_and_reserve_blocks_the_hold():
+    guard=budget(rates=IN_BAND);ledger=guard.ledger;request=bounded(guard)
+    audit=ledger.document['providers']['gemini'].pop('price_band_audit')
+    c=guard.counted_genai_admission(OP,request,count_tokens=fake(10000))
+    assert c['input_token_usd_per_million']=='0.75'
+    before_mutate(ledger,2,lambda doc:doc['providers']['gemini'].__setitem__('price_band_audit',copy.deepcopy(audit)))
+    target=Target()
+    with pytest.raises(SpendBlocked) as raised:
+        guard.invoke_prepared_genai(OP,c,request,target)
+    assert str(raised.value)==BILLING_CHANGED
+    assert target.calls==0 and ledger.document['reservations']=={}
+
+
+def test_audit_cleared_between_admission_and_reserve_blocks_the_hold():
+    guard=budget(rates=IN_BAND);ledger=guard.ledger;request=bounded(guard)
+    c=guard.counted_genai_admission(OP,request,count_tokens=fake(10000))
+    assert c['input_token_usd_per_million']=='0.825'
+    before_mutate(ledger,2,lambda doc:doc['providers']['gemini'].pop('price_band_audit'))
+    target=Target()
+    with pytest.raises(SpendBlocked) as raised:
+        guard.invoke_prepared_genai(OP,c,request,target)
+    assert str(raised.value)==BILLING_CHANGED
+    assert target.calls==0 and ledger.document['reservations']=={}
+
+
+def test_bfl_audit_cleared_between_rate_read_and_reserve_blocks_the_hold():
+    guard=bfl_guard('0.08');ledger=guard.ledger
+    before_mutate(ledger,2,lambda doc:doc['providers']['bfl'].pop('price_band_audit'))
+    with pytest.raises(SpendBlocked) as raised:
+        guard.begin_provider_request('bfl',BFL_OP,None,'a'*64)
+    assert str(raised.value)==BILLING_CHANGED
+    assert ledger.document['reservations']=={}
+
+
+def test_bfl_audit_added_between_rate_read_and_reserve_blocks_the_hold():
+    guard=bfl_guard();ledger=guard.ledger
+    def add(doc):
+        doc['providers']['bfl'].update(price_band_audit=bfl_audit('0.08'),
+            price_observed_sha256='e'*64,price_observed_at=NOW.isoformat())
+    before_mutate(ledger,2,add)
+    with pytest.raises(SpendBlocked) as raised:
+        guard.begin_provider_request('bfl',BFL_OP,None,'a'*64)
+    assert str(raised.value)==BILLING_CHANGED
+    assert ledger.document['reservations']=={}
+
+
+def test_reserve_without_recorded_rates_skips_the_rate_recheck():
+    guard=budget(rates=IN_BAND)
+    guard.reserve('gemini',OP,'0.01',context={'admitted_input_tokens':10,'max_output_tokens':1500})
+    guard.reserve('apify','batch','0.01')
     assert len(guard.ledger.document['reservations'])==2

@@ -379,7 +379,9 @@ def real_bfl_guard(monkeypatch,observed=None):
     guard.ledger.document['automatic_policy_sha256']=guard.expected_policy_sha
     guard.ledger.document['providers']['bfl'].update(copy.deepcopy(account))
     if observed is not None:
-        guard.ledger.document['providers']['bfl']['price_band_audit']=bfl_audit(observed)
+        audit=bfl_audit(observed)
+        guard.ledger.document['providers']['bfl'].update(price_band_audit=audit,
+            price_observed_sha256=audit['observed_sha256'],price_observed_at=audit['observed_at'])
     monkeypatch.setattr(lifecycle,'utc_now',lambda:guard.now().isoformat())
     return guard
 

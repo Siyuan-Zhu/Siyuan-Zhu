@@ -906,6 +906,7 @@ def acct_38(**observed):
             'observed_sha256':'f'*64,'observed_at':NOW.isoformat(),
             'above_approval':[{'operation':OP38,'rate':key,'approved':account['request_limits'][OP38][key],'observed':rate}
                               for key,rate in sorted(observed.items())]}
+        account.update(price_observed_sha256='f'*64,price_observed_at=NOW.isoformat())
     return account
 
 
@@ -1012,3 +1013,47 @@ def test_notice_ids_are_stable_across_refreshes():
     changed=copy.deepcopy(obs)
     observe_contract(changed,contract_for(rates=('0.32','2.50')))
     assert ids(refresh(ledger,policy,changed))!=ids(ledger)
+
+
+# The audit is proof only for the refresh that wrote it (F5).
+def band_account():
+    ledger,policy,obs=fixtures()
+    observe_contract(obs,contract_for(rates=('0.33','2.50')))
+    account=refresh(ledger,policy,obs)['providers']['gemini']
+    assert auto.verified_price_band_audit(account,'gemini')
+    return account
+
+
+def test_band_audit_rejects_a_gemini_rate_key_that_is_not_a_token_rate():
+    account=band_account()
+    account['request_limits'][OP]['max_input_tokens']=1000
+    account['price_band_audit']['above_approval'].append(
+        {'operation':OP,'rate':'max_input_tokens','approved':'1000','observed':'1050'})
+    assert auto.verified_price_band_audit(account,'gemini') is False
+    with pytest.raises(KeyError):
+        auto.approved_rate(account,'gemini',OP,'max_input_tokens')
+
+
+@pytest.mark.parametrize('version',[True,1.0,'1',2])
+def test_band_audit_schema_version_must_be_the_integer_1(version):
+    account=band_account();account['price_band_audit']['schema_version']=version
+    assert auto.verified_price_band_audit(account,'gemini') is False
+
+
+@pytest.mark.parametrize('field,value',[
+    ('price_observed_sha256','0'*64),('price_observed_at','2026-10-30T15:00:00+00:00'),
+    ('price_observed_sha256',None),('price_observed_at',None)])
+def test_band_audit_must_match_the_observation_it_records(field,value):
+    account=band_account()
+    if value is None: account.pop(field)
+    else: account[field]=value
+    assert auto.verified_price_band_audit(account,'gemini') is False
+
+
+def test_band_audit_rejects_a_duplicate_operation_and_rate():
+    account=band_account()
+    entries=account['price_band_audit']['above_approval']
+    entries.append(dict(entries[0],observed='0.32'))
+    assert auto.verified_price_band_audit(account,'gemini') is False
+    entries[-1]=dict(entries[0])
+    assert auto.verified_price_band_audit(account,'gemini') is False

@@ -388,3 +388,41 @@ def test_released_reservations_do_not_count_in_both_together(monkeypatch):
     ledger['reservations']['gone'] = in_band_hold('2.00', status='released')
     monkeypatch.setattr(auto, 'MONTHLY_INCREASE_BASIS', 'both_together')
     assert auto.month_spend_increase_usd(ledger) == Decimal('1.50')
+
+
+def assert_frozen_unmarked(candidate, key=OPEN):
+    record = candidate['reservations'][key]
+    assert candidate['reconciliation_required'] is True and record['reconciliation_required'] is True
+    assert 'usage_receipt_overrun' in record['reconciliation_reasons'] and 'overrun_tolerated' not in record
+
+
+@pytest.mark.parametrize('failure', ['unknown_basis', 'malformed_context'])
+def test_a_failing_month_count_freezes_with_the_evidence_instead_of_raising(monkeypatch, failure):
+    ledger, policy, _ = tolerance_fixture(prior='0')
+    if failure == 'unknown_basis':
+        monkeypatch.setattr(auto, 'MONTHLY_INCREASE_BASIS', 'other')
+    else:
+        monkeypatch.setattr(auto, 'MONTHLY_INCREASE_BASIS', 'both_together')
+        ledger['reservations']['malformed'] = in_band_hold('1', request_context='not-a-dict')
+    candidate = admit(ledger, policy, open_receipt('0.08'))
+    assert_frozen_unmarked(candidate)
+    assert candidate['reservations'][OPEN]['actual_gross_usd'] == '0.08'
+
+
+def test_a_conflicting_higher_receipt_removes_the_earlier_tolerated_mark():
+    ledger, policy, _ = tolerance_fixture(prior='0')
+    first = admit(ledger, policy, open_receipt('0.08'))
+    assert mark_of(first)['overrun_usd'] == '0.01' and not first.get('reconciliation_required')
+    candidate = admit(first, policy, open_receipt('0.09', evidence_sha256='e' * 64))
+    assert_frozen_unmarked(candidate)
+    assert 'usage_receipt_conflict' in candidate['reservations'][OPEN]['reconciliation_reasons']
+    assert candidate['reservations'][OPEN]['actual_gross_usd'] == '0.09'
+    assert not [n for n in auto.owner_spend_notices(candidate) if n['kind'] == 'tolerated_overrun']
+
+
+@pytest.mark.parametrize('flag', ['reconciliation_required', 'reconciliation_reasons'])
+def test_an_already_flagged_record_is_never_newly_marked(flag):
+    ledger, policy, _ = tolerance_fixture(prior='0')
+    ledger['reservations'][OPEN][flag] = True if flag == 'reconciliation_required' else ['usage_receipt_overrun']
+    candidate = admit(ledger, policy, open_receipt('0.08'))
+    assert_frozen_unmarked(candidate)

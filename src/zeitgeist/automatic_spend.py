@@ -101,7 +101,7 @@ def within_price_band(provider, observed, approved):
 
 def approved_rate(account, provider, operation, rate_key):
     """The policy-approved rate as a Decimal. Raises KeyError or InvalidOperation when none is approved."""
-    if provider == 'gemini':
+    if provider == 'gemini' and rate_key in ('input_token_usd_per_million', 'output_token_usd_per_million'):
         value = account['request_limits'][operation][rate_key]
     elif provider == 'bfl' and rate_key == 'unit_price_usd':
         value = account['operation_caps_usd'][operation]
@@ -113,21 +113,30 @@ def approved_rate(account, provider, operation, rate_key):
 def verified_price_band_audit(account, provider):
     """True when the account's private price_band_audit is well formed and every entry is in band.
 
-    Each entry must sit above the account's approved rate and within the provider's band of it.
+    It must record the observation the account itself records (price_observed_sha256/at), name each
+    operation and rate once, and each entry must sit above the account's approved rate and within the
+    provider's band of it.
     """
     try:
         audit = account.get('price_band_audit')
-        if (not isinstance(audit, dict) or set(audit) != _AUDIT_KEYS or audit['schema_version'] != 1 or
+        if (not isinstance(audit, dict) or set(audit) != _AUDIT_KEYS
+                or type(audit['schema_version']) is not int or audit['schema_version'] != 1 or
                 audit['tolerance'] != str(PRICE_TOLERANCE[provider]) or audit['basis'] != 'policy_approved_rate' or
-                not isinstance(audit['observed_sha256'], str) or not isinstance(audit['observed_at'], str)):
+                not isinstance(audit['observed_sha256'], str) or not isinstance(audit['observed_at'], str) or
+                audit['observed_sha256'] != account.get('price_observed_sha256') or
+                audit['observed_at'] != account.get('price_observed_at')):
             return False
         entries = audit['above_approval']
         if not isinstance(entries, list) or not entries:
             return False
+        seen = set()
         for entry in entries:
             if (not isinstance(entry, dict) or set(entry) != _AUDIT_ENTRY_KEYS or
                     not isinstance(entry['approved'], str) or not isinstance(entry['observed'], str)):
                 return False
+            if (entry['operation'], entry['rate']) in seen:
+                return False
+            seen.add((entry['operation'], entry['rate']))
             approved = approved_rate(account, provider, entry['operation'], entry['rate'])
             recorded, observed = Decimal(entry['approved']), Decimal(entry['observed'])
             if recorded != approved or not approved < observed or not within_price_band(provider, observed, approved):
@@ -216,6 +225,28 @@ def hold_cap(account, provider, record):
             raise SpendBlocked(tariff)
         grown = grown or charged > approved
     return base * (1 + band) if grown else base
+
+
+def assert_hold_rates_current(account, provider, operation, context):
+    """Block a new hold whose recorded rates are not the account's current charged and approved rates.
+
+    hold_cap checks the recorded rates against the band only. A price refresh between the
+    caller's rate read and the reservation keeps verification_reference, so only this exact
+    Decimal comparison sees it. A context with no charged-rate key (legacy, Apify, a hold
+    without rates) is not checked; one with any is checked on every rate of the provider.
+    """
+    pairs = _RATE_PAIRS.get(provider, ())
+    if not isinstance(context, dict) or not any(charged in context for charged, _ in pairs):
+        return
+    changed = 'Billing policy changed after token counting; retry admission'
+    for charged_key, approved_key in pairs:
+        try:
+            same = (Decimal(str(context[charged_key])) == charged_rate(account, provider, operation, charged_key)
+                    and Decimal(str(context[approved_key])) == approved_rate(account, provider, operation, charged_key))
+        except (InvalidOperation, KeyError, TypeError, ValueError):
+            raise SpendBlocked(changed) from None
+        if not same:
+            raise SpendBlocked(changed)
 
 
 def in_band_excess_usd(record):
@@ -835,6 +866,8 @@ def admit_usage_receipt(ledger, policy, receipt, *, expected_policy_sha, now):
             'first_accounted_gross_usd': earlier.get('first_accounted_gross_usd', str(prior_amount)),
             'latest_receipt': copy.deepcopy(receipt),
         }
+        # A conflicting re-observation is never tolerated: drop an earlier admission's mark too.
+        record.pop('overrun_tolerated', None)
     # Never replace stronger known liability/evidence with a smaller or merely
     # different re-observation. Keep the original admission cap for inspection.
     if prior_amount is None or amount > prior_amount or not conflict:
@@ -847,23 +880,23 @@ def admit_usage_receipt(ledger, policy, receipt, *, expected_policy_sha, now):
         # A provider-settled charge above its hold settles while the month's spend increase stays at or
         # below the limit (M2). Count the month with this record settled but not yet marked, so a
         # re-observation does not count it twice; then check the ceiling and credit bounds on the
-        # marked candidate. A failure removes the mark and falls through to the freeze below, because
-        # raising here would discard the evidence the caller must persist.
+        # marked candidate. Any failure, the month count included, removes the mark and falls through
+        # to the freeze below, because raising here would discard the evidence the caller must persist.
         record.pop('overrun_tolerated', None)
         extra = money(record['actual_gross_usd']) - money(record['max_gross_usd'])
-        total = month_spend_increase_usd(candidate) + extra
-        if total <= TOLERATED_MONTHLY_INCREASE_USD:
-            record['overrun_tolerated'] = {'schema_version': 1, 'held_usd': record['max_gross_usd'],
-                'actual_usd': record['actual_gross_usd'], 'overrun_usd': str(extra), 'month_increase_usd': str(total),
-                'limit_usd': str(TOLERATED_MONTHLY_INCREASE_USD), 'basis': MONTHLY_INCREASE_BASIS,
-                'observed_at': receipt['observed_at']}
-            try:
+        try:
+            total = month_spend_increase_usd(candidate) + extra
+            if total <= TOLERATED_MONTHLY_INCREASE_USD:
+                record['overrun_tolerated'] = {'schema_version': 1, 'held_usd': record['max_gross_usd'],
+                    'actual_usd': record['actual_gross_usd'], 'overrun_usd': str(extra),
+                    'month_increase_usd': str(total), 'limit_usd': str(TOLERATED_MONTHLY_INCREASE_USD),
+                    'basis': MONTHLY_INCREASE_BASIS, 'observed_at': receipt['observed_at']}
                 assert_credit_only_funding(candidate, now=now)
                 if cash_exposure(candidate) > money(policy['cash_ceiling_usd']):
                     raise SpendBlocked('Retained liabilities exhaust the approved monthly cash ceiling')
                 tolerated = True
-            except SpendBlocked:
-                del record['overrun_tolerated']
+        except SpendBlocked:
+            record.pop('overrun_tolerated', None)
     if conflict or (overrun and not tolerated):
         candidate['reconciliation_required'] = True
         record['reconciliation_required'] = True
