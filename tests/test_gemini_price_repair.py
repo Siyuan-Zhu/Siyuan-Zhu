@@ -74,6 +74,14 @@ def test_any_change_to_an_approved_current_rate_blocks_the_repin_without_writes(
     assert not wire.posts
 
 
+def test_repin_refuses_an_in_band_current_rate(monkeypatch):
+    """The price band never reaches the re-pin tool: a live rate 10 percent above the approved rate still blocks it."""
+    in_band={'operations':{'generate_content:gemini-2.5-flash':{'input_token_usd_per_million':'0.33','output_token_usd_per_million':'2.5'}}}
+    wire,sha,_,_=setup_nov13(monkeypatch,in_band)
+    with pytest.raises(RuntimeError,match='differs from the approved rate'):repair.repair(wire.store,sha,apply=True,now=NOW13)
+    assert wire.posts==[]
+
+
 def test_a_budgeted_operation_missing_from_the_published_record_blocks_the_repin(monkeypatch):
     ledger,policy,_=fixtures(NOW13)
     policy['providers']['gemini']['price_snapshot_sha256']=repair.NEW_TARIFF

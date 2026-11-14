@@ -191,3 +191,13 @@ def test_initial_candidate_can_preserve_explicit_38_policy_for_monthly_handoff()
     candidate=prepare_candidate(metadata,now=NOW)
     assert candidate['providers']['gemini']['request_limits'][OP]['pricing_valid_until']=='2026-12-31T23:59:59Z'
     assert candidate['providers']['gemini']['credit_baseline_usd']=='0'
+
+
+def test_guard_requires_exact_approved_gemini38_rates_not_the_band():
+    """The price band applies to observed rates only; the approved policy rates stay exact."""
+    budget=guard()
+    policy=budget.ledger.document['providers']['gemini']['request_limits'][OP]
+    policy['input_token_usd_per_million']='0.825'
+    policy['output_token_usd_per_million']='4.125'
+    with pytest.raises(SpendBlocked,match='Unverified Gemini 3.8 pricing or model policy'):
+        budget.bounded_genai_request(OP,request())
