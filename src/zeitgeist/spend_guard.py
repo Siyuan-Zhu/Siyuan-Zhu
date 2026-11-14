@@ -299,6 +299,25 @@ def money(value: Any) -> Decimal:
     return amount
 
 
+GENAI_RATE_KEYS = ("input_token_usd_per_million", "output_token_usd_per_million",
+                   "approved_input_token_usd_per_million", "approved_output_token_usd_per_million")
+
+
+def genai_rates(account, operation):
+    """The four Gemini token rates of a new hold, as strings: charged, then approved."""
+    from .automatic_spend import approved_rate, charged_rate
+    rates = {}
+    for key in GENAI_RATE_KEYS[:2]:
+        try:
+            charged = charged_rate(account, "gemini", operation, key)
+            approved = approved_rate(account, "gemini", operation, key)
+        except (KeyError, InvalidOperation, TypeError, ValueError):
+            raise SpendBlocked("Missing or invalid monetary bound") from None
+        rates[key] = str(money(charged))
+        rates["approved_" + key] = str(money(approved))
+    return rates
+
+
 class MemoryLedger:
     """Atomic injectable ledger for offline tests; never selected by runtime."""
 
@@ -550,7 +569,7 @@ class BudgetGuard:
             total += max(Decimal("0"), amount - credit)
         return total
 
-    def reserve(self, provider: str, operation: str, maximum=None, *, expected_reference=None):
+    def reserve(self, provider: str, operation: str, maximum=None, *, expected_reference=None, context=None):
         reservation_id = uuid.uuid4().hex
 
         def update(doc):
@@ -590,6 +609,7 @@ class BudgetGuard:
                 "status": "reserved",
                 "created_at": self.now().isoformat(),
                 "allowance_period_id": account.get("allowance_period_id"),
+                "request_context": copy.deepcopy(context or {}),
             }
             if self._cash_exposure(doc) > money(doc["cash_ceiling_usd"]):
                 raise SpendBlocked("Call would exceed approved monthly cash ceiling")
@@ -830,11 +850,19 @@ class BudgetGuard:
         return dict(kwargs, config=config)
 
     def counted_genai_cap(self, operation, bounded, count_tokens):
-        """Count the immutable admitted input, then reserve its verified tariff.
+        """Legacy (maximum, reference) view of counted_genai_admission."""
+        counted = self.counted_genai_admission(operation, bounded, count_tokens)
+        maximum = counted['maximum']
+        return (None if maximum is None else money(maximum)), counted['reference']
+
+    def counted_genai_admission(self, operation, bounded, count_tokens):
+        """Count the immutable admitted input, then price it at the charged rates.
 
         countTokens is an unbilled metadata endpoint. Inline vision uses the
         documented <=384px image charge as a floor instead of trusting a media
-        estimate as an exact billing measurement.
+        estimate as an exact billing measurement. Rates come from charged_rate
+        (max of approved and verified in-band observed) and approved_rate; all
+        money values are strings.
         """
         def policy(doc):
             account = self._validate(doc, 'gemini')
@@ -844,16 +872,19 @@ class BudgetGuard:
                 if not isinstance(limits, dict):
                     raise SpendBlocked('Verified model pricing and request limits required')
                 self._validate_gemini38_policy(limits, int(account.get('max_request_duration_seconds', 300)))
-            return (copy.deepcopy(limits), required, account['verification_reference'])
-        limits, required, reference = self.ledger.mutate(policy)
+            return (copy.deepcopy(limits), required, account['verification_reference'], copy.deepcopy(account))
+        limits, required, reference, account = self.ledger.mutate(policy)
         if not required:
-            return None, None  # Explicit injected legacy test seam; runtime requires binding.
+            # Explicit injected legacy test seam; runtime requires binding.
+            return dict({key: None for key in GENAI_RATE_KEYS}, maximum=None, reference=None,
+                        admitted_input_tokens=None, max_output_tokens=None)
         method, model = operation.split(':', 1)
         if method not in ('generate_content', 'embed_content') or not isinstance(limits, dict) or not limits.get('count_tokens_reference'):
             raise SpendBlocked('Verified countTokens tariff required for paid Gemini call')
-        input_rate = money(limits.get('input_token_usd_per_million'))
-        output_rate = money(limits.get('output_token_usd_per_million'))
-        if input_rate <= 0:
+        rates = genai_rates(account, operation)
+        input_rate = money(rates['input_token_usd_per_million'])
+        output_rate = money(rates['output_token_usd_per_million'])
+        if money(rates['approved_input_token_usd_per_million']) <= 0:
             raise SpendBlocked('Positive verified input tariff required')
         contents = bounded.get('contents')
         transport = {'http_options': copy.deepcopy(bounded['config']['http_options'])}
@@ -939,7 +970,9 @@ class BudgetGuard:
         maximum = limits.get('max_input_tokens')
         if type(maximum) is not int or not 0 <= total <= maximum:
             raise SpendBlocked('Counted input exceeds verified token ceiling')
-        return (money(total)*input_rate + money(output)*output_rate) / Decimal('1000000'), reference
+        cost = (money(total)*input_rate + money(output)*output_rate) / Decimal('1000000')
+        return dict(rates, maximum=str(cost), reference=reference,
+                    admitted_input_tokens=total, max_output_tokens=output)
 
     def snapshot(self):
         def read(doc):
@@ -997,12 +1030,13 @@ def guard_genai_client(client, guard=None, *, credential_key=None):
                 # Freeze inputs before counting so another caller cannot mutate
                 # the paid request after its admission count.
                 bounded = guard.bounded_genai_request(operation, copy.deepcopy(kwargs))
-                maximum, reference = guard.counted_genai_cap(operation, bounded, client.models.count_tokens)
+                counted = guard.counted_genai_admission(operation, bounded, client.models.count_tokens)
                 automatic_invoke = getattr(guard, 'invoke_prepared_genai', None)
                 if getattr(guard, 'automatic_accounting_enabled', False) is True and callable(automatic_invoke):
-                    return automatic_invoke(operation, maximum, reference, bounded, target)
+                    return automatic_invoke(operation, counted, bounded, target)
                 return guard.call(
-                    "gemini", operation, maximum, lambda: target(*args, **bounded), expected_reference=reference,
+                    "gemini", operation, counted['maximum'], lambda: target(*args, **bounded),
+                    expected_reference=counted['reference'],
                 )
 
             return invoke

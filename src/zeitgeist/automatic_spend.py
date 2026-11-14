@@ -127,6 +127,25 @@ def verified_price_band_audit(account, provider):
         return False
 
 
+def charged_rate(account, provider, operation, rate_key):
+    """The rate a new hold is charged at: max(approved, verified in-band observed).
+
+    With no audit, or no audit entry for this operation and rate, it is the approved
+    rate, so a lower observed rate never lowers a hold. An audit that fails
+    verification blocks.
+    """
+    approved = approved_rate(account, provider, operation, rate_key)
+    audit = account.get('price_band_audit')
+    if audit is None:
+        return approved
+    if not verified_price_band_audit(account, provider):
+        raise SpendBlocked('Primary price snapshot changed, stale or missing')
+    for entry in audit['above_approval']:
+        if entry['operation'] == operation and entry['rate'] == rate_key:
+            return max(approved, Decimal(entry['observed']))
+    return approved
+
+
 def gemini_rates_within_approval(account, pinned, price, now):
     """True when Gemini's published current rates are within the approved rates and their band."""
     return gemini_rate_excess(account, pinned, price, now) is not None
@@ -668,7 +687,10 @@ def gemini_usage_receipt(reservation_id, reservation, response, *, credential_fi
         raise SpendBlocked('Gemini usage exceeds admitted token shape')
     if not response.get('responseId') or any(item.get('modality') != 'TEXT' for item in usage.get('candidatesTokensDetails', [])):
         raise SpendBlocked('Typed text-only Gemini response identity required')
-    amount = (money(context['admitted_input_tokens'])*money(limits['input_token_usd_per_million']) + money(output)*money(limits['output_token_usd_per_million']))/1000000
+    # A hold records the rates it was charged at; a hold made before the band records none.
+    input_rate = money(context.get('input_token_usd_per_million', limits['input_token_usd_per_million']))
+    output_rate = money(context.get('output_token_usd_per_million', limits['output_token_usd_per_million']))
+    amount = (money(context['admitted_input_tokens'])*input_rate + money(output)*output_rate)/1000000
     return {'schema_version': 1, 'accounting_policy': 'provider_usage_v1', 'reservation_id': reservation_id,
         'provider': 'gemini', 'operation': operation, 'credential_fingerprint': credential_fingerprint,
         'provider_request_id': response['responseId'], 'request_sha256': request_sha256, 'observed_at': observed_at,

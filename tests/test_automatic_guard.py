@@ -10,14 +10,17 @@ from google.genai import types
 from src.zeitgeist import automatic_spend as auto
 from src.zeitgeist.automatic_guard import AutomaticBudgetGuard, request_digest
 from src.zeitgeist.spend_guard import MemoryLedger, SpendBlocked, guard_genai_client
-from tests.test_automatic_spend import fixtures, NOW
+from tests.test_automatic_spend import contract_for, fixtures, observe_contract, NOW
 from tests.test_gemini38_contract import limits
 
 OP = 'generate_content:gemini-3.8-flash'
 
 
-def budget(now=NOW):
+def budget(now=NOW, rates=None):
+    """rates=(input, output) refreshes with that published 3.8 rate instead of the pinned page."""
     ledger, policy, observation = fixtures(now)
+    if rates is not None:
+        observe_contract(observation, contract_for(rates=rates, op=OP))
     settings = limits()
     settings['allowed_response_model_versions'] = ['gemini-3.8-flash']
     account = policy['providers']['gemini']['account']
@@ -263,3 +266,141 @@ def test_runtime_admits_apify_only_with_the_rebound_token():
         guard.begin_provider_request('apify','batch','.01',request_digest({'old':'token'}))
     guard.credential_fingerprints['apify']='f'*16
     guard.begin_provider_request('apify','batch','.01',request_digest({'new':'token'}))
+
+
+# Holds and receipts at the charged rate, with rates matched at admission.
+IN_BAND=('0.825','4.125')
+BFL_OP='generate_image:flux-3-image'
+
+
+def fake(total):
+    return lambda **kw:SimpleNamespace(total_tokens=total)
+
+
+class Target:
+    def __init__(self):
+        self.calls=0
+    def __call__(self,**kwargs):
+        self.calls+=1
+        return sdk_result()
+
+
+def bounded(guard):
+    return guard.bounded_genai_request(OP,{'model':'gemini-3.8-flash','contents':'Synthetic bounded request'})
+
+
+def test_lower_observed_rate_keeps_the_approved_hold():
+    guard=budget(rates=('0.70','3.50'))
+    assert 'price_band_audit' not in guard.ledger.document['providers']['gemini']
+    c=guard.counted_genai_admission(OP,bounded(guard),count_tokens=fake(10000))
+    assert c['input_token_usd_per_million']=='0.75' and c['output_token_usd_per_million']=='3.75'
+    assert Decimal(c['maximum'])==(Decimal(10000)*Decimal('0.75')+Decimal(1500)*Decimal('3.75'))/10**6
+
+
+def test_in_band_gemini_hold_uses_the_observed_rate():
+    guard=budget(rates=IN_BAND)
+    c=guard.counted_genai_admission(OP,bounded(guard),count_tokens=fake(10000))
+    assert Decimal(c['maximum'])==Decimal('0.0144375')
+    assert c=={'maximum':c['maximum'],'reference':'old-observation','admitted_input_tokens':10000,
+        'max_output_tokens':1500,'input_token_usd_per_million':'0.825','output_token_usd_per_million':'4.125',
+        'approved_input_token_usd_per_million':'0.75','approved_output_token_usd_per_million':'3.75'}
+    assert guard.counted_genai_cap(OP,bounded(guard),fake(10000))==(Decimal('0.0144375'),'old-observation')
+
+
+def test_hold_records_charged_and_approved_rates_in_request_context():
+    guard=budget(rates=IN_BAND);api,calls=client(guard);generate(api)
+    ledger=guard.ledger;rid=next(iter(ledger.document['reservations']))
+    ctx=ledger.document['reservations'][rid]['request_context']
+    assert ctx['input_token_usd_per_million']=='0.825' and ctx['approved_input_token_usd_per_million']=='0.75'
+    assert ctx=={'admitted_input_tokens':10,'max_output_tokens':1500,
+        'input_token_usd_per_million':'0.825','output_token_usd_per_million':'4.125',
+        'approved_input_token_usd_per_million':'0.75','approved_output_token_usd_per_million':'3.75'}
+
+
+def test_in_band_receipt_uses_the_rate_recorded_on_the_hold():
+    guard=budget(rates=IN_BAND)
+    def generate_after_audit_clears(**kwargs):
+        guard.ledger.document['providers']['gemini'].pop('price_band_audit')
+        return sdk_result()
+    raw=SimpleNamespace(models=SimpleNamespace(generate_content=generate_after_audit_clears,count_tokens=fake(10)))
+    generate(guard_genai_client(raw,guard))
+    record=next(iter(guard.ledger.document['reservations'].values()))
+    assert 'price_band_audit' not in guard.ledger.document['providers']['gemini']
+    ctx_in_tokens,out=record['request_context']['admitted_input_tokens'],7
+    receipt=record['usage_receipt']
+    assert Decimal(receipt['accounted_gross_usd'])==(Decimal(ctx_in_tokens)*Decimal('0.825')+Decimal(out)*Decimal('4.125'))/10**6
+    assert record['actual_gross_usd']==receipt['accounted_gross_usd']
+
+
+def test_pre_band_hold_without_recorded_rates_receipts_at_approved_rate():
+    guard=budget(rates=IN_BAND)
+    record={'operation':OP,'request_context':{'admitted_input_tokens':10,'max_output_tokens':1500}}
+    response=sdk_result().model_dump(by_alias=True,exclude_none=True)
+    receipt=auto.gemini_usage_receipt('pre-band',record,response,credential_fingerprint='a'*16,
+        observed_at=NOW.isoformat(),request_sha256='f'*64,policy=guard.automatic_policy)
+    assert Decimal(receipt['accounted_gross_usd'])==(Decimal(10)*Decimal('0.75')+Decimal(7)*Decimal('3.75'))/10**6
+
+
+def test_audit_outside_the_band_blocks_admission():
+    guard=budget(rates=IN_BAND);ledger=guard.ledger
+    ledger.document['providers']['gemini']['price_band_audit']['above_approval'][0]['observed']='0.9'
+    with pytest.raises(SpendBlocked,match='Primary price snapshot'):
+        guard.counted_genai_admission(OP,bounded(guard),count_tokens=fake(10000))
+    assert ledger.document['reservations']=={}
+
+
+def test_audit_cleared_between_count_and_admission_blocks():
+    guard=budget(rates=IN_BAND);ledger=guard.ledger;request=bounded(guard)
+    c=guard.counted_genai_admission(OP,request,count_tokens=fake(10000))
+    ledger.document['providers']['gemini'].pop('price_band_audit')
+    target=Target()
+    with pytest.raises(SpendBlocked,match='Billing policy changed after token counting'):
+        guard.invoke_prepared_genai(OP,c,request,target)
+    assert target.calls==0 and ledger.document['reservations']=={}
+
+
+def test_audit_added_between_count_and_admission_blocks():
+    guard=budget(rates=IN_BAND);ledger=guard.ledger;request=bounded(guard)
+    audit=ledger.document['providers']['gemini'].pop('price_band_audit')
+    c=guard.counted_genai_admission(OP,request,count_tokens=fake(10000))
+    assert c['input_token_usd_per_million']=='0.75'
+    ledger.document['providers']['gemini']['price_band_audit']=audit
+    target=Target()
+    with pytest.raises(SpendBlocked,match='Billing policy changed after token counting'):
+        guard.invoke_prepared_genai(OP,c,request,target)
+    assert target.calls==0 and ledger.document['reservations']=={}
+
+
+def test_tampered_counted_maximum_blocks():
+    guard=budget(rates=IN_BAND);ledger=guard.ledger;request=bounded(guard)
+    c=guard.counted_genai_admission(OP,request,count_tokens=fake(10000))
+    c['maximum']=str(Decimal(c['maximum'])-Decimal('0.000001'))
+    target=Target()
+    with pytest.raises(SpendBlocked,match='Counted admission identity is inconsistent'):
+        guard.invoke_prepared_genai(OP,c,request,target)
+    assert target.calls==0 and ledger.document['reservations']=={}
+
+
+@pytest.mark.parametrize('field',['max_output_tokens','admitted_input_tokens'])
+def test_consistently_shrunk_counted_shape_still_blocks(field):
+    guard=budget(rates=IN_BAND);ledger=guard.ledger;request=bounded(guard)
+    c=guard.counted_genai_admission(OP,request,count_tokens=fake(10000))
+    if field=='max_output_tokens': c['max_output_tokens']=0
+    else: c['admitted_input_tokens']=-1
+    c['maximum']=str((Decimal(c['admitted_input_tokens'])*Decimal('0.825')+Decimal(c['max_output_tokens'])*Decimal('4.125'))/10**6)
+    target=Target()
+    with pytest.raises(SpendBlocked,match='Counted admission identity is inconsistent'):
+        guard.invoke_prepared_genai(OP,c,request,target)
+    assert target.calls==0 and ledger.document['reservations']=={}
+
+
+def test_bfl_hold_records_charged_and_approved_unit_rate():
+    guard=budget();ledger=guard.ledger
+    account=guard.automatic_policy['providers']['bfl']['account']
+    account['operation_caps_usd']={BFL_OP:'0.07'}
+    guard.expected_policy_sha=auto.digest(guard.automatic_policy)
+    ledger.document['automatic_policy_sha256']=guard.expected_policy_sha
+    ledger.document['providers']['bfl'].update(copy.deepcopy(account))
+    h=guard.begin_provider_request('bfl',BFL_OP,None,'a'*64)
+    r=ledger.document['reservations'][h.reservation_id]
+    assert r['max_gross_usd']=='0.07' and r['request_context']=={'unit_price_usd':'0.07','approved_unit_price_usd':'0.07'}

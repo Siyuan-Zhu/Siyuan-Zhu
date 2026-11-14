@@ -895,6 +895,30 @@ def test_rate_at_or_below_approval_clears_band_audit():
     assert 'price_band_audit' not in account
 
 
+# Holds and receipts at the charged rate: max(approved, verified in-band observed).
+OP38='generate_content:gemini-3.8-flash'
+
+
+def acct_38(**observed):
+    account={'request_limits':{OP38:{'input_token_usd_per_million':'0.75','output_token_usd_per_million':'3.75'}}}
+    if observed:
+        account['price_band_audit']={'schema_version':1,'tolerance':'0.10','basis':'policy_approved_rate',
+            'observed_sha256':'f'*64,'observed_at':NOW.isoformat(),
+            'above_approval':[{'operation':OP38,'rate':key,'approved':account['request_limits'][OP38][key],'observed':rate}
+                              for key,rate in sorted(observed.items())]}
+    return account
+
+
+def test_charged_rate_is_the_in_band_observed_rate_or_the_approved_rate():
+    acct_in_band=acct_38(input_token_usd_per_million='0.825')
+    assert auto.charged_rate(acct_in_band,'gemini',OP38,'input_token_usd_per_million')==Decimal('0.825')
+    assert auto.charged_rate(acct_in_band,'gemini',OP38,'output_token_usd_per_million')==Decimal('3.75')
+    assert auto.charged_rate(acct_38(),'gemini',OP38,'input_token_usd_per_million')==Decimal('0.75')
+    outside=acct_38(input_token_usd_per_million='0.9')
+    with pytest.raises(SpendBlocked,match='Primary price snapshot'):
+        auto.charged_rate(outside,'gemini',OP38,'input_token_usd_per_million')
+
+
 @pytest.mark.parametrize('rate',['not-a-number',None,'NaN','Infinity',''])
 def test_non_numeric_or_missing_current_rate_blocks(rate):
     ledger,policy,obs=fixtures()

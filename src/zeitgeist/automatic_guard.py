@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import copy
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import os
 import re
 
 from . import automatic_spend as accounting
-from .spend_guard import BudgetGuard, SpendBlocked, money
+from .spend_guard import GENAI_RATE_KEYS, BudgetGuard, SpendBlocked, genai_rates, money
 
 
 def request_digest(value):
@@ -168,18 +169,31 @@ class AutomaticBudgetGuard(BudgetGuard):
         return account
 
     def begin_provider_request(self, provider, operation, maximum, request_sha256):
-        return self._begin(provider, operation, maximum, request_sha256)
+        context = None
+        if provider == 'bfl' and maximum is None:
+            # One image at the charged per-image rate; the hold records both rates.
+            def rates(document):
+                account = self._validate(document, provider)
+                try:
+                    charged = accounting.charged_rate(account, provider, operation, 'unit_price_usd')
+                    approved = accounting.approved_rate(account, provider, operation, 'unit_price_usd')
+                except (KeyError, InvalidOperation, TypeError, ValueError):
+                    raise SpendBlocked('Missing or invalid monetary bound') from None
+                return money(charged), money(approved)
+            maximum, approved = self.ledger.mutate(rates)
+            context = {'unit_price_usd': str(maximum), 'approved_unit_price_usd': str(approved)}
+        return self._begin(provider, operation, maximum, request_sha256, context=context)
 
     def _begin(self, provider, operation, maximum, request_sha256, *, context=None, reference=None):
         if not re.fullmatch('[a-f0-9]{64}', request_sha256 or ''):
             raise SpendBlocked('Exact automatic request digest required')
-        reservation_id, _ = self.reserve(provider, operation, maximum, expected_reference=reference)
+        reservation_id, _ = self.reserve(provider, operation, maximum, expected_reference=reference,
+                                         context=context)
         def bind(document):
             self._validate(document, provider)
             document['reservations'][reservation_id].update(request_sha256=request_sha256,
                 credential_fingerprint=self._credential_fingerprint(provider),
-                automatic_policy_sha256=self.expected_policy_sha,
-                request_context=copy.deepcopy(context or {}))
+                automatic_policy_sha256=self.expected_policy_sha)
             run_id = os.environ.get('GITHUB_RUN_ID', '')
             attempt = os.environ.get('GITHUB_RUN_ATTEMPT', '1')
             if re.fullmatch(r'[0-9]{1,24}', run_id) and re.fullmatch(r'[0-9]{1,6}', attempt):
@@ -187,24 +201,34 @@ class AutomaticBudgetGuard(BudgetGuard):
         self.ledger.mutate(bind)
         return ProviderRequest(self, reservation_id, provider, operation, request_sha256)
 
-    def invoke_prepared_genai(self, operation, maximum, reference, bounded, target):
+    def invoke_prepared_genai(self, operation, counted, bounded, target):
+        """Admit one counted Gemini request at the rates it was counted at, then dispatch it once."""
+        method = operation.split(':', 1)[0]
+        output = int(bounded['config'].get('max_output_tokens', 0)) if method == 'generate_content' else 0
+        reference = counted.get('reference')
         def admission(document):
             account = self._validate(document, 'gemini')
             if account.get('verification_reference') != reference:
                 raise SpendBlocked('Billing policy changed after token counting; retry admission')
-            return copy.deepcopy(account['request_limits'][operation])
-        limits = self.ledger.mutate(admission)
-        method = operation.split(':', 1)[0]
-        output = int(bounded['config'].get('max_output_tokens', 0)) if method == 'generate_content' else 0
-        tokens = (money(maximum)*1000000 - money(output)*money(limits['output_token_usd_per_million'])) / money(limits['input_token_usd_per_million'])
-        if tokens < 0 or tokens != tokens.to_integral_value():
-            raise SpendBlocked('Counted admission identity is inconsistent')
-        context = {'admitted_input_tokens': int(tokens), 'max_output_tokens': output}
+            # A price refresh keeps the manual reference, so only the rates show it.
+            rates = genai_rates(account, operation)
+            if any(rates[key] != counted.get(key) for key in GENAI_RATE_KEYS):
+                raise SpendBlocked('Billing policy changed after token counting; retry admission')
+            tokens, counted_output = counted.get('admitted_input_tokens'), counted.get('max_output_tokens')
+            if (type(tokens) is not int or tokens < 0 or type(counted_output) is not int or counted_output != output
+                    or (money(tokens)*money(rates['input_token_usd_per_million'])
+                        + money(output)*money(rates['output_token_usd_per_million'])) / Decimal('1000000')
+                    != money(counted.get('maximum'))):
+                raise SpendBlocked('Counted admission identity is inconsistent')
+            return tokens
+        tokens = self.ledger.mutate(admission)
+        context = {'admitted_input_tokens': tokens, 'max_output_tokens': output}
+        context.update({key: counted[key] for key in GENAI_RATE_KEYS})
         if method == 'embed_content':
             items = bounded['contents']
-            context.update(counted_input_tokens=int(tokens), embedding_input_count=len(items) if isinstance(items, list) else 1)
+            context.update(counted_input_tokens=tokens, embedding_input_count=len(items) if isinstance(items, list) else 1)
         fingerprint = request_digest({'operation': operation, 'request': bounded})
-        handle = self._begin('gemini', operation, maximum, fingerprint, context=context, reference=reference)
+        handle = self._begin('gemini', operation, counted['maximum'], fingerprint, context=context, reference=reference)
         started = self.now().isoformat()
         result = target(**bounded)  # One dispatch; failures leave the complete hold.
         try:
