@@ -586,6 +586,141 @@ def test_bfl_tariff_change_still_blocks():
     with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
 
 
+# BFL: a changed hash is compared on the per-image rate within the +15% band; wording is ignored.
+BFL_OP='generate_image:flux-3-image'
+BFL_TERMS=[
+    'pricing is per image generated. charges are based on the resolution tier selected in the request, regardless of the resolution at which the image is processed internally, and apply equally to text-to-image and image-to-image generations.',
+    'reference images, whether provided by the user or retrieved by the model, and prompts are included at no extra charge. the per-image rate does not vary with the number of reference images provided, up to the maximum set out in the documentation.',
+    'the resolution tier is selected in the request; all supported aspect ratios within a tier are charged the same.',
+]
+
+
+def bfl_contract(price='0.07', **changes):
+    contract={'schema_version':1,'provider':'bfl','operation':BFL_OP,'model':'FLUX 3 Image',
+        'endpoint':'/v1/flux-3-image','resolution':'1.5k','currency':'USD','unit':'generated_image','quantity':1,
+        'unit_price_usd':price,
+        'request_shape':{'resolution':'1.5k','aspect_ratio':'3:2','grounding':True,'image_count':1,
+                         'supplied_reference_images':0,'explicit_width_height':False},
+        'pricing_flags':{'per_selected_resolution_tier':True,'all_supported_aspect_ratios_same_price':True,
+                         'user_reference_images_included':True,'model_retrieved_reference_images_included':True},
+        'pricing_terms':list(BFL_TERMS)}
+    contract.update(changes)
+    return contract
+
+
+def bfl_fixtures(observed=None):
+    ledger,policy,obs=fixtures()
+    pinned_contract=bfl_contract()
+    for target in (ledger['providers']['bfl'],policy['providers']['bfl']['account']):
+        target['operation_caps_usd']={BFL_OP:'0.07'}
+    policy['providers']['bfl']['price_snapshot_sha256']=auto.digest(pinned_contract)
+    observed=pinned_contract if observed is None else observed
+    obs['price_snapshots']['bfl'].update(sha256=auto.digest(observed),contract=observed)
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    return ledger,policy,obs
+
+
+def bfl_account(price='0.07', **changes):
+    return refresh(*bfl_fixtures(bfl_contract(price,**changes)))['providers']['bfl']
+
+
+def test_bfl_unchanged_hash_passes_without_audit():
+    acct=refresh(*bfl_fixtures())['providers']['bfl']
+    assert 'price_band_audit' not in acct and 'price_observed_sha256' not in acct
+
+
+def test_bfl_wording_change_at_unchanged_price_passes():
+    c=bfl_contract(pricing_terms=BFL_TERMS+['an unrelated footnote about invoices.'])
+    acct=bfl_account(pricing_terms=c['pricing_terms'])
+    assert acct['price_observed_sha256']==auto.digest(c) and 'price_band_audit' not in acct
+
+
+def test_bfl_lower_price_passes_on_rate_path():
+    acct=bfl_account('0.06')
+    assert acct['price_observed_at']==NOW.isoformat() and 'price_band_audit' not in acct
+
+
+def test_bfl_price_exactly_fifteen_percent_above_passes_and_is_audited():
+    acct=bfl_account('0.0805')
+    assert acct['price_band_audit']['tolerance']=='0.15' and acct['price_band_audit']['above_approval'][0]['observed']=='0.0805'
+    assert acct['price_band_audit']['above_approval']==[{'operation':BFL_OP,'rate':'unit_price_usd','approved':'0.07','observed':'0.0805'}]
+    assert auto.verified_price_band_audit(acct,'bfl')
+
+
+def test_bfl_price_just_above_fifteen_percent_blocks():
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): bfl_account('0.080507')
+
+
+def test_bfl_one_credit_rise_passes():
+    assert bfl_account('0.08')['price_band_audit']['above_approval'][0]['observed']=='0.08'
+
+
+def test_bfl_two_credit_rise_blocks():
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): bfl_account('0.09')
+
+
+@pytest.mark.parametrize('changes',[{'currency':'EUR'},{'unit':'megapixel'},{'quantity':2},{'resolution':'2k'},
+    {'endpoint':'/v1/flux-pro'},{'operation':'generate_image:other'},{'schema_version':2}])
+def test_bfl_contract_identity_change_blocks(changes):
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): bfl_account('0.075',**changes)
+
+
+@pytest.mark.parametrize('case',['flag_false','image_count','clause_removed'])
+def test_bfl_terms_change_blocks(case):
+    c=bfl_contract('0.075')
+    if case=='flag_false': c['pricing_flags']['user_reference_images_included']=False
+    if case=='image_count': c['request_shape']['image_count']=2
+    if case=='clause_removed': c['pricing_terms']=[t for t in BFL_TERMS if 'at no extra charge' not in t]
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(*bfl_fixtures(c))
+
+
+@pytest.mark.parametrize('damage',['none','digest','source_url','stale'])
+def test_bfl_rate_path_requires_digest_source_and_freshness(damage):
+    ledger,policy,obs=bfl_fixtures(bfl_contract('0.075'))
+    snapshot=obs['price_snapshots']['bfl']
+    if damage=='digest': snapshot['sha256']='f'*64
+    if damage=='source_url': snapshot['source_url']='https://bfl.ai/other'
+    if damage=='stale': snapshot['observed_at']=(NOW-timedelta(hours=25)).isoformat()
+    if damage=='none':
+        assert refresh(ledger,policy,obs)['providers']['bfl']['price_band_audit']['above_approval'][0]['observed']=='0.075'
+    else:
+        with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_bfl_band_never_compounds():
+    ledger,policy,obs=bfl_fixtures(bfl_contract('0.0798'))
+    a=refresh(ledger,policy,obs)
+    b=refresh(a,policy,obs)
+    assert b['providers']['bfl']['price_band_audit']==a['providers']['bfl']['price_band_audit']
+    obs2=bfl_fixtures(bfl_contract('0.090972'))[2]
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(b,policy,obs2)
+
+
+@pytest.mark.parametrize('price',['missing','NaN','-0.07',''])
+def test_bfl_missing_or_non_numeric_price_blocks(price):
+    c=bfl_contract(price)
+    if price=='missing': c.pop('unit_price_usd')
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(*bfl_fixtures(c))
+
+
+def test_bfl_second_budgeted_operation_blocks():
+    ledger,policy,obs=bfl_fixtures(bfl_contract(pricing_terms=BFL_TERMS+['a wording change.']))
+    for target in (ledger['providers']['bfl'],policy['providers']['bfl']['account']):
+        target['operation_caps_usd']['generate_image:other']='0.07'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_bfl_constants_match_the_normalizer():
+    from src.zeitgeist.bfl_tariff import normalize_bfl_flux3_tariff
+    from tests.test_bfl_tariff import html as bfl_page
+    c=normalize_bfl_flux3_tariff(bfl_page())
+    assert all(c[k]==v for k,v in auto.BFL_CONTRACT_CONSTANTS.items())
+    assert c['request_shape']==auto.BFL_REVIEWED_SHAPE and c['pricing_flags']==auto.BFL_REVIEWED_FLAGS
+    assert all(x in ' '.join(c['pricing_terms']) for x in auto.BFL_REQUIRED_CLAUSES)
+    assert c==bfl_contract()
+
+
 EMBED='embed_content:gemini-embedding-001'
 
 

@@ -189,6 +189,65 @@ def gemini_rate_excess(account, pinned, price, now):
         return None
 
 
+# Exactly what bfl_tariff.normalize_bfl_flux3_tariff emits (it imports this module, so no import back).
+BFL_OPERATION = 'generate_image:flux-3-image'
+BFL_CONTRACT_CONSTANTS = {'schema_version': 1, 'provider': 'bfl', 'operation': BFL_OPERATION,
+                          'model': 'FLUX 3 Image', 'endpoint': '/v1/flux-3-image', 'resolution': '1.5k',
+                          'currency': 'USD', 'unit': 'generated_image', 'quantity': 1}
+BFL_REVIEWED_SHAPE = {'resolution': '1.5k', 'aspect_ratio': '3:2', 'grounding': True, 'image_count': 1,
+                      'supplied_reference_images': 0, 'explicit_width_height': False}
+BFL_REVIEWED_FLAGS = {'per_selected_resolution_tier': True, 'all_supported_aspect_ratios_same_price': True,
+                      'user_reference_images_included': True, 'model_retrieved_reference_images_included': True}
+BFL_REQUIRED_CLAUSES = (
+    'pricing is per image generated.',
+    'charges are based on the resolution tier selected in the request',
+    'reference images, whether provided by the user or retrieved by the model, and prompts are included at no extra charge.',
+    'the per-image rate does not vary with the number of reference images provided',
+    'all supported aspect ratios within a tier are charged the same.',
+)
+
+
+def bfl_rate_excess(account, pinned, price, now):
+    """In-band excess of BFL's published per-image rate over the approved cap, or None to block.
+
+    Used when the tariff hash differs from the pin. The identity, request shape, flags and the
+    required clauses must be unchanged; any other terms text is wording and is ignored. The result
+    is [] when the rate is at or below approval, else one entry in the shape of gemini_rate_excess.
+    """
+    try:
+        contract = price.get('contract')
+        if (not isinstance(contract, dict) or price.get('sha256') != digest(contract) or
+                price.get('source_url') != pinned['price_source_url'] or
+                not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24)):
+            return None
+        # digest() compares type-strictly, so True never stands in for 1.
+        if (digest({key: contract.get(key) for key in BFL_CONTRACT_CONSTANTS}) != digest(BFL_CONTRACT_CONSTANTS) or
+                digest(contract.get('request_shape')) != digest(BFL_REVIEWED_SHAPE) or
+                digest(contract.get('pricing_flags')) != digest(BFL_REVIEWED_FLAGS)):
+            return None
+        terms = contract.get('pricing_terms')
+        if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
+            return None
+        text = ' '.join(terms)
+        if any(clause not in text for clause in BFL_REQUIRED_CLAUSES):
+            return None
+        if set(account.get('operation_caps_usd', {})) != {BFL_OPERATION}:
+            return None
+        rate_value = contract.get('unit_price_usd')
+        if not isinstance(rate_value, str):
+            return None
+        rate = Decimal(rate_value)
+        approved = approved_rate(account, 'bfl', BFL_OPERATION, 'unit_price_usd')
+        if not rate.is_finite() or not approved.is_finite() or not within_price_band('bfl', rate, approved):
+            return None
+        if rate > approved:
+            return [{'operation': BFL_OPERATION, 'rate': 'unit_price_usd',
+                     'approved': format(approved.normalize(), 'f'), 'observed': format(rate.normalize(), 'f')}]
+        return []
+    except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError, SpendBlocked):
+        return None
+
+
 def validate_policy(policy, expected_policy_sha, now):
     if digest(policy) != expected_policy_sha or not re.fullmatch('[a-f0-9]{64}', expected_policy_sha):
         raise SpendBlocked('Automatic policy digest mismatch')
@@ -386,8 +445,9 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
         if pinned['price_evidence_mode'] == 'dynamic_snapshot':
             price = observation.get('price_snapshots', {}).get(provider, {})
             if price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
-                # Gemini edits its pricing page without changing rates: compare the rates in effect.
-                excess = gemini_rate_excess(account, pinned, price, now) if provider == 'gemini' else None
+                # A provider edits its pricing page without changing rates: compare the rates in effect.
+                checker = {'gemini': gemini_rate_excess, 'bfl': bfl_rate_excess}.get(provider)
+                excess = checker(account, pinned, price, now) if checker else None
                 if excess is None:
                     raise SpendBlocked('Primary price snapshot changed, stale or missing')
                 account['price_observed_sha256'] = price['sha256']
