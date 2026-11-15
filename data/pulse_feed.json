@@ -2,6 +2,88 @@
   "entries": [
     {
       "24h_shift": 0.24,
+      "artwork_artist": "Mike Hindle",
+      "artwork_source": "Unsplash",
+      "artwork_title": "INTERREGNUM",
+      "artwork_url": "https://unsplash.com/photos/jFCsSviIW9A",
+      "cluster_keywords": [
+        "langgraph",
+        "release",
+        "perf",
+        "checkpoint-postgres",
+        "release langgraph"
+      ],
+      "commissioned_thesis": "The discourse around open-source AI confronting hardware hegemony hints at a structural vacancy: the friction of seeking autonomous compute while still shadowed by the sovereign silicon king.",
+      "critic_scores": {
+        "semantic_alignment": 0.72,
+        "composite": 0.744
+      },
+      "date": "2026-11-15",
+      "dominant_category": "AI & Distributed Systems",
+      "dominant_signal_type": "HYBRID",
+      "fallback_webp_path": "assets/pulse/2026-11-15.webp",
+      "flux_model": null,
+      "gloss": "The uneasy space between sovereign monopolies.",
+      "headline": "INTERREGNUM \u2014 The uneasy space between sovereign monopolies.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/jFCsSviIW9A",
+      "macro_contribution_pct": 38.0,
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_contribution_pct": 62.0,
+      "orbit_sources_matched": [],
+      "orbit_weight_ratio": 0.62,
+      "publication_id": "2813e37585d2677a1976",
+      "published_at": "2026-11-15T08:49:49.575254Z",
+      "quote": "The uneasy space between sovereign monopolies.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "The discourse around open-source AI confronting hardware hegemony hints at a structural vacancy: the friction of seeking autonomous compute while still shadowed by the sovereign silicon king.",
+      "top_macro_themes": [
+        "langgraph",
+        "release",
+        "perf",
+        "checkpoint-postgres",
+        "release langgraph"
+      ],
+      "top_orbit_themes": [
+        "langgraph",
+        "release",
+        "perf",
+        "checkpoint-postgres",
+        "release langgraph"
+      ],
+      "unsplash_photographer": "Mike Hindle",
+      "unsplash_profile_url": "https://unsplash.com/@mikehindle",
+      "updated_at": "2026-11-15T08:49:49.575254Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "INTERREGNUM",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "jFCsSviIW9A",
+        "source_url": "https://unsplash.com/photos/jFCsSviIW9A",
+        "camera_make": "Apple",
+        "camera_model": "iPhone 13 Pro Max",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
+      "24h_shift": 0.24,
       "artwork_artist": "Vitaly Gariev",
       "artwork_source": "Unsplash",
       "artwork_title": "Effigiation",
@@ -1142,6 +1224,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-14T08:49:10.751164Z",
+  "updated_at": "2026-11-15T08:49:49.575254Z",
   "version": "2.0"
 }

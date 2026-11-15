@@ -1,32 +1,32 @@
 {
   "version": 1,
-  "date": "2026-11-14",
-  "word": "Effigiation",
-  "gloss": "Giving tangible shape to the unseen.",
-  "archetype": "LITERARY_JOURNAL",
-  "medium": "UNVERIFIED_IMAGE",
+  "date": "2026-11-15",
+  "word": "INTERREGNUM",
+  "gloss": "The uneasy space between sovereign monopolies.",
+  "archetype": "CONCRETE_POETRY",
+  "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "41e4147e8acdbde647714734d957bb3b1a425cd9da066fe8f9c58922bdd21cdc",
-    "assets/daily_pulse_dark.webp": "6cc29b339ea10caa325d0996f08d6c30f3aa682305e31679e0825d9a9e45b855",
-    "assets/daily_pulse.svg": "c0e09bb22f78d47101d86a3eb3a9c75b787c96e99815bf0ef7e0416c9129963e",
-    "assets/pulse/2026-11-14.webp": "28a494d5eebc81543fe027f502bd106cc8677469c3db6bda80bd9cbe4197be96"
+    "assets/daily_pulse_light.webp": "113442e32bbd1bf6151371bf481b0f2f972721f408690d6679c35fbc3f1e4d05",
+    "assets/daily_pulse_dark.webp": "50218eb7f1fe6f1c2bcbbd703ffd25f927cdfd920b8bc62f9e9c5ff2dd140a1b",
+    "assets/daily_pulse.svg": "05c3c60fdeb54ad425cd35e239608d3f3aa18b5ca233a07641da18807aa69ca5",
+    "assets/pulse/2026-11-15.webp": "ddc8152918322f44510f6a85d5e6ac059644861c10b688ee63e906bfe57e3897"
   },
   "media_provenance": {
     "version": 1,
-    "classification": "UNVERIFIED_IMAGE",
-    "basis": "insufficient_evidence",
+    "classification": "PHOTOGRAPHY",
+    "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "qgJF8MsO_b4",
-    "source_url": "https://unsplash.com/photos/qgJF8MsO_b4",
-    "camera_make": "",
-    "camera_model": "",
+    "asset_id": "jFCsSviIW9A",
+    "source_url": "https://unsplash.com/photos/jFCsSviIW9A",
+    "camera_make": "Apple",
+    "camera_model": "iPhone 13 Pro Max",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
       "statement": ""
     },
     "source_statement_sha256": "",
-    "allowance_exception": true
+    "allowance_exception": false
   },
-  "publication_id": "b064d9a04c5d00fa6e8c"
+  "publication_id": "2813e37585d2677a1976"
 }
