@@ -22,21 +22,21 @@
   "visual_medium": "PHOTOGRAPHY",
   "word": "Acephaly",
   "media_provenance": {
-    "allowance_exception": false,
-    "provider": "unsplash",
-    "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
-    "version": 1,
-    "camera_make": "Canon",
     "classification": "PHOTOGRAPHY",
-    "basis": "camera_reported",
+    "version": 1,
+    "source_statement_sha256": "",
+    "provider": "unsplash",
     "source_claim": {
       "process": "unknown",
       "statement": "",
       "kind": "none"
     },
+    "camera_make": "Canon",
+    "camera_model": "EOS 70D",
     "asset_id": "pS6GsfrQZDk",
-    "source_statement_sha256": "",
-    "camera_model": "EOS 70D"
+    "allowance_exception": false,
+    "basis": "camera_reported",
+    "source_url": "https://unsplash.com/photos/pS6GsfrQZDk"
   },
   "analysis": {
     "arousal": 55.3,
@@ -79,8 +79,8 @@
     ],
     "commissioned_thesis": "The open-source AI ecosystem faces its ultimate infrastructural rite of passage: cutting ties with proprietary hardware hegemony. 'Acephaly' captures both the literal decapitation metaphor of breaking NVIDIA's monopoly and the decentralized, headless architecture necessary for truly autonomous intelligence commons.",
     "critic_scores": {
-      "composite": 0.713,
-      "semantic_alignment": 0.73
+      "semantic_alignment": 0.73,
+      "composite": 0.713
     },
     "date": "2026-11-16",
     "dominant_category": "AI & Distributed Systems",
@@ -129,21 +129,21 @@
     "window_hours": 96,
     "word": "Acephaly",
     "media_provenance": {
-      "basis": "camera_reported",
-      "source_statement_sha256": "",
       "source_claim": {
         "kind": "none",
         "process": "unknown",
         "statement": ""
       },
-      "camera_make": "Canon",
-      "camera_model": "EOS 70D",
+      "source_statement_sha256": "",
+      "classification": "PHOTOGRAPHY",
       "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
-      "provider": "unsplash",
       "version": 1,
+      "provider": "unsplash",
+      "camera_make": "Canon",
+      "basis": "camera_reported",
+      "camera_model": "EOS 70D",
       "asset_id": "pS6GsfrQZDk",
-      "allowance_exception": false,
-      "classification": "PHOTOGRAPHY"
+      "allowance_exception": false
     }
   }
 }
