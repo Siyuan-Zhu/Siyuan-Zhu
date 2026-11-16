@@ -15,29 +15,29 @@
  <a id="connect-four"></a>
 <h4><img src="../assets/connect_four_title_light.webp?v=7d4ad7e39c4e#gh-light-mode-only" width="740" alt="Connect Four"><img src="../assets/connect_four_title_dark.webp?v=7d4ad7e39c4e#gh-dark-mode-only" width="740" alt="Connect Four"></h4>
 
-<img src="../assets/game_board.svg?v=r2t12-548706bc" width="580" alt="Connect Four board">
+<img src="../assets/game_board.svg?v=r2t13-ed4c19f1" width="580" alt="Connect Four board">
 
 <br>
 
 <sub>Terracotta to play.</sub>
 
-| [I](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:1:turn=12:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+1+%28Turn+12%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 1") | [II](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:2:turn=12:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+2+%28Turn+12%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 2") | [III](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:3:turn=12:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+3+%28Turn+12%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 3") | — | [V](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:5:turn=12:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+5+%28Turn+12%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 5") | [VI](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:6:turn=12:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+6+%28Turn+12%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 6") | [VII](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:7:turn=12:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+7+%28Turn+12%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 7") |
+| [I](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:1:turn=13:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+1+%28Turn+13%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 1") | [II](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:2:turn=13:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+2+%28Turn+13%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 2") | — | — | [V](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:5:turn=13:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+5+%28Turn+13%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 5") | [VI](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:6:turn=13:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+6+%28Turn+13%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 6") | [VII](https://github.com/Siyuan-Zhu/Siyuan-Zhu/issues/new?title=game:move:connect4:col:7:turn=13:round=2&body=Just+click+%27Submit+new+issue%27+to+place+a+Terracotta+disc+in+Column+7+%28Turn+13%29.+Processing+is+asynchronous.+House+-+Bot+is+automated. "Place a disc in column 7") |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 
 </div>
 
-<sub>last move: @Siyuan-Zhu dropped in col 2 (answered col 3) · turn 12</sub>
+<sub>last move: @Siyuan-Zhu dropped in col 3 (answered col 6) · turn 13</sub>
 
 <details>
 <summary><sub>Recent moves</sub></summary>
 
 | Turn | Player | Move | Bot Reply |
 | :---: | :--- | :--- | :--- |
+| 12 | House - Bot | Answered col 6 | — |
+| 12 | `@Siyuan-Zhu` | Dropped in col 3 | Answered col 6 |
 | 11 | House - Bot | Answered col 3 | — |
 | 11 | `@Siyuan-Zhu` | Dropped in col 2 | Answered col 3 |
 | 10 | House - Bot | Answered col 4 | — |
-| 10 | `@Siyuan-Zhu` | Dropped in col 2 | Answered col 4 |
-| 9 | House - Bot | Answered col 6 | — |
 
 </details>
 
