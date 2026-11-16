@@ -22,21 +22,21 @@
   "visual_medium": "PHOTOGRAPHY",
   "word": "Acephaly",
   "media_provenance": {
-    "camera_make": "Canon",
-    "allowance_exception": false,
-    "classification": "PHOTOGRAPHY",
-    "source_statement_sha256": "",
-    "basis": "camera_reported",
-    "provider": "unsplash",
     "camera_model": "EOS 70D",
+    "basis": "camera_reported",
+    "source_statement_sha256": "",
     "version": 1,
+    "provider": "unsplash",
+    "asset_id": "pS6GsfrQZDk",
+    "allowance_exception": false,
     "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
     "source_claim": {
       "kind": "none",
-      "statement": "",
-      "process": "unknown"
+      "process": "unknown",
+      "statement": ""
     },
-    "asset_id": "pS6GsfrQZDk"
+    "classification": "PHOTOGRAPHY",
+    "camera_make": "Canon"
   },
   "analysis": {
     "arousal": 55.3,
@@ -79,8 +79,8 @@
     ],
     "commissioned_thesis": "The open-source AI ecosystem faces its ultimate infrastructural rite of passage: cutting ties with proprietary hardware hegemony. 'Acephaly' captures both the literal decapitation metaphor of breaking NVIDIA's monopoly and the decentralized, headless architecture necessary for truly autonomous intelligence commons.",
     "critic_scores": {
-      "semantic_alignment": 0.73,
-      "composite": 0.713
+      "composite": 0.713,
+      "semantic_alignment": 0.73
     },
     "date": "2026-11-16",
     "dominant_category": "AI & Distributed Systems",
@@ -129,21 +129,21 @@
     "window_hours": 96,
     "word": "Acephaly",
     "media_provenance": {
+      "source_statement_sha256": "",
+      "classification": "PHOTOGRAPHY",
+      "allowance_exception": false,
+      "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
+      "provider": "unsplash",
       "camera_make": "Canon",
+      "source_claim": {
+        "process": "unknown",
+        "statement": "",
+        "kind": "none"
+      },
       "version": 1,
       "camera_model": "EOS 70D",
-      "provider": "unsplash",
-      "source_claim": {
-        "kind": "none",
-        "process": "unknown",
-        "statement": ""
-      },
-      "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
-      "basis": "camera_reported",
-      "classification": "PHOTOGRAPHY",
-      "source_statement_sha256": "",
-      "allowance_exception": false,
-      "asset_id": "pS6GsfrQZDk"
+      "asset_id": "pS6GsfrQZDk",
+      "basis": "camera_reported"
     }
   }
 }
