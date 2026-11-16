@@ -26,7 +26,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol, runtime_checkable
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1265,6 +1265,49 @@ class _FirestoreRestCollectionRef:
         return self._client.list_documents(self._collection_id)
 
 
+def exchange_github_oidc_token(env: Mapping[str, str]) -> str:
+    req_url = (env.get("ACTIONS_ID_TOKEN_REQUEST_URL") or "").strip()
+    req_tok = (env.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN") or "").strip()
+    if not req_url or not req_tok:
+        raise RuntimeError("GitHub Actions OIDC environment variables not set")
+    wif_provider = (
+        env.get("GCP_WIF_PROVIDER")
+        or "//iam.googleapis.com/projects/277213321965/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+    ).strip()
+    sep = "&" if "?" in req_url else "?"
+    oidc_url = f"{req_url}{sep}audience={urllib.parse.quote(wif_provider, safe='')}"
+    oidc_req = urllib.request.Request(
+        oidc_url,
+        headers={
+            "Authorization": f"Bearer {req_tok}",
+            "Accept": "application/json; api-version=2.0",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(oidc_req, timeout=10) as oidc_resp:
+        gh_jwt = str(json.loads(oidc_resp.read().decode("utf-8"))["value"])
+
+    sts_payload = json.dumps(
+        {
+            "audience": wif_provider,
+            "grantType": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "requestedTokenType": "urn:ietf:params:oauth:token-type:access_token",
+            "scope": "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform",
+            "subjectTokenType": "urn:ietf:params:oauth:token-type:jwt",
+            "subjectToken": gh_jwt,
+        }
+    ).encode("utf-8")
+    sts_req = urllib.request.Request(
+        "https://sts.googleapis.com/v1/token",
+        data=sts_payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(sts_req, timeout=10) as sts_resp:
+        sts_data = json.loads(sts_resp.read().decode("utf-8"))
+    return str(sts_data["access_token"])
+
+
 class _FirestoreRestClient:
     """Zero-dependency Cloud Firestore v1 REST client using `urllib.request` and OAuth2 Bearer tokens."""
 
@@ -1323,46 +1366,7 @@ class _FirestoreRestClient:
         return str(tok_data["access_token"])
 
     def _exchange_github_oidc_token(self) -> str:
-        req_url = (os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") or "").strip()
-        req_tok = (os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN") or "").strip()
-        if not req_url or not req_tok:
-            raise RuntimeError("GitHub Actions OIDC environment variables not set")
-        wif_provider = (
-            os.environ.get("GCP_WIF_PROVIDER")
-            or "//iam.googleapis.com/projects/277213321965/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
-        ).strip()
-        sep = "&" if "?" in req_url else "?"
-        oidc_url = f"{req_url}{sep}audience={urllib.parse.quote(wif_provider, safe='')}"
-        oidc_req = urllib.request.Request(
-            oidc_url,
-            headers={
-                "Authorization": f"Bearer {req_tok}",
-                "Accept": "application/json; api-version=2.0",
-            },
-            method="GET",
-        )
-        with urllib.request.urlopen(oidc_req, timeout=10) as oidc_resp:
-            gh_jwt = str(json.loads(oidc_resp.read().decode("utf-8"))["value"])
-
-        sts_payload = json.dumps(
-            {
-                "audience": wif_provider,
-                "grantType": "urn:ietf:params:oauth:grant-type:token-exchange",
-                "requestedTokenType": "urn:ietf:params:oauth:token-type:access_token",
-                "scope": "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform",
-                "subjectTokenType": "urn:ietf:params:oauth:token-type:jwt",
-                "subjectToken": gh_jwt,
-            }
-        ).encode("utf-8")
-        sts_req = urllib.request.Request(
-            "https://sts.googleapis.com/v1/token",
-            data=sts_payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(sts_req, timeout=10) as sts_resp:
-            sts_data = json.loads(sts_resp.read().decode("utf-8"))
-        return str(sts_data["access_token"])
+        return exchange_github_oidc_token(os.environ)
 
     def _resolve_token(self) -> str:
         if self._access_token:

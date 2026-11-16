@@ -230,6 +230,30 @@ jobs:
           DAILY_PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: python3 scripts/complete_daily_outcome.py
 
+      - name: Finalize owner notice
+        if: failure() || cancelled()
+        env:
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: "git-readme-features"
+          GOOGLE_CLOUD_PROJECT: "git-readme-features"
+          FIRESTORE_PROJECT_ID: "git-readme-features"
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+        run: python3 scripts/owner_alert_step.py --outcome failure
+
+      - name: Finalize owner summary
+        if: success()
+        env:
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: "git-readme-features"
+          GOOGLE_CLOUD_PROJECT: "git-readme-features"
+          FIRESTORE_PROJECT_ID: "git-readme-features"
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+        run: python3 scripts/owner_alert_step.py --outcome success
+
       - name: Preserve daily outcome and any publication recovery assets
         if: always()
         uses: actions/upload-artifact@v4

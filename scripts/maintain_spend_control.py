@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import StringIO
@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.zeitgeist.automatic_spend_runtime import (
     PrivateFirestoreStore, maintain_spend_control, observe_provider_metadata,
 )
+from src.zeitgeist import owner_alert
 from src.zeitgeist.spend_guard import SpendBlocked
 from src.zeitgeist.public_tariff_http import TransientPublicRead, validate_retry_not_before
 from scripts.promote_release_state import _private_write
@@ -127,7 +128,9 @@ def main(argv=None):
         'mode':'apply' if args.apply else 'plan_only','observations':{}}
     path=None;created=False;summary=None;store=None;temporary=False
     secrets=_secrets(os.environ)
+    held={}  # in-memory only: the installed policy and the raw preflight report
     def observer(policy,now):
+        held['policy']=policy
         report['stage']='observing'
         if path is None:
             value=observe_provider_metadata(policy,os.environ,now)
@@ -149,7 +152,10 @@ def main(argv=None):
         previous_logging=logging.root.manager.disable
         try:
             logging.disable(logging.CRITICAL)
-            with redirect_stdout(StringIO()),redirect_stderr(StringIO()):
+            with ExitStack() as stack:
+                if args.apply:held['capture']=stack.enter_context(owner_alert.captured_preflight())
+                stack.enter_context(redirect_stdout(StringIO()))
+                stack.enter_context(redirect_stderr(StringIO()))
                 store = _WriteObservedStore(PrivateFirestoreStore())
                 result = maintain_spend_control(store,
                     expected_policy_sha=os.environ.get("SPEND_POLICY_SHA256", ""), apply=args.apply,
@@ -171,6 +177,22 @@ def main(argv=None):
                 temporary=True
                 summary.update(code='transient-anonymous-price-read', retryable=True,
                                retry_not_before=error.retry_not_before)
+        if args.apply:
+            try:
+                raw=os.environ.get('ZEITGEIST_RUN_STARTED_AT','')
+                try:
+                    started=datetime.fromisoformat(raw.replace('Z','+00:00')) if raw else None
+                    if started is not None and started.tzinfo is None:started=started.replace(tzinfo=timezone.utc)
+                except (ValueError,TypeError):
+                    started=None
+                capture=held.get('capture')
+                sub_cause,details=owner_alert.sub_cause_from_observation(
+                    getattr(capture,'report',None),held.get('policy'))
+                owner_alert.notify(stage='spend_maintenance',code=summary.get('code'),
+                    error_type=summary.get('error_type'),sub_cause=sub_cause,details=details,
+                    started_at=started,root=ROOT)
+            except BaseException:
+                pass
     finally:
         if summary is not None:
             report.update(status=summary['status'],public_diagnostics={key:summary[key]

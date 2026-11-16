@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.state_store import get_state_store
+from src.zeitgeist.owner_alert import MARKER, notify
 from src.zeitgeist.daily_outcomes import new_outcome, receipt_path, save_outcome, record_failure, observe_committed_publication
 from src.zeitgeist.publication import verify_current_pulse, verify_publication_bundle
 
@@ -65,6 +66,10 @@ def retryable_maintenance_failure(error, *, now):
 
 
 def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run):
+    try:
+        (Path(root) / MARKER).unlink(missing_ok=True)  # a stale marker must never silence a later alert
+    except Exception:
+        pass
     env = os.environ if env is None else env
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -84,6 +89,7 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
         save_outcome(receipt, outcome)
         print(json.dumps({'status': 'held_for_review', 'date': str(target_date), 'generation_calls': 0}))
         return False
+    notify(stage='freshness', cls_override='heartbeat', code='heartbeat', env=env, now=now)
     execution = None
     try:
         store = store if store is not None else get_state_store(
@@ -110,7 +116,8 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
             outcome['stage'] = 'spend_maintenance'
             save_outcome(receipt, outcome)
             runner([sys.executable, 'scripts/maintain_spend_control.py', '--apply'],
-                   cwd=root, check=True, capture_output=True, text=True)
+                   cwd=root, check=True, capture_output=True, text=True,
+                   env={**os.environ, 'ZEITGEIST_RUN_STARTED_AT': outcome['started_at']})
         if execution is not None:
             execution.transition('generation')
         outcome['stage'] = 'generation'
@@ -153,6 +160,20 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
                                          else 'requires_reconciliation', failure_category=outcome['stage'])
         except Exception:
             pass  # A failed observer must not replace the actual failure.
+        try:
+            if not (Path(root) / MARKER).exists():
+                try:
+                    started_at = datetime.fromisoformat(outcome['started_at'])
+                    if started_at.tzinfo is None:
+                        started_at = None
+                except Exception:
+                    started_at = None
+                notify(stage=outcome['stage'], failure_category=outcome.get('failure_category'),
+                       error_type=type(error).__name__,
+                       message=str(error) if outcome['stage'] == 'freshness' else None,
+                       started_at=started_at, env=env, root=root)
+        except BaseException:
+            pass  # The owner notice must never replace the actual failure.
         raise
 
 

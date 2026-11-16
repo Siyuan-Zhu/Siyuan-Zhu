@@ -1,0 +1,70 @@
+name: Owner tools
+run-name: Owner ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Reviewed tool to run
+        type: choice
+        options: [none, check-credentials, "plan:retry-today", "apply:retry-today"]
+        default: none
+      plan_code:
+        description: Code from the plan email (apply only)
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+  id-token: write
+
+concurrency:
+  group: readme-state-writer
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  run:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.actor == 'Siyuan-Zhu' && github.triggering_actor == 'Siyuan-Zhu' &&
+      github.repository == 'Siyuan-Zhu/Siyuan-Zhu' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run owner tool
+        env:
+          OWNER_ACTION: ${{ inputs.action }}
+          OWNER_PLAN_CODE: ${{ inputs.plan_code }}
+          GH_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BFL_API_KEY: ${{ secrets.BFL_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
+          SPEND_POLICY_SHA256: "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
+          STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
+          FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT || secrets.GCP_PROJECT_ID || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID || secrets.GCP_PROJECT_ID || 'git-readme-features' }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+        shell: python
+        run: |
+          import os
+          import subprocess
+          import sys
+          command = [sys.executable, "scripts/owner_repair.py", "--action", os.environ.get("OWNER_ACTION", "none"), "--plan-code", os.environ.get("OWNER_PLAN_CODE", "")]
+          sys.exit(subprocess.run(command).returncode)
