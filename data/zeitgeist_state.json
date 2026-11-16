@@ -22,21 +22,21 @@
   "visual_medium": "PHOTOGRAPHY",
   "word": "Acephaly",
   "media_provenance": {
-    "camera_model": "EOS 70D",
-    "basis": "camera_reported",
-    "source_statement_sha256": "",
-    "version": 1,
-    "provider": "unsplash",
-    "asset_id": "pS6GsfrQZDk",
     "allowance_exception": false,
+    "provider": "unsplash",
     "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
-    "source_claim": {
-      "kind": "none",
-      "process": "unknown",
-      "statement": ""
-    },
+    "version": 1,
+    "camera_make": "Canon",
     "classification": "PHOTOGRAPHY",
-    "camera_make": "Canon"
+    "basis": "camera_reported",
+    "source_claim": {
+      "process": "unknown",
+      "statement": "",
+      "kind": "none"
+    },
+    "asset_id": "pS6GsfrQZDk",
+    "source_statement_sha256": "",
+    "camera_model": "EOS 70D"
   },
   "analysis": {
     "arousal": 55.3,
@@ -129,21 +129,21 @@
     "window_hours": 96,
     "word": "Acephaly",
     "media_provenance": {
+      "basis": "camera_reported",
       "source_statement_sha256": "",
-      "classification": "PHOTOGRAPHY",
-      "allowance_exception": false,
+      "source_claim": {
+        "kind": "none",
+        "process": "unknown",
+        "statement": ""
+      },
+      "camera_make": "Canon",
+      "camera_model": "EOS 70D",
       "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
       "provider": "unsplash",
-      "camera_make": "Canon",
-      "source_claim": {
-        "process": "unknown",
-        "statement": "",
-        "kind": "none"
-      },
       "version": 1,
-      "camera_model": "EOS 70D",
       "asset_id": "pS6GsfrQZDk",
-      "basis": "camera_reported"
+      "allowance_exception": false,
+      "classification": "PHOTOGRAPHY"
     }
   }
 }
