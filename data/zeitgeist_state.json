@@ -22,20 +22,20 @@
   "visual_medium": "PHOTOGRAPHY",
   "word": "Acephaly",
   "media_provenance": {
-    "basis": "camera_reported",
+    "camera_make": "Canon",
     "allowance_exception": false,
-    "source_claim": {
-      "process": "unknown",
-      "kind": "none",
-      "statement": ""
-    },
-    "source_statement_sha256": "",
     "classification": "PHOTOGRAPHY",
+    "source_statement_sha256": "",
+    "basis": "camera_reported",
+    "provider": "unsplash",
+    "camera_model": "EOS 70D",
     "version": 1,
     "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
-    "camera_make": "Canon",
-    "camera_model": "EOS 70D",
-    "provider": "unsplash",
+    "source_claim": {
+      "kind": "none",
+      "statement": "",
+      "process": "unknown"
+    },
     "asset_id": "pS6GsfrQZDk"
   },
   "analysis": {
@@ -79,8 +79,8 @@
     ],
     "commissioned_thesis": "The open-source AI ecosystem faces its ultimate infrastructural rite of passage: cutting ties with proprietary hardware hegemony. 'Acephaly' captures both the literal decapitation metaphor of breaking NVIDIA's monopoly and the decentralized, headless architecture necessary for truly autonomous intelligence commons.",
     "critic_scores": {
-      "composite": 0.713,
-      "semantic_alignment": 0.73
+      "semantic_alignment": 0.73,
+      "composite": 0.713
     },
     "date": "2026-11-16",
     "dominant_category": "AI & Distributed Systems",
@@ -130,20 +130,20 @@
     "word": "Acephaly",
     "media_provenance": {
       "camera_make": "Canon",
-      "source_statement_sha256": "",
-      "camera_model": "EOS 70D",
-      "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
-      "asset_id": "pS6GsfrQZDk",
-      "provider": "unsplash",
       "version": 1,
+      "camera_model": "EOS 70D",
+      "provider": "unsplash",
+      "source_claim": {
+        "kind": "none",
+        "process": "unknown",
+        "statement": ""
+      },
+      "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
       "basis": "camera_reported",
       "classification": "PHOTOGRAPHY",
-      "source_claim": {
-        "statement": "",
-        "process": "unknown",
-        "kind": "none"
-      },
-      "allowance_exception": false
+      "source_statement_sha256": "",
+      "allowance_exception": false,
+      "asset_id": "pS6GsfrQZDk"
     }
   }
 }

@@ -1,22 +1,22 @@
 {
-  "bot_elo": 1203,
   "players": {
     "Siyuan-Zhu": {
+      "losses": 1,
       "elo": 797,
-      "draws": 0,
-      "finishes": 0,
-      "wins": 0,
       "last_played_at": "2026-11-06T05:50:38Z",
-      "losses": 1
+      "draws": 0,
+      "wins": 0,
+      "finishes": 0
     }
   },
+  "past_rounds": [],
+  "active_game_key": "connect4",
   "round_id": 1,
   "active_stakes": {},
-  "current_round_log": [],
-  "active_game_key": "connect4",
   "schema_version": "1.0",
+  "bot_elo": 1203,
+  "current_round_log": [],
   "state_version": 1,
-  "past_rounds": [],
   "recent_rounds": [
     {
       "settled_at": "2026-11-06T05:50:38Z",
