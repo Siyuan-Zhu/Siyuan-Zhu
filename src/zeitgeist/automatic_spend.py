@@ -79,7 +79,7 @@ PRICE_TOLERANCE = {'gemini': Decimal('0.10'), 'bfl': Decimal('0.15')}
 TOLERATED_MONTHLY_INCREASE_USD = money('5')
 # What the increase counts: 'overruns_only' sums the tolerated overruns above holds; 'both_together'
 # also sums the in-band price excess of the month's holds. Any other value blocks on first use.
-MONTHLY_INCREASE_BASIS = 'overruns_only'
+MONTHLY_INCREASE_BASIS = 'both_together'
 _INCREASE_BASES = frozenset({'overruns_only', 'both_together'})
 _AUDIT_KEYS = frozenset({'schema_version', 'tolerance', 'basis', 'observed_sha256', 'observed_at', 'above_approval'})
 _AUDIT_ENTRY_KEYS = frozenset({'operation', 'rate', 'approved', 'observed'})

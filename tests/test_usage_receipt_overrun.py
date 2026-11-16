@@ -204,7 +204,7 @@ def mark_of(candidate, key=OPEN):
 
 
 def test_monthly_increase_constants():
-    assert auto.TOLERATED_MONTHLY_INCREASE_USD == Decimal('5') and auto.MONTHLY_INCREASE_BASIS == 'overruns_only'
+    assert auto.TOLERATED_MONTHLY_INCREASE_USD == Decimal('5') and auto.MONTHLY_INCREASE_BASIS == 'both_together'
 
 
 def test_spend_increase_of_4_99_settles_and_continues():
@@ -342,12 +342,24 @@ def test_both_together_counts_in_band_excess(monkeypatch):
     ledger, policy, _ = tolerance_fixture(prior='0')
     ledger['reservations']['inband'] = in_band_hold('4.50')
     assert auto.in_band_excess_usd(ledger['reservations']['inband']) == Decimal('4.50')
+    monkeypatch.setattr(auto, 'MONTHLY_INCREASE_BASIS', 'overruns_only')  # this half contrasts the older mode
     tolerated = admit(ledger, policy, open_receipt('0.67'))
     assert mark_of(tolerated)['month_increase_usd'] == '0.60' and not tolerated.get('reconciliation_required')
     monkeypatch.setattr(auto, 'MONTHLY_INCREASE_BASIS', 'both_together')
     assert auto.month_spend_increase_usd(ledger) == Decimal('4.50')
     c = admit(ledger, policy, open_receipt('0.67'))
     assert c['reconciliation_required'] is True and 'overrun_tolerated' not in c['reservations'][OPEN]
+
+
+def test_default_basis_freezes_in_band_excess_plus_overrun_past_the_limit():
+    # No monkeypatch: the production default counts 4.50 of in-band excess and a 0.60 overrun together.
+    assert auto.MONTHLY_INCREASE_BASIS == 'both_together'
+    ledger, policy, _ = tolerance_fixture(prior='0')
+    ledger['reservations']['inband'] = in_band_hold('4.50')
+    assert auto.month_spend_increase_usd(ledger) == Decimal('4.50')
+    c = admit(ledger, policy, open_receipt('0.67'))
+    assert_frozen_unmarked(c)
+    assert c['reservations'][OPEN]['actual_gross_usd'] == '0.67'
 
 
 def test_unknown_increase_basis_blocks(monkeypatch):

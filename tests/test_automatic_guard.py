@@ -618,6 +618,17 @@ def test_both_together_reserve_blocks_past_the_increase_limit(monkeypatch):
     assert len(guard.ledger.document['reservations'])==2
 
 
+def test_default_basis_reserve_refuses_a_hold_past_the_increase_limit():
+    # No monkeypatch: the production default counts in-band excess, so a new hold past 5 is refused.
+    assert auto.MONTHLY_INCREASE_BASIS=='both_together'
+    guard=budget(rates=IN_BAND);document=guard.ledger.document
+    document['reservations']['over']=inband_existing(49_960_000)
+    assert auto.month_spend_increase_usd(document)==Decimal('4.996')
+    with pytest.raises(SpendBlocked,match=TARIFF_BLOCK):  # 4.996 + 0.0054777 is above 5
+        guard.reserve('gemini',OP,'0.0602547',context=GEMINI_CTX)
+    assert list(document['reservations'])==['over']
+
+
 # A refresh between the rate read and the reservation is caught by reserve itself (F1).
 BILLING_CHANGED='Billing policy changed after token counting; retry admission'
 
