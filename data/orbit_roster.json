@@ -1,50 +1,14 @@
 {
-  "curated_o3_cursor": 8,
-  "rss_o3_cursor": 2,
-  "state_version": 19,
-  "updated_at": "2026-11-15T08:47:58.772092+00:00",
+  "curated_o3_cursor": 4,
+  "rss_o3_cursor": 4,
+  "state_version": 20,
+  "updated_at": "2026-11-16T08:46:33.737980+00:00",
   "handles": {
-    "korie.robertson": {
+    "casholman": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "abercrombielacy": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "acantina_ria": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "alejandro.arrias": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "tomfoxcatalog": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "nickbarefitness": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "papitaa_criolla": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "dsfaccini": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "mpfaffenberger": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "douwem": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "gospelpartner.app": {
+    "ceciliejegsen": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -52,7 +16,11 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "modelcontextprotocol": {
+    "_nutealla_": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "mpfaffenberger": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -60,15 +28,15 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "dafyy321": {
+    "alejandro.arrias": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "realwilliebosshog": {
+    "modelcontextprotocol": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "_nutealla_": {
+    "acantina_ria": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -76,11 +44,43 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
+    "abercrombielacy": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "channel4comedy": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "davidchipperfieldarchitects": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "dafyy321": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "dsfaccini": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "douwem": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "tomfoxcatalog": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
     "laurameijueiro": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "casholman": {
+    "papitaa_criolla": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "gospelpartner.app": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     }

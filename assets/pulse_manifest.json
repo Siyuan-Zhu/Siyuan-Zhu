@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-15",
-  "word": "INTERREGNUM",
-  "gloss": "The uneasy space between sovereign monopolies.",
-  "archetype": "CONCRETE_POETRY",
+  "date": "2026-11-16",
+  "word": "Acephaly",
+  "gloss": "Severing dependence on a singular titan.",
+  "archetype": "POETIC_CINEMA",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "113442e32bbd1bf6151371bf481b0f2f972721f408690d6679c35fbc3f1e4d05",
-    "assets/daily_pulse_dark.webp": "50218eb7f1fe6f1c2bcbbd703ffd25f927cdfd920b8bc62f9e9c5ff2dd140a1b",
-    "assets/daily_pulse.svg": "05c3c60fdeb54ad425cd35e239608d3f3aa18b5ca233a07641da18807aa69ca5",
-    "assets/pulse/2026-11-15.webp": "ddc8152918322f44510f6a85d5e6ac059644861c10b688ee63e906bfe57e3897"
+    "assets/daily_pulse_light.webp": "c98968bf8fc48c6ad2d788fd095a5ccfa4c4135ebf835b3a9a345d2c5e73c8d6",
+    "assets/daily_pulse_dark.webp": "c98968bf8fc48c6ad2d788fd095a5ccfa4c4135ebf835b3a9a345d2c5e73c8d6",
+    "assets/daily_pulse.svg": "db17d489e036e5e227507e4718680a8ed9a8f00c9b586772602431266707ed8c",
+    "assets/pulse/2026-11-16.webp": "cf4cb61b87d54af0732fec2ad18fed134e8093cea9f4e1aa69adcce1c91d2e80"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "jFCsSviIW9A",
-    "source_url": "https://unsplash.com/photos/jFCsSviIW9A",
-    "camera_make": "Apple",
-    "camera_model": "iPhone 13 Pro Max",
+    "asset_id": "pS6GsfrQZDk",
+    "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
+    "camera_make": "Canon",
+    "camera_model": "EOS 70D",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "2813e37585d2677a1976"
+  "publication_id": "3507c7b7faea87e64889"
 }
