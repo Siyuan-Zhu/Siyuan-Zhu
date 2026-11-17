@@ -2,6 +2,88 @@
   "entries": [
     {
       "24h_shift": 0.24,
+      "artwork_artist": "Nainoa Shizuru",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Communion",
+      "artwork_url": "https://unsplash.com/photos/NcdG9mK3PBY",
+      "cluster_keywords": [
+        "live",
+        "whoathatsgoodpodcast",
+        "whoathatsgoodpodcast live",
+        "dallas",
+        "getting"
+      ],
+      "commissioned_thesis": "In an era saturated by mediated soundbites and disembodied streams, the physical gathering of creators and their audience manifests as an essential, high-resonance liturgy of presence. The live tour transforms digital affinity into tangible collective warmth, asserting that true cultural connection remains stubbornly embodied.",
+      "critic_scores": {
+        "semantic_alignment": 0.88,
+        "composite": 0.862
+      },
+      "date": "2026-11-17",
+      "dominant_category": "AI & Distributed Systems",
+      "dominant_signal_type": "HYBRID",
+      "fallback_webp_path": "assets/pulse/2026-11-17.webp",
+      "flux_model": null,
+      "gloss": "Shared presence and collective warmth in person.",
+      "headline": "Communion \u2014 Shared presence and collective warmth in person.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/NcdG9mK3PBY",
+      "macro_contribution_pct": 38.0,
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_contribution_pct": 62.0,
+      "orbit_sources_matched": [],
+      "orbit_weight_ratio": 0.62,
+      "publication_id": "390d6cf8f00ef0cbaca9",
+      "published_at": "2026-11-17T08:48:56.640748Z",
+      "quote": "Shared presence and collective warmth in person.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "In an era saturated by mediated soundbites and disembodied streams, the physical gathering of creators and their audience manifests as an essential, high-resonance liturgy of presence. The live tour transforms digital affinity into tangible collective warmth, asserting that true cultural connection remains stubbornly embodied.",
+      "top_macro_themes": [
+        "live",
+        "whoathatsgoodpodcast",
+        "whoathatsgoodpodcast live",
+        "dallas",
+        "getting"
+      ],
+      "top_orbit_themes": [
+        "live",
+        "whoathatsgoodpodcast",
+        "whoathatsgoodpodcast live",
+        "dallas",
+        "getting"
+      ],
+      "unsplash_photographer": "Nainoa Shizuru",
+      "unsplash_profile_url": "https://unsplash.com/@nainoa",
+      "updated_at": "2026-11-17T08:48:56.640748Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Communion",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "NcdG9mK3PBY",
+        "source_url": "https://unsplash.com/photos/NcdG9mK3PBY",
+        "camera_make": "Canon",
+        "camera_model": "Canon EOS REBEL SL1",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
+      "24h_shift": 0.24,
       "artwork_artist": "William Dmytrow",
       "artwork_source": "Unsplash",
       "artwork_title": "Acephaly",
@@ -1306,6 +1388,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-16T08:47:42.677410Z",
+  "updated_at": "2026-11-17T08:48:56.640748Z",
   "version": "2.0"
 }

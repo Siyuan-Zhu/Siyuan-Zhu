@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-16",
-  "word": "Acephaly",
-  "gloss": "Severing dependence on a singular titan.",
-  "archetype": "POETIC_CINEMA",
+  "date": "2026-11-17",
+  "word": "Communion",
+  "gloss": "Shared presence and collective warmth in person.",
+  "archetype": "KYOTO_TANKOBON",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "c98968bf8fc48c6ad2d788fd095a5ccfa4c4135ebf835b3a9a345d2c5e73c8d6",
-    "assets/daily_pulse_dark.webp": "c98968bf8fc48c6ad2d788fd095a5ccfa4c4135ebf835b3a9a345d2c5e73c8d6",
-    "assets/daily_pulse.svg": "db17d489e036e5e227507e4718680a8ed9a8f00c9b586772602431266707ed8c",
-    "assets/pulse/2026-11-16.webp": "cf4cb61b87d54af0732fec2ad18fed134e8093cea9f4e1aa69adcce1c91d2e80"
+    "assets/daily_pulse_light.webp": "1128522a6445f8391c16b29e491b19a5c7ef2e2669f1e3a2513dbe456b8a9523",
+    "assets/daily_pulse_dark.webp": "50804b2c8d8ea722695b1a835f37699a2c760dc0e6515802547f0040978e9129",
+    "assets/daily_pulse.svg": "f5a982faf8c59507458c171f1ca2594e2536461c8e5baca62fa353b1b6beb3b7",
+    "assets/pulse/2026-11-17.webp": "bc40abc9d72d0f37392fa19917139b2db0422045ca63938fd1ad8205bbe3ad0f"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "pS6GsfrQZDk",
-    "source_url": "https://unsplash.com/photos/pS6GsfrQZDk",
+    "asset_id": "NcdG9mK3PBY",
+    "source_url": "https://unsplash.com/photos/NcdG9mK3PBY",
     "camera_make": "Canon",
-    "camera_model": "EOS 70D",
+    "camera_model": "Canon EOS REBEL SL1",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "3507c7b7faea87e64889"
+  "publication_id": "390d6cf8f00ef0cbaca9"
 }
