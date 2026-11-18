@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-17",
-  "word": "Communion",
-  "gloss": "Shared presence and collective warmth in person.",
-  "archetype": "KYOTO_TANKOBON",
+  "date": "2026-11-18",
+  "word": "Palimpsest",
+  "gloss": "Layered visions echoing across cinematic memory.",
+  "archetype": "STUDIO_MONOGRAPH",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "1128522a6445f8391c16b29e491b19a5c7ef2e2669f1e3a2513dbe456b8a9523",
-    "assets/daily_pulse_dark.webp": "50804b2c8d8ea722695b1a835f37699a2c760dc0e6515802547f0040978e9129",
-    "assets/daily_pulse.svg": "f5a982faf8c59507458c171f1ca2594e2536461c8e5baca62fa353b1b6beb3b7",
-    "assets/pulse/2026-11-17.webp": "bc40abc9d72d0f37392fa19917139b2db0422045ca63938fd1ad8205bbe3ad0f"
+    "assets/daily_pulse_light.webp": "7dfaca0486860d39e0bec13ae681b0e3b4c0c1baa29098af3c071fea3c750668",
+    "assets/daily_pulse_dark.webp": "8f245660ed918c9b678e63faedc087fce9af7463fef086cd35777278e909301d",
+    "assets/daily_pulse.svg": "674cc6cc07be7d3787a975668b458516c183210c1a45397290e64256f55f4642",
+    "assets/pulse/2026-11-18.webp": "c9211bf40423f7c1a962d07e0ea88095f079581230dfa6f19b7b8809e42e96ea"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "NcdG9mK3PBY",
-    "source_url": "https://unsplash.com/photos/NcdG9mK3PBY",
-    "camera_make": "Canon",
-    "camera_model": "Canon EOS REBEL SL1",
+    "asset_id": "iYcuJQaVTvg",
+    "source_url": "https://unsplash.com/photos/iYcuJQaVTvg",
+    "camera_make": "NIKON CORPORATION",
+    "camera_model": "NIKON D750",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "390d6cf8f00ef0cbaca9"
+  "publication_id": "42f8eba8ade45720e8d8"
 }
