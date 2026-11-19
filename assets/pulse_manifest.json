@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-18",
-  "word": "Palimpsest",
-  "gloss": "Layered visions echoing across cinematic memory.",
-  "archetype": "STUDIO_MONOGRAPH",
+  "date": "2026-11-19",
+  "word": "Interstice",
+  "gloss": "The connective tissue bridging disparate systems.",
+  "archetype": "LITERARY_JOURNAL",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "7dfaca0486860d39e0bec13ae681b0e3b4c0c1baa29098af3c071fea3c750668",
-    "assets/daily_pulse_dark.webp": "8f245660ed918c9b678e63faedc087fce9af7463fef086cd35777278e909301d",
-    "assets/daily_pulse.svg": "674cc6cc07be7d3787a975668b458516c183210c1a45397290e64256f55f4642",
-    "assets/pulse/2026-11-18.webp": "c9211bf40423f7c1a962d07e0ea88095f079581230dfa6f19b7b8809e42e96ea"
+    "assets/daily_pulse_light.webp": "484752897b712e84a21b217928e0a7dac050569723a19bf7a2bb8a4ccd274fec",
+    "assets/daily_pulse_dark.webp": "272622ab2faf6f10a79f995cb910a3b71d64aeebe3000649019423493b608e3b",
+    "assets/daily_pulse.svg": "d441a6ee33a86a82616d7947711332e86044c13e346aaf7fba985164588ef4d2",
+    "assets/pulse/2026-11-19.webp": "bfafac96f3d443b593ab1c5b9cdc40e1b66706fd3f4aba6d6a63641f2f7287b1"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "iYcuJQaVTvg",
-    "source_url": "https://unsplash.com/photos/iYcuJQaVTvg",
-    "camera_make": "NIKON CORPORATION",
-    "camera_model": "NIKON D750",
+    "asset_id": "vuNTWzg4zdo",
+    "source_url": "https://unsplash.com/photos/vuNTWzg4zdo",
+    "camera_make": "OLYMPUS IMAGING CORP.",
+    "camera_model": "E-M5",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "42f8eba8ade45720e8d8"
+  "publication_id": "d6003c8ee1dbaea0d6e4"
 }
