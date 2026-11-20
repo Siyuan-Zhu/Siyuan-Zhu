@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-19",
-  "word": "Interstice",
-  "gloss": "The connective tissue bridging disparate systems.",
-  "archetype": "LITERARY_JOURNAL",
+  "date": "2026-11-20",
+  "word": "Simulacrum",
+  "gloss": "Reality reflected through cinematic mirrors.",
+  "archetype": "POETIC_CINEMA",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "484752897b712e84a21b217928e0a7dac050569723a19bf7a2bb8a4ccd274fec",
-    "assets/daily_pulse_dark.webp": "272622ab2faf6f10a79f995cb910a3b71d64aeebe3000649019423493b608e3b",
-    "assets/daily_pulse.svg": "d441a6ee33a86a82616d7947711332e86044c13e346aaf7fba985164588ef4d2",
-    "assets/pulse/2026-11-19.webp": "bfafac96f3d443b593ab1c5b9cdc40e1b66706fd3f4aba6d6a63641f2f7287b1"
+    "assets/daily_pulse_light.webp": "a6d70aaba03e348a960098fb0c56c7f536389e5c226f9436a053ee8210d3f740",
+    "assets/daily_pulse_dark.webp": "a6d70aaba03e348a960098fb0c56c7f536389e5c226f9436a053ee8210d3f740",
+    "assets/daily_pulse.svg": "040d0ab5d540f202746e8911c7d14d7e1388928dca776c460a05c5cd6a77791d",
+    "assets/pulse/2026-11-20.webp": "a6488a738a4273f7cc0beef138e53ed8497b2374b4ba57f9ec4d5e1fdb10d16d"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "vuNTWzg4zdo",
-    "source_url": "https://unsplash.com/photos/vuNTWzg4zdo",
-    "camera_make": "OLYMPUS IMAGING CORP.",
-    "camera_model": "E-M5",
+    "asset_id": "R5afJZi-NvY",
+    "source_url": "https://unsplash.com/photos/R5afJZi-NvY",
+    "camera_make": "NIKON CORPORATION",
+    "camera_model": "NIKON Z 6_2",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "d6003c8ee1dbaea0d6e4"
+  "publication_id": "7cf3db1675b5c8b45e36"
 }
