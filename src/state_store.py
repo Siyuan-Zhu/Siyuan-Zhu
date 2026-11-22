@@ -163,7 +163,8 @@ def _cache_payload_bytes(payload: dict) -> int:
         for key, value in payload.items()}}, ensure_ascii=True).encode("utf-8"))
 
 
-def pack_ingestion_cache_pages(date_str: str, items: dict, *, reserve_embedding: bool = False) -> dict[str, dict]:
+def pack_ingestion_cache_pages(date_str: str, items: dict, *, reserve_embedding: bool = False,
+        embedding_model: str = "gemini-embedding-001") -> dict[str, dict]:
     """Losslessly page server-owned caches, bounded below Firestore request limits.
 
     OAuth/IAM writers bypass Firebase client rules. Existing client rules intentionally
@@ -179,7 +180,7 @@ def pack_ingestion_cache_pages(date_str: str, items: dict, *, reserve_embedding:
         raw = row.get("embedding_f16") or row.get("embedding_f16_b64")
         if reserve_embedding:
             raw = bytes(1536)
-            cleaned["embedding_model"] = "gemini-embedding-001"
+            cleaned["embedding_model"] = embedding_model
             cleaned["embedding_source"] = "gemini"
         elif isinstance(raw, str):
             raw = base64.b64decode(raw, validate=True)
