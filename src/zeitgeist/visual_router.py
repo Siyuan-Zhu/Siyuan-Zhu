@@ -20,7 +20,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, quote
 
 from .methodology import WeightedOrbitAnalysis
 from . import model_choice
-from .spend_guard import SpendBlocked, get_spend_guard, guard_genai_client, sampling_controls_supported
+from .spend_guard import (
+    SpendBlocked, get_spend_guard, guard_genai_client, refused_before_dispatch, sampling_controls_supported,
+)
 
 
 @dataclass(frozen=True)
@@ -1354,8 +1356,10 @@ def _generate_live_imagen3_bytes(prompt: str, api_key: Optional[str] = None) -> 
                         raw_data = getattr(inline, "data", None)
                         if isinstance(raw_data, (bytes, bytearray)) and raw_data:
                             return bytes(raw_data)
-            except SpendBlocked:
-                raise
+            except SpendBlocked as exc:
+                if not refused_before_dispatch(exc):
+                    raise
+                continue
             except Exception:
                 continue
 
@@ -1373,8 +1377,10 @@ def _generate_live_imagen3_bytes(prompt: str, api_key: Optional[str] = None) -> 
             raw_bytes = getattr(first_img, "image_bytes", None)
             if isinstance(raw_bytes, (bytes, bytearray)) and raw_bytes:
                 return bytes(raw_bytes)
-    except SpendBlocked:
-        raise
+    except SpendBlocked as exc:
+        if not refused_before_dispatch(exc):
+            raise
+        return None
     except Exception:
         return None
     return None
