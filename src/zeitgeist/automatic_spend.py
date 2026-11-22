@@ -339,7 +339,9 @@ def gemini_rate_excess(account, pinned, price, now):
                         excess.append({'operation': operation, 'rate': key,
                                        'approved': format(ceiling.normalize(), 'f'),
                                        'observed': format(rate.normalize(), 'f')})
-            if approved.get('pricing_valid_until') is not None:
+            if approved.get('pricing_valid_until') is not None and not (
+                    observed.get('published_rate_schedule') == 'current_only'
+                    and 'published_current_rate_through_date' not in observed):
                 through = date.fromisoformat(observed['published_current_rate_through_date'])
                 if through < _time(approved['pricing_valid_until']).date():
                     return None
