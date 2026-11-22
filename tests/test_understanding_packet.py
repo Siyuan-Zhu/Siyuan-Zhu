@@ -182,3 +182,23 @@ def test_ranking_stats():
     assert u.ranking_stats([c, b, a]) == (1, 2)
     assert u.ranking_stats([a, b, c]) == (1, 3)
     assert u.ranking_stats([]) == (0, 0)
+
+
+def test_public_keywords_drops_handle_part_combos():
+    it = mk("t", source_id="o2_ig_river.studio_7")
+    cl = mc([it, mk("plain")])
+    assert u.public_keywords(
+        ["river studio", "studio river", "river", "studio light", "open models"], cl
+    ) == ["river", "studio light", "open models"]
+
+
+def test_public_keywords_plain_short_handle_drops_nothing_extra():
+    cl = mc([mk("t", extra={"mentioned_handles": [WORD]})])
+    assert u.public_keywords(["open models", "river studio"], cl) == ["open models", "river studio"]
+
+
+def test_public_keywords_handle_parts_never_raises():
+    cl = mc([mk("t", source_id="o2_ig_river.studio_7")])
+    assert u.public_keywords([None, 5, ""], cl) is not None
+    assert u.public_keywords(["river studio"], object()) == ["river studio"]
+    assert u.public_keywords([], cl) == []

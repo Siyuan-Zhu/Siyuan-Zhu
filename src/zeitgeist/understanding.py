@@ -209,10 +209,16 @@ def public_keywords(keywords: Sequence[str], cluster: Any) -> List[str]:
             h for h in handles
             if _PLAIN_LETTERS_RE.fullmatch(h) is None or len(h) >= LONG_HANDLE_LETTERS
         ]
+        part_sets = [
+            {p for p in re.split(r"[^a-z]+", h.lower()) if len(p) >= 2} for h in risky
+        ]
         kept: List[str] = []
         for kw in keywords:
             low = str(kw).strip().lower()
             if low in handles or any(_handle_pattern(h).search(low) for h in risky):
+                continue
+            toks = re.findall(r"[a-z0-9']+", low)
+            if len(toks) >= 2 and any(set(toks) <= parts for parts in part_sets):
                 continue
             kept.append(kw)
         return kept
