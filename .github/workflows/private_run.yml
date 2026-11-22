@@ -1,7 +1,8 @@
 name: Private Run
 
 # Owner-dispatched: the Director and the photo path on the chosen models.
-# Publishes nothing: no commit, no push, no README, no artifact. Its only state write is the judge_calibration document.
+# Publishes nothing: no commit, no push, no README, no artifact. Its state writes: the judge_calibration document,
+# the spend ledger refresh through maintain_spend_control.py --apply, and the spend holds its paid calls write.
 # The log carries numbers and public model names only.
 on:
   workflow_dispatch:
