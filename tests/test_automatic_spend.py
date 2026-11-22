@@ -564,6 +564,35 @@ def test_rate_through_date_before_validity_blocks():
     refresh(ledger,policy,obs)
 
 
+def test_current_only_rate_has_no_through_date_to_compare():
+    ledger,policy,obs=fixtures()
+    ledger['providers']['gemini']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    policy['providers']['gemini']['account']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    contract=contract_for(published_rate_schedule='current_only')
+    del contract['operations'][OP]['published_current_rate_through_date']
+    observe_contract(obs,contract)
+    refresh(ledger,policy,obs)
+    assert auto.gemini_rate_excess(ledger['providers']['gemini'],policy['providers']['gemini'],obs['price_snapshots']['gemini'],NOW)==[]
+    higher=contract_for(rates=('0.31','2.50'),published_rate_schedule='current_only')
+    del higher['operations'][OP]['published_current_rate_through_date']
+    observe_contract(obs,higher)
+    excess=auto.gemini_rate_excess(ledger['providers']['gemini'],policy['providers']['gemini'],obs['price_snapshots']['gemini'],NOW)
+    assert [(e['rate'],e['observed']) for e in excess]==[('input_token_usd_per_million','0.31')]
+
+
+def test_missing_through_date_without_marker_still_blocks():
+    ledger,policy,obs=fixtures()
+    ledger['providers']['gemini']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    policy['providers']['gemini']['account']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    contract=contract_for()
+    del contract['operations'][OP]['published_current_rate_through_date']
+    observe_contract(obs,contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+    assert auto.gemini_rate_excess(ledger['providers']['gemini'],policy['providers']['gemini'],obs['price_snapshots']['gemini'],NOW) is None
+
+
 def test_contract_digest_mismatch_blocks():
     ledger,policy,obs=fixtures()
     observe_contract(obs,contract_for(),sha256='f'*64)

@@ -23,6 +23,15 @@ import uuid
 import httpx
 
 EMBEDDING_001_MAX_COUNTED_TOKENS_PER_TEXT = 2040
+HYDROGEN_MODEL = "gemini-4-hydrogen"
+HYDROGEN_OPERATION = "generate_content:" + HYDROGEN_MODEL
+HYDROGEN_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
+HYDROGEN_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
+
+
+def sampling_controls_supported(model: str) -> bool:
+    """Gemini 3 and Hydrogen reject temperature and candidate_count."""
+    return not (model.startswith("gemini-3") or model == HYDROGEN_MODEL)
 
 
 class SpendBlocked(RuntimeError):
@@ -51,6 +60,9 @@ class SpendBlocked(RuntimeError):
         "Unverified Gemini 3.8 pricing or model policy": "unverified-gemini38-policy",
         "Gemini 3.8 pricing expires before bounded request completion": "pricing-validity-bound",
         "Gemini 3 sampling controls are not supported": "unsupported-sampling-controls",
+        "Unverified Gemini 4 Hydrogen pricing or model policy": "unverified-hydrogen-policy",
+        "Gemini 4 Hydrogen pricing expires before bounded request completion": "pricing-validity-bound",
+        "Gemini 4 Hydrogen sampling controls are not supported": "unsupported-sampling-controls",
         "Allowance period cannot be reset before verified expiry": "allowance-period-cannot-be-reset-before-verified-expiry",
         "Billing policy approval expired or exceeds current 24h gate": "billing-policy-approval-expired-or-exceeds-current-24h-gate",
         "Billing reconciliation required": "billing-reconciliation-required",
@@ -750,6 +762,34 @@ class BudgetGuard:
         if not self.now() + timedelta(seconds=duration) < expires <= announced:
             raise SpendBlocked("Gemini 3.8 pricing expires before bounded request completion")
 
+    def _validate_hydrogen_policy(self, limits, duration):
+        """Exact Hydrogen tariff and bounded multimodal shape, never inferred credits."""
+        reason = "Unverified Gemini 4 Hydrogen pricing or model policy"
+        if (money(limits.get("input_token_usd_per_million")) != Decimal("1.50")
+                or money(limits.get("output_token_usd_per_million")) != Decimal("7.50")
+                or limits.get("thinking_level") not in HYDROGEN_THINKING_LEVELS
+                or limits.get("media_resolution") != "MEDIA_RESOLUTION_HIGH"):
+            raise SpendBlocked(reason)
+        tokens = limits.get("image_tokens_per_image")
+        if type(tokens) is not int or not 1 <= tokens <= 4096:
+            raise SpendBlocked(reason)
+        versions = limits.get("allowed_response_model_versions")
+        if (not isinstance(versions, list) or not versions
+                or any(not isinstance(v, str) or not v for v in versions)):
+            raise SpendBlocked(reason)
+        for field, ceiling in (("max_input_tokens", 65536), ("max_output_tokens", 4000),
+                               ("max_input_bytes", 2000000)):
+            value = limits.get(field)
+            if type(value) is not int or not 1 <= value <= ceiling:
+                raise SpendBlocked(reason)
+        images = limits.get("max_input_images")
+        if type(images) is not int or not 0 <= images <= 9:
+            raise SpendBlocked(reason)
+        expires = self._timestamp(limits.get("pricing_valid_until"))
+        announced = self._timestamp(HYDROGEN_PRICING_ANNOUNCED_UNTIL)
+        if not self.now() + timedelta(seconds=duration) < expires <= announced:
+            raise SpendBlocked("Gemini 4 Hydrogen pricing expires before bounded request completion")
+
     def bounded_genai_request(self, operation, kwargs):
         """Admit only the SDK request shapes whose costs were verified."""
         method, model = operation.split(":", 1)
@@ -763,6 +803,8 @@ class BudgetGuard:
             duration = int(account.get("max_request_duration_seconds", 300))
             if model == "gemini-3.8-flash":
                 self._validate_gemini38_policy(limits, duration)
+            elif model == HYDROGEN_MODEL:
+                self._validate_hydrogen_policy(limits, duration)
             return copy.deepcopy(limits), duration
         limits, duration = self.ledger.mutate(read)
         config = kwargs.get("config") or {}
@@ -811,9 +853,10 @@ class BudgetGuard:
             config["automatic_continuation"] = False
             if int(config.get("candidate_count", 1)) != 1:
                 raise SpendBlocked("Only one priced generation candidate is permitted")
-            if model.startswith("gemini-3"):
+            if not sampling_controls_supported(model):
                 if "temperature" in config or "candidate_count" in config:
-                    raise SpendBlocked("Gemini 3 sampling controls are not supported")
+                    raise SpendBlocked("Gemini 4 Hydrogen sampling controls are not supported"
+                                       if model == HYDROGEN_MODEL else "Gemini 3 sampling controls are not supported")
             else:
                 config["candidate_count"] = 1
             output = int(limits.get("max_output_tokens", 0))
@@ -834,6 +877,18 @@ class BudgetGuard:
                 if not 128 <= thinking <= output:
                     raise SpendBlocked("Verified 2.5 Pro reasoning allowance required")
                 config["thinking_config"] = {"thinking_budget": thinking}
+            elif model == HYDROGEN_MODEL:
+                from google.genai import types
+                level = limits.get("thinking_level")
+                try:
+                    if level not in HYDROGEN_THINKING_LEVELS:
+                        raise ValueError(level)
+                    types.ThinkingConfig(thinking_level=level)
+                except Exception:
+                    raise SpendBlocked("Verified model-specific thinking level required") from None
+                config["thinking_config"] = {"thinking_level": level}
+                if "media_resolution" in types.GenerateContentConfig.model_fields:
+                    config["media_resolution"] = "MEDIA_RESOLUTION_HIGH"
             elif model.startswith("gemini-3"):
                 level = limits.get("thinking_level")
                 allowed_levels = (["low", "medium", "high"] if model == "gemini-3.8-flash" else
@@ -881,6 +936,10 @@ class BudgetGuard:
                 if not isinstance(limits, dict):
                     raise SpendBlocked('Verified model pricing and request limits required')
                 self._validate_gemini38_policy(limits, int(account.get('max_request_duration_seconds', 300)))
+            elif operation == HYDROGEN_OPERATION:
+                if not isinstance(limits, dict):
+                    raise SpendBlocked('Verified model pricing and request limits required')
+                self._validate_hydrogen_policy(limits, int(account.get('max_request_duration_seconds', 300)))
             return (copy.deepcopy(limits), required, account['verification_reference'], copy.deepcopy(account))
         limits, required, reference, account = self.ledger.mutate(policy)
         if not required:
@@ -964,7 +1023,7 @@ class BudgetGuard:
             text_contents = inspect(contents)
             if bounded['config'].get('response_modalities', ['TEXT']) != ['TEXT']:
                 raise SpendBlocked('Only text output is covered by the verified token tariff')
-            if image_count and model not in ('gemini-2.5-flash', 'gemini-3.8-flash'):
+            if image_count and model not in ('gemini-2.5-flash', 'gemini-3.8-flash', HYDROGEN_MODEL):
                 raise SpendBlocked('Inline vision tariff is not verified for this model')
             if image_count > int(limits.get('max_input_images', 1)):
                 raise SpendBlocked('Inline image count exceeds verified policy')
@@ -972,7 +1031,7 @@ class BudgetGuard:
             if image_count:
                 # Additional text-only count avoids deriving text usage by
                 # subtracting an estimated image component from the total.
-                total = max(total, count(text_contents) + image_count * (1120 if model == 'gemini-3.8-flash' else 258))
+                total = max(total, count(text_contents) + image_count * (int(limits['image_tokens_per_image']) if model == HYDROGEN_MODEL else 1120 if model == 'gemini-3.8-flash' else 258))
             output = int(bounded['config']['max_output_tokens'])
             if output > int(limits.get('max_output_tokens', 0)):
                 raise SpendBlocked('Output policy changed after request validation')
@@ -1017,6 +1076,11 @@ def get_spend_guard(*, credential_keys=None):
     return BudgetGuard(ledger, credential_fingerprints=fingerprints, require_credential_binding=True)
 
 
+def refused_before_dispatch(error):
+    """True only for a SpendBlocked raised before any provider call was made."""
+    return isinstance(error, SpendBlocked) and getattr(error, 'refused_before_dispatch', False) is True
+
+
 def guard_genai_client(client, guard=None, *, credential_key=None):
     """Wrap every SDK request in a shared reservation; unknown tariffs block.
 
@@ -1032,21 +1096,33 @@ def guard_genai_client(client, guard=None, *, credential_key=None):
                 raise SpendBlocked("Unregistered paid SDK method")
 
             def invoke(*args, **kwargs):
-                if args:
-                    raise SpendBlocked("Positional SDK payloads are not admitted")
-                model = str(kwargs.get("model", ""))
-                operation = name + ":" + model
-                # Freeze inputs before counting so another caller cannot mutate
-                # the paid request after its admission count.
-                bounded = guard.bounded_genai_request(operation, copy.deepcopy(kwargs))
-                counted = guard.counted_genai_admission(operation, bounded, client.models.count_tokens)
-                automatic_invoke = getattr(guard, 'invoke_prepared_genai', None)
-                if getattr(guard, 'automatic_accounting_enabled', False) is True and callable(automatic_invoke):
-                    return automatic_invoke(operation, counted, bounded, target)
-                return guard.call(
-                    "gemini", operation, counted['maximum'], lambda: target(*args, **bounded),
-                    expected_reference=counted['reference'],
-                )
+                dispatched = False
+
+                def dispatch(*a, **kw):
+                    nonlocal dispatched
+                    dispatched = True
+                    return target(*a, **kw)
+
+                try:
+                    if args:
+                        raise SpendBlocked("Positional SDK payloads are not admitted")
+                    model = str(kwargs.get("model", ""))
+                    operation = name + ":" + model
+                    # Freeze inputs before counting so another caller cannot mutate
+                    # the paid request after its admission count.
+                    bounded = guard.bounded_genai_request(operation, copy.deepcopy(kwargs))
+                    counted = guard.counted_genai_admission(operation, bounded, client.models.count_tokens)
+                    automatic_invoke = getattr(guard, 'invoke_prepared_genai', None)
+                    if getattr(guard, 'automatic_accounting_enabled', False) is True and callable(automatic_invoke):
+                        return automatic_invoke(operation, counted, bounded, dispatch)
+                    return guard.call(
+                        "gemini", operation, counted['maximum'], lambda: dispatch(*args, **bounded),
+                        expected_reference=counted['reference'],
+                    )
+                except SpendBlocked as error:
+                    if not dispatched:
+                        error.refused_before_dispatch = True
+                    raise
 
             return invoke
 

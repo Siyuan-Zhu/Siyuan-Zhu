@@ -17,7 +17,9 @@ from .spend_guard import SpendBlocked, money
 SOURCE_URL = 'https://ai.google.dev/gemini-api/docs/pricing'
 MAX_HTML_BYTES = 2_000_000
 CURRENCY_PREFIX = re.escape(chr(36))
-MODELS = {'gemini-3.8-flash': 'gemini-3.8-flash', 'gemini-embedding': 'gemini-embedding-001'}
+HYDROGEN_SECTION = 'gemini-4-hydrogen'
+MODELS = {'gemini-3.8-flash': 'gemini-3.8-flash', HYDROGEN_SECTION: 'gemini-4-hydrogen',
+          'gemini-embedding': 'gemini-embedding-001'}
 
 
 def _text(value):
@@ -132,6 +134,20 @@ def _rows(parser, section, allowed):
                   'standard_rows': rows}
 
 
+def _optional_rows(parser, section, allowed):
+    """Strict rows for a section the page may not carry yet; None only when wholly absent."""
+    if parser.seen.count(section) == 0 and parser.codes[section] == []:
+        return None
+    return _rows(parser, section, allowed)
+
+
+def _current_rate(value):
+    match = re.fullmatch(CURRENCY_PREFIX + r'(\d+(?:\.\d+)?)', value)
+    if not match or money(match[1]) <= 0:
+        raise ValueError('Unrecognized current rate')
+    return format(money(match[1]).normalize(), 'f')
+
+
 def _dated_rate(value):
     match = re.fullmatch(CURRENCY_PREFIX + r'(\d+(?:\.\d+)?) through December 31, 2026\. ' + CURRENCY_PREFIX + r'(\d+(?:\.\d+)?) starting January 1, 2027\.', value)
     if not match or money(match[1]) <= 0 or money(match[2]) <= 0:
@@ -159,6 +175,8 @@ def _markdoc_html(body):
         codes = re.findall(r'`([^`]+)`', intro)
         if codes != [MODELS[identity]]:
             raise ValueError('Exact model identity required')
+        # Only the grounding label's footnote marker is reviewed (_rows maps it); any other sup in a cell raises.
+        content = re.sub(r'(?m)^([ \t]*\* Grounding with Google Search)\{% sup %\}\*\{% /sup %\}[ \t]*(?=\n)', r'\1*', content)
         tokens = re.split(r'({%.*?%})', content, flags=re.S)
         in_table = False
         tier = None
@@ -223,26 +241,37 @@ def normalize_gemini_tariff(html):
         generation, generation_conditions = _rows(parser, 'gemini-3.8-flash', (
             'input price','output price (including thinking tokens)','context caching price',
             'grounding with google search','grounding with google maps','used to improve our products'))
+        hydrogen_rows = _optional_rows(parser, HYDROGEN_SECTION, (
+            'input price','output price (including thinking tokens)','context caching price',
+            'grounding with google search','grounding with google maps','used to improve our products'))
         embedding, embedding_conditions = _rows(parser, 'gemini-embedding', ('input price','used to improve our products'))
         input_rate, future_input = _dated_rate(generation['input price'])
         output_rate, future_output = _dated_rate(generation['output price (including thinking tokens)'])
         match = re.fullmatch(CURRENCY_PREFIX + r'(\d+(?:\.\d+)?)', embedding['input price'])
         if not match or money(match[1]) <= 0:
             raise ValueError('Unrecognized current input-only embedding tariff')
+        operations = {
+            'generate_content:gemini-3.8-flash':{
+                'model':'gemini-3.8-flash','input_token_usd_per_million':input_rate,
+                'output_token_usd_per_million':output_rate,'output_includes_thinking':True,
+                'published_current_rate_through_date':'2026-12-31',
+                'published_future_rate_from_date':'2027-01-01',
+                'future_input_token_usd_per_million':future_input,
+                'future_output_token_usd_per_million':future_output},
+            'embed_content:gemini-embedding-001':{
+                'model':'gemini-embedding-001','input_token_usd_per_million':format(money(match[1]).normalize(),'f'),
+                'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'}}
+        conditions = {'gemini-3.8-flash':generation_conditions, 'gemini-embedding-001':embedding_conditions}
+        if hydrogen_rows is not None:
+            hydrogen, hydrogen_conditions = hydrogen_rows
+            operations['generate_content:gemini-4-hydrogen'] = {
+                'model':'gemini-4-hydrogen','input_token_usd_per_million':_current_rate(hydrogen['input price']),
+                'output_token_usd_per_million':_current_rate(hydrogen['output price (including thinking tokens)']),
+                'output_includes_thinking':True,'published_rate_schedule':'current_only'}
+            conditions['gemini-4-hydrogen'] = hydrogen_conditions
         return {'schema_version':2,'provider':'gemini','api':'gemini_developer_api',
             'currency':'USD','service_tier':'paid_standard','unit':'1000000_tokens',
-            'operations':{
-                'generate_content:gemini-3.8-flash':{
-                    'model':'gemini-3.8-flash','input_token_usd_per_million':input_rate,
-                    'output_token_usd_per_million':output_rate,'output_includes_thinking':True,
-                    'published_current_rate_through_date':'2026-12-31',
-                    'published_future_rate_from_date':'2027-01-01',
-                    'future_input_token_usd_per_million':future_input,
-                    'future_output_token_usd_per_million':future_output},
-                'embed_content:gemini-embedding-001':{
-                    'model':'gemini-embedding-001','input_token_usd_per_million':format(money(match[1]).normalize(),'f'),
-                    'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'}},
-            'standard_conditions': {'gemini-3.8-flash':generation_conditions, 'gemini-embedding-001':embedding_conditions},
+            'operations':operations,'standard_conditions':conditions,
             'excluded_features':['batch','flex','priority','contributor','grounding','explicit_cache_storage']}
     except (ValueError,TypeError,KeyError,AttributeError,RecursionError):
         raise SpendBlocked('Public Gemini tariff is unavailable, ambiguous or changed') from None
@@ -271,7 +300,7 @@ def observe_gemini_tariff(client, *, now):
         contract=normalize_gemini_tariff(raw.decode('utf-8'))
         return {'source_url':SOURCE_URL,'observed_at':now.isoformat(),'sha256':digest(contract),
             'contract':contract,'source_body_sha256':hashlib.sha256(raw).hexdigest(),
-            'resolved_source_url':resolved_url, 'parser_version':'gemini-tariff-v3'}
+            'resolved_source_url':resolved_url, 'parser_version':'gemini-tariff-v4'}
     except SpendBlocked:
         raise
     except Exception:
