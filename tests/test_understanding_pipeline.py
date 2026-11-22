@@ -421,7 +421,12 @@ def _run_photo_recovery(tmp_path, monkeypatch, *, recover):
     fake_genai = types.ModuleType("google.genai")
     fake_genai.Client = lambda **kw: object()
     monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
-    monkeypatch.setattr(sys.modules.setdefault("google", types.ModuleType("google")), "genai", fake_genai, raising=False)
+    google = sys.modules.get("google")
+    if google is None:
+        # Registered through monkeypatch so the stand-in package is removed again after the test.
+        google = types.ModuleType("google")
+        monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setattr(google, "genai", fake_genai, raising=False)
     monkeypatch.setattr(spend_guard, "guard_genai_client", lambda client, **kw: client)
     monkeypatch.setattr(
         pipeline, "commission_daily_zeitgeist",
