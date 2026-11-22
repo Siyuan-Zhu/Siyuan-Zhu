@@ -190,7 +190,8 @@ class AutomaticBudgetGuard(BudgetGuard):
         reservation_id, _ = self.reserve(provider, operation, maximum, expected_reference=reference,
                                          context=context)
         def bind(document):
-            self._validate(document, provider)
+            # The last ledger touch before dispatch: a disable that landed since admission still refuses.
+            refuse_disabled_operation(self._validate(document, provider), operation)
             document['reservations'][reservation_id].update(request_sha256=request_sha256,
                 credential_fingerprint=self._credential_fingerprint(provider),
                 automatic_policy_sha256=self.expected_policy_sha)

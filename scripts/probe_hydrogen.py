@@ -17,7 +17,8 @@ model that is not listed. The calls, in order:
 Each call prints one numbers-only line with seconds=<elapsed, one decimal> (total_output =
 candidates + thoughts tokens). A summary line after the critic call gives
 max_total_output_high, max_total_output_medium, max_seconds_high, critic_total_output and
-critic_seconds; the embedding line follows it.
+critic_seconds; the embedding line follows it. When the critic call fails, the summary is still
+printed (critic fields null) before the failed line.
 
 Coordinator rule for choosing the Hydrogen output cap (not enforced by code): take the smallest
 cap from 4000/6000/8000/10000/15000 that is at least 1.5 times the LARGER of
@@ -195,7 +196,10 @@ def fit_row(level, max_output_tokens, response):
 
 def run_thinking_fit(genai_client):
     """One call per (level, output cap) in FIT_PLAN, in order; a failure stops before the next call."""
-    prompt = director_fit_prompt()
+    try:
+        prompt = director_fit_prompt()
+    except Exception as error:
+        raise ProbeFailure("director_prompt", type(error).__name__) from None
     for index, (level, max_output_tokens) in enumerate(FIT_PLAN, start=1):
         config = {
             "max_output_tokens": max_output_tokens,
@@ -437,13 +441,19 @@ def main(argv=None, *, env=None, http_factory=None, genai_factory=None) -> int:
         for row in run_thinking_fit(genai_client):
             rows.append(row)
             print(json.dumps(row))
-        critic = run_critic_fit(genai_client)
-        print(json.dumps(critic))
         summary = {"max_total_output_" + level: max_total_output(rows, level)
                    for level in ("high", "medium")}
         high_seconds = [r["seconds"] for r in rows if r["thinking_level"] == "high"]
         summary.update(max_seconds_high=max(high_seconds) if high_seconds else None,
-                       critic_total_output=critic["total_output"], critic_seconds=critic["seconds"])
+                       critic_total_output=None, critic_seconds=None)
+        try:
+            critic = run_critic_fit(genai_client)
+        except ProbeFailure:
+            # The Director measurements still reach the coordinator; the critic fields stay null.
+            print(json.dumps(summary))
+            raise
+        print(json.dumps(critic))
+        summary.update(critic_total_output=critic["total_output"], critic_seconds=critic["seconds"])
         print(json.dumps(summary))
         if EMBEDDING_2 not in report["missing"]:
             print(json.dumps(run_embedding(genai_client)))

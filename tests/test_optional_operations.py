@@ -168,6 +168,57 @@ def test_a_refresh_that_disables_hydrogen_after_counting_still_stops_the_dispatc
     assert ('generate_content', HYDROGEN_MODEL) not in calls
 
 
+@pytest.mark.parametrize('when', ['before_reserve', 'between_reserve_and_bind'])
+def test_a_disable_that_lands_after_admission_is_refused_at_bind_before_any_provider_call(when):
+    ledger, policy = successor(False)
+    guard = guard_for(refreshed(ledger, policy, listed(policy, False)), policy)
+    api, calls = fake_client(guard, HYDROGEN_VERSION)
+
+    def disable(document):
+        document['providers']['gemini']['disabled_operations'] = [HYDROGEN_OPERATION]
+    original = guard.reserve
+
+    def reserve(*args, **kwargs):
+        if when == 'before_reserve':
+            guard.ledger.mutate(disable)
+        result = original(*args, **kwargs)
+        if when == 'between_reserve_and_bind':
+            guard.ledger.mutate(disable)
+        return result
+    guard.reserve = reserve
+    with pytest.raises(SpendBlocked) as caught:
+        generate(api, HYDROGEN_MODEL)
+    assert refused_before_dispatch(caught.value) is True
+    assert caught.value.public_diagnostics['code'] in set(SpendBlocked._PUBLIC_REASONS.values())
+    assert ('generate_content', HYDROGEN_MODEL) not in calls
+
+
+def listed_but_reported_missing(model, status):
+    """A report whose missing list names the model while its method map still lists it."""
+    def change(policy, obs):
+        obs['gemini'].update(status=status, missing_models=[model])
+        return obs
+    return change
+
+
+@pytest.mark.parametrize('status', ['incomplete', 'metadata_verified'])
+@pytest.mark.parametrize('include_embedding_2, model, operation', [
+    (False, HYDROGEN_MODEL, HYDROGEN_OPERATION),
+    (True, EMBEDDING_2_MODEL, EMBEDDING_2_OPERATION),
+], ids=['hydrogen', 'embedding_2'])
+def test_an_optional_model_on_the_missing_list_is_disabled_even_when_its_method_is_listed(
+        include_embedding_2, model, operation, status):
+    ledger, policy = successor(include_embedding_2)
+    obs = listed(policy, include_embedding_2)
+    assert obs['gemini']['available_required_models'][model]
+    refresh = refreshed(ledger, policy, listed_but_reported_missing(model, status)(policy, obs))
+    assert refresh['providers']['gemini']['disabled_operations'] == [operation]
+    api, calls = fake_client(guard_for(refresh, policy), HYDROGEN_VERSION)
+    with pytest.raises(SpendBlocked) as caught:
+        (generate if operation == HYDROGEN_OPERATION else embed)(api, model)
+    assert refused_before_dispatch(caught.value) is True and calls == []
+
+
 def test_the_other_optional_operation_keeps_working_when_one_is_disabled():
     ledger, policy = successor(True)
     obs = unlisted(HYDROGEN_MODEL)(policy, listed(policy, True))

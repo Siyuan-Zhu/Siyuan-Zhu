@@ -458,12 +458,27 @@ def test_critic_fit_call_carries_nine_images_and_the_engine_prompt(capsys, monke
         "thoughts_tokens": 1500, "total_output": 1800, "json_ok": 1, "seconds": 1.5}
 
 
-def test_critic_failure_is_type_only_and_stops(capsys):
-    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], fail_at=7)
+def test_critic_failure_prints_the_summary_with_null_critic_fields_then_stops(capsys, monkeypatch):
+    fixed_clock(monkeypatch, 1.5)
+    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], fail_at=7, text='{"a": 1}')
     code, _, models, *_ = run_main(models=models, capsys=capsys)
     lines = run_main.full.splitlines()
-    assert code == 1 and len(models.calls) == 7 and models.embed_calls == [] and len(lines) == 6
+    assert code == 1 and len(models.calls) == 7 and models.embed_calls == [] and len(lines) == 7
+    assert json.loads(lines[5]) == {"max_total_output_high": 1800, "max_total_output_medium": 1800,
+                                    "max_seconds_high": 1.5, "critic_total_output": None,
+                                    "critic_seconds": None}
     assert json.loads(lines[-1]) == {"status": "failed", "phase": "critic", "error_type": "RuntimeError"}
+    assert KEY not in run_main.full and SECRET not in run_main.full
+
+
+def test_a_director_prompt_builder_error_prints_the_type_only_failed_line(capsys, monkeypatch):
+    def broken():
+        raise RuntimeError("key=" + KEY + " " + SECRET)
+    monkeypatch.setattr(probe, "director_fit_prompt", broken)
+    code, _, models, *_ = run_main(capsys=capsys)
+    lines = run_main.full.splitlines()
+    assert code == 1 and len(models.calls) == 2 and models.embed_calls == [] and len(lines) == 2
+    assert json.loads(lines[-1]) == {"status": "failed", "phase": "director_prompt", "error_type": "RuntimeError"}
     assert KEY not in run_main.full and SECRET not in run_main.full
 
 

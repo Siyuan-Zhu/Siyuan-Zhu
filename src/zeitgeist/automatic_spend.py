@@ -768,12 +768,17 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
         confirmed = _confirmed(candidate, provider)
         if provider == 'gemini':
             methods = fresh.get('available_required_models', {})
+            missing = fresh.get('missing_models')
+            missing = missing if isinstance(missing, list) else []
             for op in account['operation_caps_usd']:
                 method, model = op.split(':', 1)
                 required_method = {'generate_content': 'generateContent', 'embed_content': 'embedContent'}.get(method)
                 if not required_method or required_method not in methods.get(model, []):
                     if op not in OPTIONAL_OPERATIONS:
                         raise SpendBlocked('Required exact Gemini model/method unavailable')
+                    disabled.add(op)
+                elif op in OPTIONAL_OPERATIONS and model in missing:
+                    # The report's missing list wins over a method map that still lists the model.
                     disabled.add(op)
             # Private refresh evidence: operations refused before any call until a later refresh.
             if disabled:
