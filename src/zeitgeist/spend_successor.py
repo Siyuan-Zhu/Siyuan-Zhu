@@ -11,7 +11,8 @@ from decimal import Decimal
 from typing import Any
 
 from .automatic_spend import _time
-from .spend_guard import HYDROGEN_OPERATION, HYDROGEN_OUTPUT_TOKENS
+from .spend_guard import (EMBEDDING_2_DIMENSIONS, EMBEDDING_2_OPERATION, HYDROGEN_OPERATION,
+                          HYDROGEN_OUTPUT_TOKENS)
 
 INSTALLED_POLICY_SHA256 = "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
 FLASH_OPERATION = "generate_content:gemini-3.8-flash"
@@ -29,6 +30,16 @@ def hydrogen_cap_usd(max_output_tokens: int) -> str:
 
 
 HYDROGEN_BUILD_THINKING_LEVELS = ("high", "medium")
+EMBEDDING_2_INPUT_USD_PER_MILLION = "0.20"
+
+
+def embedding2_operation(embedding_001_limits: dict) -> tuple[str, str, dict]:
+    """Embedding-001's installed limits at the embedding-2 text rate; cap is the full input window."""
+    limits = copy.deepcopy(embedding_001_limits)
+    limits.update(input_token_usd_per_million=EMBEDDING_2_INPUT_USD_PER_MILLION,
+                  output_dimensionality=EMBEDDING_2_DIMENSIONS)
+    cap = Decimal(limits["max_input_tokens"]) * Decimal(EMBEDDING_2_INPUT_USD_PER_MILLION) / 10**6
+    return EMBEDDING_2_OPERATION, format(cap, "f"), limits
 
 
 def _check_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level):
@@ -55,7 +66,7 @@ def hydrogen_operation(flash_limits: dict, *, model_version: str, tokens_per_ima
 
 def build_successor(installed: dict, *, hydrogen_model_version: str, hydrogen_tokens_per_image: int,
                     hydrogen_max_output_tokens: int, hydrogen_thinking_level: str,
-                    tariff_sha256: str) -> dict:
+                    tariff_sha256: str, include_embedding_2: bool = False) -> dict:
     _check_inputs(hydrogen_model_version, hydrogen_tokens_per_image, hydrogen_max_output_tokens,
                   hydrogen_thinking_level)
     if not isinstance(tariff_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", tariff_sha256):
@@ -68,14 +79,23 @@ def build_successor(installed: dict, *, hydrogen_model_version: str, hydrogen_to
     flash = account.get("request_limits", {}).get(FLASH_OPERATION)
     if not isinstance(flash, dict):
         raise RuntimeError("Installed policy has no Flash limits to derive Hydrogen from")
-    operation, cap, limits = hydrogen_operation(flash, model_version=hydrogen_model_version,
-                                                tokens_per_image=hydrogen_tokens_per_image,
-                                                max_output_tokens=hydrogen_max_output_tokens,
-                                                thinking_level=hydrogen_thinking_level)
+    added = [hydrogen_operation(flash, model_version=hydrogen_model_version,
+                                tokens_per_image=hydrogen_tokens_per_image,
+                                max_output_tokens=hydrogen_max_output_tokens,
+                                thinking_level=hydrogen_thinking_level)]
+    if include_embedding_2:
+        if (EMBEDDING_2_OPERATION in account.get("request_limits", {})
+                or EMBEDDING_2_OPERATION in account.get("operation_caps_usd", {})):
+            raise RuntimeError("Installed policy already has the embedding-2 operation")
+        embedding_001 = account.get("request_limits", {}).get(EMBEDDING_001_OPERATION)
+        if not isinstance(embedding_001, dict):
+            raise RuntimeError("Installed policy has no embedding-001 limits to derive embedding-2 from")
+        added.append(embedding2_operation(embedding_001))
     successor = copy.deepcopy(installed)
     new = successor["providers"]["gemini"]
-    new["account"]["operation_caps_usd"][operation] = cap
-    new["account"]["request_limits"][operation] = limits
+    for operation, cap, limits in added:
+        new["account"]["operation_caps_usd"][operation] = cap
+        new["account"]["request_limits"][operation] = limits
     new["price_snapshot_sha256"] = tariff_sha256
     return successor
 

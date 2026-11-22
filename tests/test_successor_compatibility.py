@@ -7,7 +7,7 @@ from src.zeitgeist import automatic_spend as auto
 from src.zeitgeist.automatic_guard import AutomaticBudgetGuard
 from src.zeitgeist.gemini_tariff import normalize_gemini_tariff
 from src.zeitgeist.spend_guard import (
-    HYDROGEN_MODEL, HYDROGEN_OPERATION, MemoryLedger, SpendBlocked, guard_genai_client, refused_before_dispatch)
+    EMBEDDING_2_MODEL, EMBEDDING_2_OPERATION, HYDROGEN_MODEL, HYDROGEN_OPERATION, MemoryLedger, SpendBlocked, guard_genai_client, refused_before_dispatch)
 from src.zeitgeist.spend_successor import EMBEDDING_001_OPERATION, FLASH_OPERATION, build_successor, successor_ledger
 from tests.test_automatic_spend import NOW, fixtures
 from tests.test_gemini_tariff import markdoc
@@ -19,22 +19,25 @@ T = auto.digest(CONTRACT)
 OLD_PIN = 'd' * 64
 
 
-def policies():
+def policies(include_embedding_2=False):
     ledger0, p0 = installed()
     p0['providers']['gemini']['price_snapshot_sha256'] = OLD_PIN
     ledger0.update(credit_only_providers=p0['credit_only_providers'], automatic_policy_sha256=auto.digest(p0))
     p1 = build_successor(p0, hydrogen_model_version=HYDROGEN_VERSION, hydrogen_tokens_per_image=1088, hydrogen_max_output_tokens=4000,
-                         hydrogen_thinking_level='high', tariff_sha256=T)
+                         hydrogen_thinking_level='high', tariff_sha256=T,
+                         include_embedding_2=include_embedding_2)
     return ledger0, p0, p1
 
 
-def observation(policy, hydrogen_listed=True):
+def observation(policy, hydrogen_listed=True, embedding_2_methods=None):
     obs = fixtures()[2]
     obs['price_snapshots']['gemini'] = {'sha256': T, 'contract': copy.deepcopy(CONTRACT), 'observed_at': NOW.isoformat(),
         'source_url': policy['providers']['gemini']['price_source_url']}
     models = {'gemini-3.8-flash': ['generateContent'], 'gemini-embedding-001': ['embedContent']}
     if hydrogen_listed:
         models[HYDROGEN_MODEL] = ['generateContent']
+    if embedding_2_methods is not None:
+        models[EMBEDDING_2_MODEL] = embedding_2_methods
     obs['gemini']['available_required_models'] = models
     return obs
 
@@ -122,3 +125,19 @@ def test_hydrogen_call_admitted_under_successor_only():
     api, calls = fake_client(new, HYDROGEN_VERSION)
     assert call(api, HYDROGEN_MODEL).model_version == HYDROGEN_VERSION
     assert len(calls) == 1
+
+
+def test_embedding_2_successor_refresh_requires_embedding_2_listed_with_embed_content():
+    ledger0, _, p1 = policies(include_embedding_2=True)
+    assert CONTRACT['operations'][EMBEDDING_2_OPERATION]['input_token_usd_per_million'] == '0.2'
+    ledger1 = successor_ledger(ledger0, p1, auto.digest(p1))
+    account = refreshed(ledger1, p1, observation(p1, embedding_2_methods=['embedContent']))['providers']['gemini']
+    assert account['operation_caps_usd'][EMBEDDING_2_OPERATION] == '0.04096'
+    assert 'price_observed_sha256' not in account and 'price_band_audit' not in account
+    for methods in (None, [], ['generateContent']):
+        with pytest.raises(SpendBlocked, match='Required exact Gemini model/method unavailable'):
+            refreshed(ledger1, p1, observation(p1, embedding_2_methods=methods))
+    # The Hydrogen-only successor does not budget embedding-2, so it does not need it listed.
+    ledger0_, _, hydrogen_only = policies()
+    refreshed(successor_ledger(ledger0_, hydrogen_only, auto.digest(hydrogen_only)), hydrogen_only,
+              observation(hydrogen_only))

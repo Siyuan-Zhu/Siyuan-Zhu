@@ -3,10 +3,10 @@ import copy
 from datetime import timedelta
 import pytest
 from src.zeitgeist import automatic_spend as auto
-from src.zeitgeist.spend_guard import HYDROGEN_OPERATION
+from src.zeitgeist.spend_guard import EMBEDDING_2_OPERATION, HYDROGEN_OPERATION
 from src.zeitgeist.spend_successor import (
     EMBEDDING_001_OPERATION, FLASH_OPERATION, assert_no_hold_in_flight, build_successor,
-    field_diff, hydrogen_operation, rollback_ledger, successor_ledger)
+    embedding2_operation, field_diff, hydrogen_operation, rollback_ledger, successor_ledger)
 from tests import test_gemini38_contract
 from tests.test_automatic_spend import NOW, fixtures, with_approved_reload
 
@@ -135,6 +135,75 @@ def test_installed_policy_preconditions():
     del p0['providers']['gemini']['account']['request_limits'][FLASH_OPERATION]
     with pytest.raises(RuntimeError):
         build_successor(p0, **KW)
+
+
+VALIDITY_KEYS = {'pricing_valid_until', 'price_valid_until'}
+
+
+def test_embedding2_limits_copy_embedding_001_with_exact_rate_and_cap():
+    _, p0 = installed()
+    e001 = p0['providers']['gemini']['account']['request_limits'][EMBEDDING_001_OPERATION]
+    before = copy.deepcopy(e001)
+    operation, cap, limits = embedding2_operation(e001)
+    assert (operation, cap) == (EMBEDDING_2_OPERATION, '0.04096')
+    assert limits == dict(e001, input_token_usd_per_million='0.20', output_dimensionality=768)
+    assert type(limits['output_dimensionality']) is int
+    # The tariff operation has no published rate schedule, so a validity field would block refresh.
+    assert not VALIDITY_KEYS & set(limits)
+    assert e001 == before and limits is not e001
+
+
+def test_successor_with_embedding_2_adds_both_operations():
+    _, p0 = installed()
+    p1 = build_successor(p0, **KW, include_embedding_2=True)
+    assert [line.split(' ')[1].rstrip(':') for line in field_diff(p0, p1)] == [
+        'providers.gemini.account.operation_caps_usd.embed_content:gemini-embedding-2',
+        'providers.gemini.account.operation_caps_usd.generate_content:gemini-4-hydrogen',
+        'providers.gemini.account.request_limits.embed_content:gemini-embedding-2',
+        'providers.gemini.account.request_limits.generate_content:gemini-4-hydrogen',
+        'providers.gemini.price_snapshot_sha256']
+    account = p1['providers']['gemini']['account']
+    assert account['operation_caps_usd'][EMBEDDING_2_OPERATION] == '0.04096'
+    assert account['operation_caps_usd'][HYDROGEN_OPERATION] == '0.128304'
+    assert not VALIDITY_KEYS & set(account['request_limits'][EMBEDDING_2_OPERATION])
+    assert auto.validate_policy(p1, auto.digest(p1), NOW) == p1
+    assert p1['cash_ceiling_usd'] == '10.00'
+
+
+def test_without_embedding_2_the_successor_is_the_hydrogen_only_one():
+    _, p0 = installed()
+    plain = build_successor(p0, **KW)
+    assert auto.digest(build_successor(p0, **KW, include_embedding_2=False)) == auto.digest(plain)
+    assert EMBEDDING_2_OPERATION not in plain['providers']['gemini']['account']['operation_caps_usd']
+    assert EMBEDDING_2_OPERATION not in plain['providers']['gemini']['account']['request_limits']
+    assert auto.digest(build_successor(p0, **KW, include_embedding_2=True)) != auto.digest(plain)
+
+
+def test_embedding_2_preconditions():
+    _, p0 = installed()
+    present = copy.deepcopy(p0)
+    present['providers']['gemini']['account']['operation_caps_usd'][EMBEDDING_2_OPERATION] = '0.04096'
+    with pytest.raises(RuntimeError):
+        build_successor(present, **KW, include_embedding_2=True)
+    missing = copy.deepcopy(p0)
+    del missing['providers']['gemini']['account']['request_limits'][EMBEDDING_001_OPERATION]
+    with pytest.raises(RuntimeError):
+        build_successor(missing, **KW, include_embedding_2=True)
+    build_successor(missing, **KW)  # Hydrogen-only does not need embedding-001 limits.
+
+
+def test_successor_ledger_with_embedding_2_adds_both_operations_and_keeps_holds():
+    ledger, p0 = installed()
+    ledger['reservations'] = {'open': hold(NOW)}
+    p1 = build_successor(p0, **KW, include_embedding_2=True)
+    after = successor_ledger(ledger, p1, auto.digest(p1))
+    assert after['reservations'] == ledger['reservations']
+    assert sorted(line.split(' ')[1].rstrip(':') for line in field_diff(ledger, after)) == [
+        'automatic_policy_sha256',
+        'providers.gemini.operation_caps_usd.embed_content:gemini-embedding-2',
+        'providers.gemini.operation_caps_usd.generate_content:gemini-4-hydrogen',
+        'providers.gemini.request_limits.embed_content:gemini-embedding-2',
+        'providers.gemini.request_limits.generate_content:gemini-4-hydrogen']
 
 
 def hold(created, status='reserved', **kw):

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """One-time install of the Hydrogen successor spend policy (plan by default, --apply to write).
 
-Adds exactly the gemini-4-hydrogen operation and the observed tariff digest to the installed
-policy, moves the month ledger's policy pointer and static Gemini limits, and records a
-durable receipt, in ONE conditional commit. Reservations are never touched. A repeated or
-uncertain dispatch reconciles by reading back, never by replaying.
+Adds exactly the gemini-4-hydrogen operation (and, with --include-embedding-2, the
+gemini-embedding-2 operation) and the observed tariff digest to the installed policy, moves
+the month ledger's policy pointer and static Gemini limits, and records a durable receipt,
+in ONE conditional commit. Reservations are never touched. A repeated or uncertain dispatch
+reconciles by reading back, never by replaying.
 """
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,7 @@ from src.zeitgeist.spend_successor import (
     rollback_ledger, successor_ledger)
 
 CHANGE = 'added operations only: generate_content:gemini-4-hydrogen'
+CHANGE_WITH_EMBEDDING_2 = CHANGE + ', embed_content:gemini-embedding-2'
 
 
 def _observe_full(now):
@@ -70,7 +72,7 @@ def _report(mode, old_sha, new_sha, policy_diff, ledger_diff, ledger, reservatio
 
 def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image,
             hydrogen_max_output_tokens, hydrogen_thinking_level, tariff_sha256, apply=False,
-            expected_new_sha=None, now=None):
+            expected_new_sha=None, now=None, include_embedding_2=False):
     now = now or datetime.now(timezone.utc)
     old = store.read('policy_' + old_sha).to_dict()
     validate_policy(old, old_sha, now)
@@ -78,7 +80,8 @@ def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image
               'hydrogen_tokens_per_image': hydrogen_tokens_per_image,
               'hydrogen_max_output_tokens': hydrogen_max_output_tokens,
               'hydrogen_thinking_level': hydrogen_thinking_level, 'tariff_sha256': tariff_sha256}
-    new = build_successor(old, **inputs)
+    new = build_successor(old, **inputs, include_embedding_2=include_embedding_2)
+    change = CHANGE_WITH_EMBEDDING_2 if include_embedding_2 else CHANGE
     new_sha = digest(new)
     validate_policy(new, new_sha, now)
     month = now.strftime('%Y-%m')
@@ -90,7 +93,7 @@ def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image
         receipt = receipt_snapshot.to_dict()
         if (receipt.get('old_policy_sha256') != old_sha or receipt.get('new_policy_sha256') != new_sha
                 or receipt.get('month') != month or receipt.get('inputs') != inputs
-                or receipt.get('change') != CHANGE or receipt.get('schema_version') != 1):
+                or receipt.get('change') != change or receipt.get('schema_version') != 1):
             raise RuntimeError('Install receipt identity mismatch')
         current = store.read(month).to_dict()
         if (store.read('policy_' + new_sha).to_dict() != new
@@ -125,7 +128,7 @@ def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image
     receipt = {'schema_version': 1, 'old_policy_sha256': old_sha, 'new_policy_sha256': new_sha,
                'month': month, 'observed_at': now.isoformat(), 'observation': observation,
                'before_sha256': digest(ledger), 'after_sha256': digest(after),
-               'change': CHANGE, 'inputs': inputs}
+               'change': change, 'inputs': inputs}
     ledger_diff = field_diff(ledger, after)
     if not apply:
         return _report('plan', old_sha, new_sha, policy_diff, ledger_diff, ledger, unchanged,
@@ -160,6 +163,7 @@ def main(argv=None):
     parser.add_argument('--tariff-sha256')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--expected-new-sha')
+    parser.add_argument('--include-embedding-2', action='store_true')
     args = parser.parse_args(argv)
     try:
         if args.observe_tariff:
@@ -181,7 +185,8 @@ def main(argv=None):
                              hydrogen_max_output_tokens=args.hydrogen_max_output_tokens,
                              hydrogen_thinking_level=args.hydrogen_thinking_level,
                              tariff_sha256=args.tariff_sha256, apply=args.apply,
-                             expected_new_sha=args.expected_new_sha)
+                             expected_new_sha=args.expected_new_sha,
+                             include_embedding_2=args.include_embedding_2)
     except RuntimeError as exc:
         print(json.dumps({'error': str(exc)}, sort_keys=True))
         return 1
