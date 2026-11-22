@@ -21,6 +21,9 @@ HYDROGEN_SECTION = 'gemini-4-hydrogen'
 EMBEDDING_2_SECTION = 'gemini-embedding-2'
 MODELS = {'gemini-3.8-flash': 'gemini-3.8-flash', HYDROGEN_SECTION: 'gemini-4-hydrogen',
           EMBEDDING_2_SECTION: 'gemini-embedding-2', 'gemini-embedding': 'gemini-embedding-001'}
+# Sections of the two new models: trouble there leaves the operation out instead of
+# making the page unreadable. The old models' sections stay strict.
+OPTIONAL_SECTIONS = frozenset({HYDROGEN_SECTION, EMBEDDING_2_SECTION})
 
 
 def _text(value):
@@ -32,9 +35,16 @@ def _label(value):
 
 
 class _PricingTables(HTMLParser):
-    """Read semantic headings/model code/standard tables, never execute markup."""
-    def __init__(self):
+    """Read semantic headings/model code/standard tables, never execute markup.
+
+    Each optional section is read by its own parser, so its trouble marks only
+    that section unreadable and none of its text reaches the other sections.
+    """
+    def __init__(self, optional=OPTIONAL_SECTIONS):
         super().__init__(convert_charrefs=True)
+        self.optional_ids = optional
+        self.optional = {}
+        self.delegate = None
         self.section = None
         self.tier = None
         self.heading = None
@@ -48,7 +58,41 @@ class _PricingTables(HTMLParser):
         self.row = None
         self.cell = None
 
+    def close(self):
+        super().close()
+        if self.delegate is not None:
+            self._end_delegate()
+
+    def _end_delegate(self):
+        name, sub = self.delegate
+        self.delegate = None
+        if self.optional.get(name) is sub and (sub.table is not None or sub.row is not None or sub.cell is not None
+                or sub.table_depth != 0 or sub.heading is not None or sub.code is not None):
+            self.optional[name] = None
+
+    def _forward(self, handler, *args):
+        name, sub = self.delegate
+        if self.optional.get(name) is not sub:
+            return
+        try:
+            getattr(sub, handler)(*args)
+        except Exception:
+            self.optional[name] = None
+
     def handle_starttag(self, tag, attrs):
+        if self.delegate is not None:
+            if tag not in ('h2', 'footer'):
+                return self._forward('handle_starttag', tag, attrs)
+            self._end_delegate()
+        if tag == 'h2' and dict(attrs).get('id') in self.optional_ids:
+            name = dict(attrs).get('id')
+            sub = _PricingTables(optional=())
+            # A second heading for the same model makes that model unreadable.
+            self.optional[name] = None if name in self.optional else sub
+            self.delegate = (name, sub)
+            self.section = None
+            self.tier = None
+            return self._forward('handle_starttag', tag, attrs)
         if tag == 'table':
             self.table_depth += 1
         if tag == 'footer':
@@ -77,6 +121,8 @@ class _PricingTables(HTMLParser):
             self.cell.append(' ')
 
     def handle_data(self, data):
+        if self.delegate is not None:
+            return self._forward('handle_data', data)
         if self.section and self.table_depth == 0 and self.heading is None:
             self.scoped_prose[self.section].append(data)
         if self.heading is not None:
@@ -87,6 +133,8 @@ class _PricingTables(HTMLParser):
             self.cell.append(data)
 
     def handle_endtag(self, tag):
+        if self.delegate is not None:
+            return self._forward('handle_endtag', tag)
         if tag == 'h3' and self.heading is not None:
             self.tier = _label(''.join(self.heading))
             self.heading = None
@@ -135,11 +183,17 @@ def _rows(parser, section, allowed):
                   'standard_rows': rows}
 
 
-def _optional_rows(parser, section, allowed):
-    """Strict rows for a section the page may not carry yet; None only when wholly absent."""
-    if parser.seen.count(section) == 0 and parser.codes[section] == []:
+def _optional_operation(parser, section, allowed, operation):
+    """(operation, conditions) for a new model's section, or None when it is absent or
+    does not read cleanly to the exact expected shape. Never raises."""
+    sub = parser.optional.get(section)
+    if sub is None:
         return None
-    return _rows(parser, section, allowed)
+    try:
+        paid, conditions = _rows(sub, section, allowed)
+        return operation(paid), conditions
+    except Exception:
+        return None
 
 
 def _current_rate(value):
@@ -156,6 +210,61 @@ def _dated_rate(value):
     return format(money(match[1]).normalize(),'f'), format(money(match[2]).normalize(),'f')
 
 
+def _markdoc_section(identity, heading, content):
+    output = []
+    output.append('<h2 id="'+identity+'">'+escape(heading.split('{%')[0].strip())+'</h2>')
+    # The model link is required exactly once before the first tab.
+    intro = content.split('{% tabs %}', 1)[0]
+    codes = re.findall(r'`([^`]+)`', intro)
+    if codes != [MODELS[identity]]:
+        raise ValueError('Exact model identity required')
+    # Only the grounding label's footnote marker is reviewed (_rows maps it); any other sup in a cell raises.
+    content = re.sub(r'(?m)^([ \t]*\* Grounding with Google Search)\{% sup %\}\*\{% /sup %\}[ \t]*(?=\n)', r'\1*', content)
+    tokens = re.split(r'({%.*?%})', content, flags=re.S)
+    in_table = False
+    tier = None
+    for token in tokens:
+        if token.startswith('{%'):
+            if token == '{% table %}':
+                if in_table: raise ValueError('Nested table')
+                in_table = True
+            elif token == '{% /table %}':
+                if not in_table: raise ValueError('Unbalanced table')
+                in_table = False
+            elif token.startswith('{% tab title='):
+                title = re.fullmatch(r'{% tab title="([^"]+)" %}', token)
+                if not title: raise ValueError('Malformed tier')
+                tier = title[1]
+                output.append('<h3>'+escape(tier)+'</h3>')
+            elif in_table and tier == 'Standard':
+                # No hidden annotations/conditions in a price cell.
+                raise ValueError('Unexpected table markup')
+            continue
+        if in_table and tier != 'Standard':
+            continue
+        # Resolve Markdown links to visible text without discarding words.
+        text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', token)
+        if in_table:
+            rows = re.split(r'(?m)^\s*---\s*(?=\n|\Z)', text)
+            output.append('<table class="pricing-table">')
+            for row in rows:
+                cells = re.split(r'(?m)^\s*\* ', row)
+                if cells[0].strip() or len(cells) != 4:
+                    raise ValueError('Exactly three cells required')
+                values = [_text(c) for c in cells[1:]]
+                if values[0] == 'Feature': values[0] = ''
+                output.append('<tr>'+''.join('<td>'+escape(v)+'</td>' for v in values)+'</tr>')
+            output.append('</table>')
+        else:
+            # Preserve prose, converting inline code so model validation works.
+            text = escape(text)
+            text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+            text = re.sub(r'(?m)^\s*\*(<code>.*?</code>)\*', r'\1', text)
+            output.append(text)
+    if in_table: raise ValueError('Unclosed table')
+    return output
+
+
 def _markdoc_html(body):
     """Parse only the two reviewed model sections; never execute Markdoc.
 
@@ -170,56 +279,12 @@ def _markdoc_html(body):
         if not match or match[1] not in MODELS:
             continue
         identity = match[1]
-        output.append('<h2 id="'+identity+'">'+escape(heading.split('{%')[0].strip())+'</h2>')
-        # The model link is required exactly once before the first tab.
-        intro = content.split('{% tabs %}', 1)[0]
-        codes = re.findall(r'`([^`]+)`', intro)
-        if codes != [MODELS[identity]]:
-            raise ValueError('Exact model identity required')
-        # Only the grounding label's footnote marker is reviewed (_rows maps it); any other sup in a cell raises.
-        content = re.sub(r'(?m)^([ \t]*\* Grounding with Google Search)\{% sup %\}\*\{% /sup %\}[ \t]*(?=\n)', r'\1*', content)
-        tokens = re.split(r'({%.*?%})', content, flags=re.S)
-        in_table = False
-        tier = None
-        for token in tokens:
-            if token.startswith('{%'):
-                if token == '{% table %}':
-                    if in_table: raise ValueError('Nested table')
-                    in_table = True
-                elif token == '{% /table %}':
-                    if not in_table: raise ValueError('Unbalanced table')
-                    in_table = False
-                elif token.startswith('{% tab title='):
-                    title = re.fullmatch(r'{% tab title="([^"]+)" %}', token)
-                    if not title: raise ValueError('Malformed tier')
-                    tier = title[1]
-                    output.append('<h3>'+escape(tier)+'</h3>')
-                elif in_table and tier == 'Standard':
-                    # No hidden annotations/conditions in a price cell.
-                    raise ValueError('Unexpected table markup')
-                continue
-            if in_table and tier != 'Standard':
-                continue
-            # Resolve Markdown links to visible text without discarding words.
-            text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', token)
-            if in_table:
-                rows = re.split(r'(?m)^\s*---\s*(?=\n|\Z)', text)
-                output.append('<table class="pricing-table">')
-                for row in rows:
-                    cells = re.split(r'(?m)^\s*\* ', row)
-                    if cells[0].strip() or len(cells) != 4:
-                        raise ValueError('Exactly three cells required')
-                    values = [_text(c) for c in cells[1:]]
-                    if values[0] == 'Feature': values[0] = ''
-                    output.append('<tr>'+''.join('<td>'+escape(v)+'</td>' for v in values)+'</tr>')
-                output.append('</table>')
-            else:
-                # Preserve prose, converting inline code so model validation works.
-                text = escape(text)
-                text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
-                text = re.sub(r'(?m)^\s*\*(<code>.*?</code>)\*', r'\1', text)
-                output.append(text)
-        if in_table: raise ValueError('Unclosed table')
+        try:
+            output.extend(_markdoc_section(identity, heading, content))
+        except Exception:
+            # A new model's unreadable section is left out whole; an old model's raises.
+            if identity not in OPTIONAL_SECTIONS:
+                raise
     return ''.join(output)
 
 
@@ -242,13 +307,18 @@ def normalize_gemini_tariff(html):
         generation, generation_conditions = _rows(parser, 'gemini-3.8-flash', (
             'input price','output price (including thinking tokens)','context caching price',
             'grounding with google search','grounding with google maps','used to improve our products'))
-        hydrogen_rows = _optional_rows(parser, HYDROGEN_SECTION, (
+        hydrogen = _optional_operation(parser, HYDROGEN_SECTION, (
             'input price','output price (including thinking tokens)','context caching price',
-            'grounding with google search','grounding with google maps','used to improve our products'))
+            'grounding with google search','grounding with google maps','used to improve our products'),
+            lambda paid: {'model':'gemini-4-hydrogen','input_token_usd_per_million':_current_rate(paid['input price']),
+                'output_token_usd_per_million':_current_rate(paid['output price (including thinking tokens)']),
+                'output_includes_thinking':True,'published_rate_schedule':'current_only'})
         # Other-modality rows are bound as labels only; only the text rate is emitted.
-        embedding_2_rows = _optional_rows(parser, EMBEDDING_2_SECTION, (
+        embedding_2 = _optional_operation(parser, EMBEDDING_2_SECTION, (
             'text input price','image input price','audio input price','video input price',
-            'used to improve our products'))
+            'used to improve our products'),
+            lambda paid: {'model':'gemini-embedding-2','input_token_usd_per_million':_current_rate(paid['text input price']),
+                'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'})
         embedding, embedding_conditions = _rows(parser, 'gemini-embedding', ('input price','used to improve our products'))
         input_rate, future_input = _dated_rate(generation['input price'])
         output_rate, future_output = _dated_rate(generation['output price (including thinking tokens)'])
@@ -267,19 +337,10 @@ def normalize_gemini_tariff(html):
                 'model':'gemini-embedding-001','input_token_usd_per_million':format(money(match[1]).normalize(),'f'),
                 'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'}}
         conditions = {'gemini-3.8-flash':generation_conditions, 'gemini-embedding-001':embedding_conditions}
-        if hydrogen_rows is not None:
-            hydrogen, hydrogen_conditions = hydrogen_rows
-            operations['generate_content:gemini-4-hydrogen'] = {
-                'model':'gemini-4-hydrogen','input_token_usd_per_million':_current_rate(hydrogen['input price']),
-                'output_token_usd_per_million':_current_rate(hydrogen['output price (including thinking tokens)']),
-                'output_includes_thinking':True,'published_rate_schedule':'current_only'}
-            conditions['gemini-4-hydrogen'] = hydrogen_conditions
-        if embedding_2_rows is not None:
-            embedding_2, embedding_2_conditions = embedding_2_rows
-            operations['embed_content:gemini-embedding-2'] = {
-                'model':'gemini-embedding-2','input_token_usd_per_million':_current_rate(embedding_2['text input price']),
-                'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'}
-            conditions['gemini-embedding-2'] = embedding_2_conditions
+        if hydrogen is not None:
+            operations['generate_content:gemini-4-hydrogen'], conditions['gemini-4-hydrogen'] = hydrogen
+        if embedding_2 is not None:
+            operations['embed_content:gemini-embedding-2'], conditions['gemini-embedding-2'] = embedding_2
         return {'schema_version':2,'provider':'gemini','api':'gemini_developer_api',
             'currency':'USD','service_tier':'paid_standard','unit':'1000000_tokens',
             'operations':operations,'standard_conditions':conditions,
