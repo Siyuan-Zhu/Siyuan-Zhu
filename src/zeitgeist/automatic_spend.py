@@ -981,6 +981,8 @@ def gemini_usage_receipt(reservation_id, reservation, response, *, credential_fi
     The caller binds responseId before admission. The admitted input bound is
     retained (including image floors); only provably unused output is released.
     Missing/extra modality or tool usage cannot produce a receipt.
+    Hydrogen only: billed prompt tokens above the admitted figure settle, booked as billed, when the reply is
+    text-only, identified, within the input ceiling and output cap, and costs at most the hold; else they freeze.
     """
     operation = reservation['operation']; method, model = operation.split(':', 1)
     limits = policy['providers']['gemini']['account']['request_limits'][operation]
@@ -1005,8 +1007,13 @@ def gemini_usage_receipt(reservation_id, reservation, response, *, credential_fi
     def rate(key):
         return money(context.get(key, limits[key]))
     over = counts['promptTokenCount'] - context['admitted_input_tokens']
+    details = usage.get('candidatesTokensDetails', [])
+    text_identified = bool(response.get('responseId')) and isinstance(details, list) and all(
+        isinstance(item, dict) and item.get('modality') == 'TEXT' for item in details)
     # Hydrogen bills prompt tokens countTokens cannot see: such a reply settles while its billed cost stays inside the hold.
     overage_settles = (over > 0 and operation == HYDROGEN_OPERATION and output <= context['max_output_tokens']
+        and text_identified and type(limits.get('max_input_tokens')) is int
+        and counts['promptTokenCount'] <= limits['max_input_tokens']
         and (money(counts['promptTokenCount'])*rate('input_token_usd_per_million')
              + money(output)*rate('output_token_usd_per_million'))/1000000 <= money(reservation['max_gross_usd']))
     if (over > 0 and not overage_settles) or output > context['max_output_tokens']:

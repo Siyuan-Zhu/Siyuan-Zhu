@@ -3,6 +3,7 @@
 Synthetic data only. The first private run (2026-11-22) billed 787 prompt tokens against 720 admitted,
 at a cost of half its hold, and froze the month. The hold bounds money; only a cost above it freezes.
 """
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -10,9 +11,11 @@ import pytest
 from google.genai import types
 
 from src.zeitgeist import automatic_spend as auto
+from src.zeitgeist.automatic_guard import ProviderRequest
 from src.zeitgeist.spend_guard import HYDROGEN_MODEL, HYDROGEN_OPERATION, SpendBlocked, guard_genai_client
 from src.zeitgeist.spend_successor import FLASH_OPERATION
 from tests.test_hydrogen_admission_allowance import INPUT_RATE, OUTPUT_CAP, OUTPUT_RATE, counter, successor_guard
+from tests.test_optional_operations import NOW
 from tests.test_successor_compatibility import HYDROGEN_VERSION
 
 ADMITTED = 720
@@ -24,21 +27,24 @@ EVIDENCE = {720: 'b2fc67f66b6c4d7cd58cedb507b4193b7010d48b519afd52dcad5115fcd530
             719: 'ffb7ca4dee3932b12e29c85bc02d29657e8cd9953f2d3286d9bb379aefc20643'}
 
 
-def response(prompt, candidates, thoughts, *, version=HYDROGEN_VERSION, ident='synthetic-response-1', modality=None):
+def response(prompt, candidates, thoughts, *, version=HYDROGEN_VERSION, ident='synthetic-response-1', modality=None,
+             cached=None):
     usage = {'prompt_token_count': prompt, 'candidates_token_count': candidates, 'thoughts_token_count': thoughts,
              'total_token_count': prompt + candidates + thoughts}
+    if cached is not None:
+        usage['cached_content_token_count'] = cached
     if modality:
         usage['candidates_tokens_details'] = [{'modality': modality, 'token_count': candidates}]
     return types.GenerateContentResponse(response_id=ident, model_version=version, usage_metadata=usage)
 
 
-def client(guard, replies):
+def client(guard, replies, counted=COUNTED):
     calls = []
 
     def generate(**kwargs):
         calls.append(kwargs)
         return replies[len(calls) - 1]
-    raw = SimpleNamespace(models=SimpleNamespace(generate_content=generate, count_tokens=counter(COUNTED)))
+    raw = SimpleNamespace(models=SimpleNamespace(generate_content=generate, count_tokens=counter(counted)))
     return guard_genai_client(raw, guard), calls
 
 
@@ -140,14 +146,92 @@ def test_the_same_overage_on_flash_still_freezes():
     assert_frozen_as_today(guard, record)
 
 
-def test_a_non_text_reply_with_a_prompt_overage_produces_no_receipt():
+def freezes_and_refuses_the_next_call(guard, api, calls):
+    with pytest.raises(SpendBlocked, match='Authenticated Gemini usage exceeds the admitted request policy'):
+        director(api)
+    assert len(calls) == 1
+    record = records(guard)[0]
+    assert_frozen_as_today(guard, record)
+    with pytest.raises(SpendBlocked):
+        director(api)
+    assert len(calls) == 1
+    return record
+
+
+def test_a_non_text_reply_with_a_prompt_overage_inside_the_hold_freezes_as_before():
     guard = successor_guard()
-    api, calls = client(guard, [response(787, 778, 2096, modality='IMAGE')])
+    api, calls = client(guard, [response(787, 778, 2096, modality='IMAGE'), response(700, 10, 10)])
+    record = freezes_and_refuses_the_next_call(guard, api, calls)
+    assert record['provider_request_id'] == 'synthetic-response-1'
+
+
+def test_a_reply_without_a_response_id_with_a_prompt_overage_inside_the_hold_freezes_as_before():
+    guard = successor_guard()
+    api, calls = client(guard, [response(787, 778, 2096, ident=None), response(700, 10, 10)])
+    record = freezes_and_refuses_the_next_call(guard, api, calls)
+    # No response identity: the guard records no submission, as it did before this change.
+    assert 'provider_request_id' not in record and 'submitted_at' not in record
+
+
+def test_a_billed_prompt_above_the_policy_input_ceiling_freezes_even_inside_the_hold():
+    guard = successor_guard()
+    ceiling = guard.automatic_policy['providers']['gemini']['account']['request_limits'][HYDROGEN_OPERATION]['max_input_tokens']
+    admitted = 60000
+    assert ceiling + 1 > admitted
+    api, calls = client(guard, [response(ceiling + 1, 5, 5), response(700, 10, 10)], counted=admitted - 256)
+    assert (Decimal(ceiling + 1) * INPUT_RATE + Decimal(10) * OUTPUT_RATE) / 1000000 < (
+        Decimal(admitted) * INPUT_RATE + Decimal(OUTPUT_CAP) * OUTPUT_RATE) / 1000000
+    record = freezes_and_refuses_the_next_call(guard, api, calls)
+    assert record['request_context']['admitted_input_tokens'] == admitted
+
+
+def test_a_cost_exactly_equal_to_the_hold_settles_without_an_overrun():
+    guard = successor_guard()
+    api, calls = client(guard, [response(745, 995, 5000)])
+    assert (Decimal(745) * INPUT_RATE + Decimal(5995) * OUTPUT_RATE) / 1000000 == HOLD
     director(api)
     record = records(guard)[0]
-    assert record['status'] == 'reserved'
-    assert 'usage_receipt' not in record and 'actual_gross_usd' not in record
-    assert 'reconciliation_required' not in record and 'unreconciled_usage' not in record
+    assert record['status'] == 'settled'
+    assert Decimal(record['actual_gross_usd']) == HOLD
+    assert record['usage_receipt']['prompt_tokens_over_admitted'] == 25
+    assert not {'overrun_tolerated', 'reconciliation_required', 'reconciliation_reasons'} & set(record)
+    assert guard.ledger.document.get('reconciliation_required') is not True
+
+
+def test_one_prompt_token_more_than_the_hold_allows_freezes():
+    guard = successor_guard()
+    api, calls = client(guard, [response(746, 995, 5000), response(700, 10, 10)])
+    freezes_and_refuses_the_next_call(guard, api, calls)
+
+
+def test_an_overage_reply_with_cached_tokens_is_booked_at_the_full_input_rate():
+    guard = successor_guard()
+    api, calls = client(guard, [response(787, 778, 2096, cached=500)])
+    director(api)
+    record = records(guard)[0]
+    assert record['status'] == 'settled'
+    assert Decimal(record['actual_gross_usd']) == Decimal('0.0227355')
+    assert record['usage_receipt']['prompt_tokens_over_admitted'] == 67
+
+
+def test_a_later_guard_re_observation_of_a_settled_overage_reply_keeps_its_billing_reference():
+    guard = successor_guard()
+    reply = response(787, 778, 2096)
+    api, calls = client(guard, [reply])
+    director(api)
+    ident, record = next(iter(guard.ledger.document['reservations'].items()))
+    first = dict(record)
+    guard.now = lambda: NOW + timedelta(minutes=5)
+    handle = ProviderRequest(guard, ident, 'gemini', HYDROGEN_OPERATION, record['request_sha256'])
+    again = auto.gemini_usage_receipt(ident, first, reply.model_dump(by_alias=True, exclude_none=True),
+        credential_fingerprint=handle.credential_fingerprint, observed_at=guard.now().isoformat(),
+        request_sha256=record['request_sha256'], policy=guard.automatic_policy)
+    assert again['observed_at'] != first['usage_receipt']['observed_at']
+    handle.receipt(again)
+    settled = guard.ledger.document['reservations'][ident]
+    assert settled['billing_reference'] == first['billing_reference']
+    assert settled['actual_gross_usd'] == first['actual_gross_usd']
+    assert not {'reconciliation_required', 'reconciliation_reasons', 'usage_receipt_conflict'} & set(settled)
     assert guard.ledger.document.get('reconciliation_required') is not True
 
 
