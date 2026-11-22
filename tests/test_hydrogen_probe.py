@@ -48,7 +48,10 @@ def usage(prompt, image=None, total=20):
 
 
 class FakeModels:
-    def __init__(self, usages, version="synthetic-hydrogen-version", fail_at=None):
+    def __init__(self, usages, version="synthetic-hydrogen-version", fail_at=None,
+                 text=SECRET, finish_reason=types.FinishReason.STOP):
+        self.text = text
+        self.finish_reason = finish_reason
         self.usages = list(usages)
         self.version = version
         self.fail_at = fail_at
@@ -58,11 +61,13 @@ class FakeModels:
         self.calls.append(kw)
         if self.fail_at == len(self.calls):
             raise RuntimeError("key=" + KEY)
+        index = min(len(self.calls), len(self.usages)) - 1
         response = types.GenerateContentResponse(
             model_version=self.version, response_id="r",
-            usage_metadata=self.usages[len(self.calls) - 1],
-            candidates=[types.Candidate(content=types.Content(
-                parts=[types.Part(text=SECRET)], role="model"))])
+            usage_metadata=self.usages[index],
+            candidates=[types.Candidate(
+                finish_reason=self.finish_reason,
+                content=types.Content(parts=[types.Part(text=self.text)], role="model"))])
         return response
 
 
@@ -86,7 +91,9 @@ def run_main(argv=("--confirm-paid-probe",), http=None, models=None, env=None, c
 
     code = probe.main(list(argv), env={"GEMINI_API_KEY": KEY} if env is None else env,
                       http_factory=lambda: http, genai_factory=genai_factory)
-    return code, capsys.readouterr().out, models, http, made
+    full = capsys.readouterr().out
+    run_main.full = full
+    return code, full.splitlines()[0] if full else full, models, http, made
 
 
 def test_report_has_only_versions_and_counts(capsys):
@@ -98,14 +105,14 @@ def test_report_has_only_versions_and_counts(capsys):
     code, out, *_ = run_main(capsys=capsys)
     assert code == 0
     for banned in (KEY, SECRET, "masked", "fingerprint"):
-        assert banned not in out
+        assert banned not in run_main.full
     assert json.loads(out)["image"]["model_version"] == "synthetic-hydrogen-version"
 
 
 def test_two_calls_second_has_384px_image(capsys):
     _, _, models, _, made = run_main(capsys=capsys)
-    assert len(models.calls) == 2 and made == [KEY]
-    for call in models.calls:
+    assert len(models.calls) == 4 and made == [KEY]  # two A8 calls, then two thinking-fit calls
+    for call in models.calls[:2]:
         assert call["model"] == "gemini-4-hydrogen"
         assert call["config"] == {"max_output_tokens": 16,
                                   "thinking_config": {"thinking_level": "low"},
@@ -134,12 +141,13 @@ def test_failure_prints_type_only(capsys):
     code, out, models, *_ = run_main(models=default_models(fail_at=2), capsys=capsys)
     assert code == 1
     assert json.loads(out) == {"status": "failed", "phase": "image", "error_type": "RuntimeError"}
-    assert KEY not in out
+    assert KEY not in run_main.full and SECRET not in run_main.full
     code, out, *_ = run_main(models=default_models(fail_at=1), capsys=capsys)
-    assert json.loads(out)["phase"] == "text" and KEY not in out
+    assert json.loads(out)["phase"] == "text"
+    assert KEY not in run_main.full and SECRET not in run_main.full
     code, out, models, *_ = run_main(http=FakeHttp(fail=RuntimeError("key=" + KEY)), capsys=capsys)
     assert code == 1 and json.loads(out)["phase"] == "listing" and models.calls == []
-    assert KEY not in out
+    assert KEY not in run_main.full and SECRET not in run_main.full
 
 
 def test_requires_confirm_flag(capsys):
@@ -181,3 +189,114 @@ def test_probe_workflow_is_minimal():
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", text)) == {"GEMINI_API_KEY"}
     assert "contents: read" in text
     assert "python3 scripts/probe_hydrogen.py --confirm-paid-probe" in text
+
+
+# ---- Task A8b: thinking fit for the Director call ----
+
+THINK_USAGE = types.GenerateContentResponseUsageMetadata(
+    prompt_token_count=2000, candidates_token_count=300, thoughts_token_count=1500,
+    total_token_count=3800)
+
+
+def run_fit(capsys, **kw):
+    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], **kw)
+    code, _, models, http, made = run_main(models=models, capsys=capsys)
+    lines = run_main.full.splitlines()
+    return code, lines, models
+
+
+def test_thinking_fit_calls_high_then_medium(capsys):
+    code, lines, models = run_fit(capsys, text='{"a": 1}')
+    assert code == 0 and len(models.calls) == 4
+    for call, level in zip(models.calls[2:], ("high", "medium")):
+        assert call["model"] == "gemini-4-hydrogen"
+        assert call["config"]["max_output_tokens"] == 4000
+        assert call["config"]["response_mime_type"] == "application/json"
+        assert call["config"]["thinking_config"] == {"thinking_level": level}
+        assert isinstance(call["contents"], str)
+
+
+def test_thinking_fit_line_format(capsys):
+    code, lines, _ = run_fit(capsys, text='{"a": 1}')
+    assert len(lines) == 3
+    assert json.loads(lines[1]) == {
+        "thinking_level": "high", "finish_reason": "STOP", "prompt_tokens": 2000,
+        "candidates_tokens": 300, "thoughts_tokens": 1500, "total_tokens": 3800, "json_ok": 1}
+    assert json.loads(lines[2])["thinking_level"] == "medium"
+
+
+def test_json_ok_rules(capsys):
+    _, lines, _ = run_fit(capsys, text='{"a": 1}')
+    assert json.loads(lines[1])["json_ok"] == 1
+    _, lines, _ = run_fit(capsys, text='{"a": [1, 2')
+    assert json.loads(lines[1])["json_ok"] == 0
+    _, lines, _ = run_fit(capsys, text='{"a": 1}', finish_reason=types.FinishReason.MAX_TOKENS)
+    row = json.loads(lines[1])
+    assert row["finish_reason"] == "MAX_TOKENS" and row["json_ok"] == 0
+
+
+def test_full_output_never_leaks_key_or_secret(capsys):
+    code, lines, _ = run_fit(capsys, text=KEY + SECRET)
+    assert code == 0 and len(lines) == 3
+    for banned in (KEY, SECRET):
+        assert banned not in run_main.full
+    for row in lines[1:]:
+        assert KEY not in row and SECRET not in row
+
+
+def test_json_ok_requires_object(capsys):
+    for text, expected in (('{"a": 1}', 1), ("42", 0), ("[1, 2]", 0), ('"x"', 0), ("null", 0)):
+        _, lines, _ = run_fit(capsys, text=text)
+        assert json.loads(lines[1])["json_ok"] == expected, text
+
+
+def test_finish_reason_sanitised_and_counts_null(capsys):
+    assert probe.safe_finish("STOP") == "STOP"
+    assert probe.safe_finish("bad reason!") == "unrecognized"
+    assert probe.safe_finish(None) == "unrecognized"
+    assert probe.safe_finish("A" * 33) == "unrecognized"
+    bad = types.GenerateContentResponseUsageMetadata.model_construct(
+        prompt_token_count=True, candidates_token_count=-1, thoughts_token_count="3",
+        total_token_count=1.5)
+    models = FakeModels([usage(12), usage(1112, image=1100), bad], text="{}")
+    run_main(models=models, capsys=capsys)
+    row = json.loads(run_main.full.splitlines()[1])
+    assert [row[k] for k in ("prompt_tokens", "candidates_tokens", "thoughts_tokens",
+                             "total_tokens")] == [None] * 4
+
+
+def test_thinking_fit_never_prints_reply_text(capsys):
+    _, lines, _ = run_fit(capsys, text=SECRET)
+    assert SECRET not in "\n".join(lines) and json.loads(lines[1])["json_ok"] == 0
+
+
+def test_no_thinking_calls_when_unlisted_or_unflagged(capsys):
+    _, _, models, *_ = run_main(http=FakeHttp(models=("gemini-embedding-2",)), capsys=capsys)
+    assert models.calls == []
+    _, _, models, *_ = run_main(argv=(), capsys=capsys)
+    assert models.calls == []
+
+
+def test_thinking_failure_is_type_only_and_stops(capsys):
+    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], fail_at=3)
+    code, _, models, *_ = run_main(models=models, capsys=capsys)
+    lines = run_main.full.splitlines()
+    assert code == 1 and len(models.calls) == 3 and len(lines) == 2
+    assert json.loads(lines[1]) == {"status": "failed", "phase": "thinking_high",
+                                    "error_type": "RuntimeError"}
+    assert KEY not in run_main.full
+    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], fail_at=4)
+    code, _, models, *_ = run_main(models=models, capsys=capsys)
+    assert code == 1 and len(models.calls) == 4
+    assert json.loads(run_main.full.splitlines()[-1])["phase"] == "thinking_medium"
+
+
+def test_director_fit_prompt_is_synthetic_and_sized():
+    prompt = probe.director_fit_prompt()
+    assert 4000 <= len(prompt) <= 12000
+    assert prompt.count("- Cluster ") == 5
+    assert "8 to 12" in prompt and "Editorial Director" in prompt
+    assert "Return JSON" in prompt
+    for banned in (KEY, "http", "@", "api_key", "AIza"):
+        assert banned not in prompt
+    assert probe.director_fit_prompt() == prompt
