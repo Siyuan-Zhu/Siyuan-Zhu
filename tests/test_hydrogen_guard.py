@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from google.genai import types
 from src.zeitgeist import owner_reasons
-from src.zeitgeist.spend_guard import SpendBlocked, sampling_controls_supported
+from src.zeitgeist.spend_guard import HYDROGEN_PROMPT_ALLOWANCE_TOKENS, SpendBlocked, sampling_controls_supported
 from tests import test_gemini38_contract as base
 from tests.test_spend_provisioning import NOW
 
@@ -63,7 +63,7 @@ def test_hydrogen_nine_images_use_policy_tokens_per_image():
         calls.append(kwargs)
         return SimpleNamespace(total_tokens=1 if len(calls) == 1 else 11)
     maximum, _ = budget.counted_genai_cap(OP, bounded, count)
-    assert maximum == (Decimal(11 + 9 * 1088) * Decimal('1.50') + Decimal(4000) * Decimal('7.50')) / 1000000
+    assert maximum == (Decimal(11 + 9 * 1088 + HYDROGEN_PROMPT_ALLOWANCE_TOKENS) * Decimal('1.50') + Decimal(4000) * Decimal('7.50')) / 1000000
     assert budget.snapshot()['reservation_count'] == 0
 
 
@@ -104,7 +104,7 @@ def test_hydrogen_6000_tokens_admitted_with_matching_cap():
         calls.append(kwargs)
         return SimpleNamespace(total_tokens=1 if len(calls) == 1 else 11)
     maximum, _ = budget.counted_genai_cap(OP, bounded, count)
-    assert maximum == (Decimal(1) * Decimal('1.50') + Decimal(6000) * Decimal('7.50')) / 1000000
+    assert maximum == (Decimal(1 + HYDROGEN_PROMPT_ALLOWANCE_TOKENS) * Decimal('1.50') + Decimal(6000) * Decimal('7.50')) / 1000000
     assert budget.bounded_genai_request(OP, request())['config']['max_output_tokens'] == 6000
 
 
