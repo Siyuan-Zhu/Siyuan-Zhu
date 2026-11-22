@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
-"""Manual Hydrogen probe: list models, then make up to six paid calls.
+"""Manual Hydrogen probe: list models, then make up to eight paid calls.
 
-Prints model versions and token counts only. It never prints the key, response
-text, or any credential identity. The calls are two tiny ones (16 output tokens)
-and four Director-sized ones, each with max_output_tokens 15000 on the same synthetic
-prompt (three at thinking level high, then one at medium). Each prints one numbers-only line,
-then one summary line gives max_total_output_high and max_total_output_medium (total_output =
-candidates + thoughts tokens).
+Prints model versions, token counts and timings only. It never prints the key, response
+text, or any credential identity. Each call is one SDK attempt, and nothing paid runs for a
+model that is not listed. The calls, in order:
+
+- two tiny Hydrogen calls (16 output tokens), text then one 384-pixel image;
+- four Director calls, each with max_output_tokens 15000 on the prompt the engine's own
+  Director builder makes for synthetic clusters (three at thinking level high, then one at
+  medium);
+- one critic call: a synthetic batch of nine 384-pixel images in the engine's batch critic
+  request shape, at thinking level high with max_output_tokens 15000;
+- one gemini-embedding-2 call, only if that model is listed: two short synthetic texts in the
+  engine's clustering form at 768 dimensions.
+
+Each call prints one numbers-only line with seconds=<elapsed, one decimal> (total_output =
+candidates + thoughts tokens). A summary line after the critic call gives
+max_total_output_high, max_total_output_medium, max_seconds_high, critic_total_output and
+critic_seconds; the embedding line follows it.
 
 Coordinator rule for choosing the Hydrogen output cap (not enforced by code): take the smallest
-ladder value (4000, 6000, 8000, 10000, 15000) that is at least 1.5 times max_total_output_high;
-only if 15000 is still too small, apply the same rule at medium to max_total_output_medium.
+cap from 4000/6000/8000/10000/15000 that is at least 1.5 times the LARGER of
+max_total_output_high and critic_total_output; only if 15000 is still too small, apply the same
+rule at medium to max_total_output_medium.
 
 They are authorised
 outside the spend guard by the spec, so the command refuses to run without --confirm-paid-probe.
@@ -21,10 +33,13 @@ from __future__ import annotations
 import argparse
 from io import BytesIO
 import json
+import math
 import os
 from pathlib import Path
 import re
 import sys
+import time
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -33,7 +48,8 @@ if str(ROOT) not in sys.path:
 from scripts.provider_preflight import inspect_gemini  # noqa: E402
 
 HYDROGEN = "gemini-4-hydrogen"
-PROBE_MODELS = (HYDROGEN, "gemini-embedding-2")
+EMBEDDING_2 = "gemini-embedding-2"
+PROBE_MODELS = (HYDROGEN, EMBEDDING_2)
 PROBE_TEXT = "A quiet harbor at dawn with three small boats."
 VERSION_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 CALL_CONFIG = {
@@ -60,45 +76,80 @@ FIT_TOPICS = (
     ("market", "awning", "ledger", "spice", "scale"),
 )
 FIT_HISTORY = (
-    "tessera, solstice, cadence, ember, plinth, verdigris, lattice, murmur, "
-    "tangent, vellum, cinder, aperture, meridian, fathom, saffron, bastion, "
-    "quorum, ripple, canopy, ballast, nocturne, sextant, parable, gossamer"
+    "tessera", "solstice", "cadence", "ember", "plinth", "verdigris", "lattice", "murmur",
+    "tangent", "vellum", "cinder", "aperture", "meridian", "fathom", "saffron", "bastion",
+    "quorum", "ripple", "canopy", "ballast", "nocturne", "sextant", "parable", "gossamer",
 )
+CRITIC_WORD = "Lantern"
+CRITIC_GLOSS = "A small light carried through dusk"
+CRITIC_THESIS = "Neighbours share one steady light while the harbor tide turns at dusk."
+CRITIC_IMAGES = 9
+EMBED_TEXTS = (
+    "A ferry crosses the quiet harbor at first light.",
+    "Volunteers repaint the old market awning before the frost.",
+)
+_clock = time.monotonic
+
+
+def fit_clusters():
+    """Five synthetic clusters, four invented titles each (whole under the engine's title cut)."""
+    clusters = []
+    for idx, words in enumerate(FIT_TOPICS):
+        items = [
+            {"title": f"Local {words[n]} story {n + 1}: residents compare the {words[(n + 1) % 5]} "
+                      f"and the {words[(n + 2) % 5]} as the {words[(n + 3) % 5]} changes this season"}
+            for n in range(4)
+        ]
+        clusters.append(SimpleNamespace(
+            cluster_id=f"synthetic_{idx}", items=items, cluster_keywords=list(words),
+            commission_score=0.9 - idx * 0.1, velocity=1.5 - idx * 0.2, orbit_resonance=1.0))
+    return clusters
 
 
 def director_fit_prompt() -> str:
-    """Synthetic Director-shaped prompt (invented titles only), mirroring the engine's shape."""
-    clusters = []
-    for idx, words in enumerate(FIT_TOPICS):
-        titles = [
-            f"Local {words[n]} story {n + 1}: residents compare the {words[(n + 1) % 5]} "
-            f"and the {words[(n + 2) % 5]} while volunteers describe how the {words[(n + 3) % 5]} "
-            f"changed over the last season and what the {words[(n + 4) % 5]} may mean next, according to neighbors, "
-            f"shopkeepers and a retired {words[n]} inspector who keeps careful notes about the "
-            f"{words[(n + 2) % 5]} and every {words[(n + 1) % 5]} seen in town since the spring"
-            for n in range(4)
-        ]
-        clusters.append(
-            f"- Cluster synthetic_{idx}: commission_score={0.9 - idx * 0.1:.2f}, "
-            f"velocity={1.5 - idx * 0.2:.2f}, orbit_resonance=1.00, "
-            f"keywords={list(words)}, sample_titles={titles}"
-        )
-    return (
-        "You are the Editorial Director for the Daily Zeitgeist & Personal Orbit Pulse.\n"
-        "Select the most compelling topical cluster and commission a single 1-2 word "
-        "English or established European loanword (Latin script ONLY) that captures its thesis.\n"
-        "Prefer a subtle, evocative editorial word grounded in the signals, rather than a blunt "
-        "literal news or financial-action label.\n"
-        "The gloss MUST be a single line of at most 50 characters (including spaces and "
-        "punctuation) and at most 12 words. Count both limits before returning; put the extended "
-        "explanation in commissioned_thesis.\n"
-        "Also propose 8 to 12 candidate words, each 1-2 words, Latin script only, before choosing.\n\n"
-        f"Forbidden 30-day history words: [{FIT_HISTORY}]\n"
-        "Top Candidate Clusters:\n" + "\n".join(clusters) + "\n"
-        "Return JSON with keys: selected_cluster_id (one of the provided cluster IDs), "
-        "candidate_words (8 to 12 strings), word, gloss, commissioned_thesis, visual_anchor, "
-        "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
-    )
+    """The Director prompt the engine's own builder makes for the synthetic clusters (slate on)."""
+    from src.zeitgeist import adk_pipeline
+
+    return adk_pipeline._build_packet_director_prompt(
+        fit_clusters(), list(FIT_HISTORY), None, None, slate=True)
+
+
+def critic_batch_text(word, gloss, thesis) -> str:
+    # Copy of the engine's batch critic text (visual_router._score_photo_batch); a test pins it.
+    return (f'Evaluate these photographs against word: {word}\nGloss: {gloss}\nThesis: {thesis}\n'
+            'Return strict JSON {"candidates": [{"index": 0, "semantic_alignment": 0.0, '
+            '"compositional_clarity": 0.0, "editorial_memorability": 0.0, "safety_pass": false}]}. '
+            'Return exactly one result per candidate index. Scores must be finite numbers from 0 to 1. '
+            'safety_pass must be a JSON boolean, true only when completely safe, nonviolent, non-NSFW, '
+            'minimalist, free of watermarks and memes. Judge semantic fit to the actual commission.')
+
+
+def critic_images():
+    return [synthetic_image(variant) for variant in range(CRITIC_IMAGES)]
+
+
+def critic_fit_parts():
+    """The engine's batch critic request for the synthetic images: labels, 384-pixel JPEGs, text."""
+    from google.genai import types
+    from PIL import Image
+
+    parts = []
+    for index, raw in enumerate(critic_images()):
+        with Image.open(BytesIO(raw)) as image:
+            thumb = image.convert("RGB")
+            thumb.thumbnail((384, 384), Image.Resampling.LANCZOS)
+            encoded = BytesIO()
+            thumb.save(encoded, format="JPEG", quality=85)
+        parts.extend([f"Candidate index {index}",
+                      types.Part.from_bytes(data=encoded.getvalue(), mime_type="image/jpeg")])
+    parts.append(critic_batch_text(CRITIC_WORD, CRITIC_GLOSS, CRITIC_THESIS))
+    return parts
+
+
+def _timed(call):
+    start = _clock()
+    result = call()
+    return result, round(_clock() - start, 1)
 
 
 def safe_finish(value):
@@ -152,13 +203,77 @@ def run_thinking_fit(genai_client):
             "thinking_config": {"thinking_level": level},
         }
         try:
-            response = genai_client.models.generate_content(
+            response, seconds = _timed(lambda: genai_client.models.generate_content(
                 model=HYDROGEN, contents=prompt, config=config
-            )
+            ))
             row = fit_row(level, max_output_tokens, response)
         except Exception as error:
             raise ProbeFailure(f"thinking_{level}_{index}", type(error).__name__) from None
-        yield row
+        yield {**row, "seconds": seconds}
+
+
+def run_critic_fit(genai_client):
+    """One critic call in the engine's batch shape at thinking high; config as the guard sends it."""
+    config = {
+        "response_mime_type": "application/json",
+        "max_output_tokens": FIT_OUTPUT_TOKENS,
+        "thinking_config": {"thinking_level": "high"},
+        "media_resolution": "MEDIA_RESOLUTION_HIGH",
+    }
+    try:
+        parts = critic_fit_parts()
+        response, seconds = _timed(lambda: genai_client.models.generate_content(
+            model=HYDROGEN, contents=parts, config=config
+        ))
+        row = fit_row("high", FIT_OUTPUT_TOKENS, response)
+    except Exception as error:
+        raise ProbeFailure("critic", type(error).__name__) from None
+    return {"call": "critic", "images": CRITIC_IMAGES, **row, "seconds": seconds}
+
+
+def _billed_tokens(response):
+    total = 0
+    for embedding in getattr(response, "embeddings", None) or []:
+        value = getattr(getattr(embedding, "statistics", None), "token_count", None)
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            value = int(value)
+        value = safe_count(value)
+        if value is None:
+            return None
+        total += value
+    return total if getattr(response, "embeddings", None) else None
+
+
+def embedding_row(response, seconds):
+    vectors = list(getattr(response, "embeddings", None) or [])
+    values = [list(getattr(v, "values", None) or []) for v in vectors]
+    sizes = {len(v) for v in values}
+    finite = bool(values) and all(
+        isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+        for vector in values for x in vector)
+    return {
+        "call": "embedding",
+        "model": EMBEDDING_2,
+        "vectors": len(vectors),
+        "dimension": sizes.pop() if len(sizes) == 1 and 0 not in sizes else None,
+        "finite": 1 if finite else 0,
+        "billed_tokens": _billed_tokens(response),
+        "seconds": seconds,
+    }
+
+
+def run_embedding(genai_client):
+    """One embed_content call with two synthetic texts in the engine's clustering form."""
+    from src.zeitgeist.collectors import EMBEDDING_DIM, _request_text
+
+    try:
+        contents = [_request_text(text, EMBEDDING_2) for text in EMBED_TEXTS]
+        response, seconds = _timed(lambda: genai_client.models.embed_content(
+            model=EMBEDDING_2, contents=contents, config={"output_dimensionality": EMBEDDING_DIM}
+        ))
+        return embedding_row(response, seconds)
+    except Exception as error:
+        raise ProbeFailure("embedding", type(error).__name__) from None
 
 
 def max_total_output(rows, level):
@@ -174,14 +289,15 @@ class ProbeFailure(Exception):
         self.error_type = error_type
 
 
-def synthetic_image() -> bytes:
+def synthetic_image(variant: int = 0) -> bytes:
     from PIL import Image, ImageDraw
 
-    image = Image.new("RGB", (384, 384), (235, 240, 245))
+    shift = variant * 23
+    image = Image.new("RGB", (384, 384), (235, 240 - shift // 2, 245))
     draw = ImageDraw.Draw(image)
-    draw.rectangle((40, 220, 344, 344), fill=(40, 90, 140))
-    draw.polygon([(192, 60), (292, 220), (92, 220)], fill=(220, 120, 60))
-    draw.ellipse((280, 40, 340, 100), fill=(250, 220, 90))
+    draw.rectangle((40, 220, 344, 344), fill=(40 + shift, 90, 140))
+    draw.polygon([(192, 60 + variant * 8), (292, 220), (92, 220)], fill=(220, 120, 60 + shift))
+    draw.ellipse((280 - variant * 20, 40, 340 - variant * 20, 100), fill=(250, 220, 90))
     out = BytesIO()
     image.save(out, format="PNG")
     return out.getvalue()
@@ -241,19 +357,21 @@ def run_probe(key: str, *, http_client, genai_client) -> dict:
     if HYDROGEN in report["missing"]:
         return report
     try:
-        response = genai_client.models.generate_content(
+        response, seconds = _timed(lambda: genai_client.models.generate_content(
             model=HYDROGEN, contents=PROBE_TEXT, config=CALL_CONFIG
-        )
+        ))
         report["text"], _ = summarize(response)
+        report["text"]["seconds"] = seconds
     except Exception as error:
         raise ProbeFailure("text", type(error).__name__) from None
     try:
         part = types.Part.from_bytes(data=synthetic_image(), mime_type="image/png")
-        response = genai_client.models.generate_content(
+        response, seconds = _timed(lambda: genai_client.models.generate_content(
             model=HYDROGEN, contents=[part, PROBE_TEXT], config=CALL_CONFIG
-        )
+        ))
         report["image"], usage = summarize(response)
         report["image"]["image_prompt_token_count"] = image_detail_count(usage)
+        report["image"]["seconds"] = seconds
     except Exception as error:
         raise ProbeFailure("image", type(error).__name__) from None
     return report
@@ -319,8 +437,16 @@ def main(argv=None, *, env=None, http_factory=None, genai_factory=None) -> int:
         for row in run_thinking_fit(genai_client):
             rows.append(row)
             print(json.dumps(row))
-        print(json.dumps({"max_total_output_" + level: max_total_output(rows, level)
-                          for level in ("high", "medium")}))
+        critic = run_critic_fit(genai_client)
+        print(json.dumps(critic))
+        summary = {"max_total_output_" + level: max_total_output(rows, level)
+                   for level in ("high", "medium")}
+        high_seconds = [r["seconds"] for r in rows if r["thinking_level"] == "high"]
+        summary.update(max_seconds_high=max(high_seconds) if high_seconds else None,
+                       critic_total_output=critic["total_output"], critic_seconds=critic["seconds"])
+        print(json.dumps(summary))
+        if EMBEDDING_2 not in report["missing"]:
+            print(json.dumps(run_embedding(genai_client)))
     except ProbeFailure as failure:
         print(json.dumps({"status": "failed", "phase": failure.phase,
                           "error_type": failure.error_type}))

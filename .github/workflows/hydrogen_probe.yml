@@ -1,18 +1,26 @@
 name: Hydrogen Probe
 on:
   workflow_dispatch:
+concurrency:
+  group: readme-state-writer
+  cancel-in-progress: false
+  queue: max
 permissions:
   contents: read
 jobs:
   probe:
+    if: >-
+      github.actor == 'Siyuan-Zhu' &&
+      (github.repository == 'Siyuan-Zhu/readme-live-sandbox' || github.repository == 'Siyuan-Zhu/Siyuan-Zhu')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - name: List models and make up to six Hydrogen calls (two tiny, four up to 15000 output tokens; versions and token counts only)
+      - name: List models and make up to seven Hydrogen calls (two tiny; four Director and one nine-image critic call, each up to 15000 output tokens) and one gemini-embedding-2 call; versions, token counts and timings only
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python3 scripts/probe_hydrogen.py --confirm-paid-probe
