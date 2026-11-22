@@ -1043,8 +1043,10 @@ class BudgetGuard:
                 batch = [embedding_2_text(item) for item in batch]
             if not batch or len(batch) > 100 or any(not isinstance(item, str) for item in batch):
                 raise SpendBlocked('Only bounded text embedding batches are priced')
-            # EmbedContent treats strings as distinct requests. Count each string
-            # independently; a joined prompt can undercount per-item boundaries.
+            # Each text is its own request: embedding-001 treats a list of strings that way,
+            # and embedding-2 only when each text is its own Content (bare strings there are
+            # merged into one embedding, which is why they are refused above). Count each
+            # text independently; a joined prompt can undercount per-item boundaries.
             total = 0
             for item in batch:
                 item_tokens = count(item)
