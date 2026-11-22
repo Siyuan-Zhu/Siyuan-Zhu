@@ -11,7 +11,8 @@ from tests import test_gemini38_contract
 from tests.test_automatic_spend import NOW, fixtures, with_approved_reload
 
 TARIFF = 'f' * 64
-KW = dict(hydrogen_model_version='synthetic-hydrogen-version', hydrogen_tokens_per_image=1088, tariff_sha256=TARIFF)
+KW = dict(hydrogen_model_version='synthetic-hydrogen-version', hydrogen_tokens_per_image=1088, hydrogen_max_output_tokens=4000,
+          hydrogen_thinking_level='high', tariff_sha256=TARIFF)
 
 
 def installed():
@@ -49,7 +50,8 @@ def test_successor_adds_only_hydrogen():
 def test_hydrogen_limits_exact():
     _, p0 = installed()
     flash = p0['providers']['gemini']['account']['request_limits'][FLASH_OPERATION]
-    operation, cap, limits = hydrogen_operation(flash, model_version='synthetic-hydrogen-version', tokens_per_image=1088)
+    operation, cap, limits = hydrogen_operation(flash, model_version='synthetic-hydrogen-version', tokens_per_image=1088,
+                                              max_output_tokens=4000, thinking_level='high')
     expected = dict(flash, input_token_usd_per_million='1.50', output_token_usd_per_million='7.50',
                     max_output_tokens=4000, thinking_level='high', image_tokens_per_image=1088,
                     allowed_response_model_versions=['synthetic-hydrogen-version'])
@@ -76,11 +78,53 @@ def test_successor_is_deterministic_and_valid():
     dict(hydrogen_model_version='-lead'), dict(hydrogen_model_version='a' * 65),
     dict(hydrogen_tokens_per_image=0), dict(hydrogen_tokens_per_image=4097),
     dict(hydrogen_tokens_per_image=True), dict(hydrogen_tokens_per_image='1088'),
+    dict(hydrogen_max_output_tokens=5000), dict(hydrogen_max_output_tokens=None),
+    dict(hydrogen_max_output_tokens=True), dict(hydrogen_max_output_tokens=3999),
+    dict(hydrogen_max_output_tokens=6001), dict(hydrogen_max_output_tokens='6000'),
+    dict(hydrogen_max_output_tokens=6000.0), dict(hydrogen_max_output_tokens=7000),
+    dict(hydrogen_max_output_tokens=15001), dict(hydrogen_max_output_tokens=12000),
+    dict(hydrogen_thinking_level='low'), dict(hydrogen_thinking_level='xhigh'),
+    dict(hydrogen_thinking_level=None), dict(hydrogen_thinking_level=True), dict(hydrogen_thinking_level=''),
     dict(tariff_sha256='F' * 64), dict(tariff_sha256='f' * 63), dict(tariff_sha256='g' * 64)])
 def test_invalid_inputs_raise(change):
     _, p0 = installed()
     with pytest.raises(RuntimeError):
         build_successor(p0, **dict(KW, **change))
+
+
+def test_hydrogen_6000_derives_cap_and_limits():
+    _, p0 = installed()
+    flash = p0['providers']['gemini']['account']['request_limits'][FLASH_OPERATION]
+    operation, cap, limits = hydrogen_operation(flash, model_version='synthetic-hydrogen-version',
+                                                tokens_per_image=1088, max_output_tokens=6000,
+                                                thinking_level='high')
+    assert (operation, cap) == (HYDROGEN_OPERATION, '0.143304') and limits['max_output_tokens'] == 6000
+    p1 = build_successor(p0, **dict(KW, hydrogen_max_output_tokens=6000))
+    account = p1['providers']['gemini']['account']
+    assert account['operation_caps_usd'][HYDROGEN_OPERATION] == '0.143304'
+    assert account['request_limits'][HYDROGEN_OPERATION]['max_output_tokens'] == 6000
+    assert auto.validate_policy(p1, auto.digest(p1), NOW) == p1
+    assert auto.digest(p1) != auto.digest(build_successor(p0, **KW))
+
+
+@pytest.mark.parametrize('tokens, cap', [(4000, '0.128304'), (6000, '0.143304'), (8000, '0.158304'),
+                                         (10000, '0.173304'), (15000, '0.210804')])
+@pytest.mark.parametrize('level', ['high', 'medium'])
+def test_every_ladder_value_and_level_builds_a_valid_policy(tokens, cap, level):
+    _, p0 = installed()
+    p1 = build_successor(p0, **dict(KW, hydrogen_max_output_tokens=tokens, hydrogen_thinking_level=level))
+    account = p1['providers']['gemini']['account']
+    assert account['operation_caps_usd'][HYDROGEN_OPERATION] == cap
+    assert account['request_limits'][HYDROGEN_OPERATION]['thinking_level'] == level
+    assert account['request_limits'][HYDROGEN_OPERATION]['max_output_tokens'] == tokens
+    assert auto.validate_policy(p1, auto.digest(p1), NOW) == p1
+
+
+@pytest.mark.parametrize('missing', ['hydrogen_max_output_tokens', 'hydrogen_thinking_level'])
+def test_builder_requires_output_tokens_and_level_keywords(missing):
+    _, p0 = installed()
+    with pytest.raises(TypeError):
+        build_successor(p0, **{k: v for k, v in KW.items() if k != missing})
 
 
 def test_installed_policy_preconditions():

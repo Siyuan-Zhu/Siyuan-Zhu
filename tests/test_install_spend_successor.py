@@ -16,7 +16,9 @@ from tests.test_spend_successor import KW, hold, installed
 NOW = datetime(2026, 11, 22, 12, tzinfo=timezone.utc)
 T = KW['tariff_sha256']
 INPUTS = dict(hydrogen_model_version=KW['hydrogen_model_version'],
-              hydrogen_tokens_per_image=KW['hydrogen_tokens_per_image'], tariff_sha256=T)
+              hydrogen_tokens_per_image=KW['hydrogen_tokens_per_image'],
+              hydrogen_max_output_tokens=KW['hydrogen_max_output_tokens'],
+              hydrogen_thinking_level=KW['hydrogen_thinking_level'], tariff_sha256=T)
 
 
 def contract(hydrogen=('1.5', '7.5')):
@@ -42,7 +44,7 @@ def setup(monkeypatch, published=None, sha=T):
 
 def run(wire, old_sha, **kw):
     kw.setdefault('apply', False)
-    return install_module.install(wire.store, old_sha=old_sha, now=NOW, **INPUTS, **kw)
+    return install_module.install(wire.store, old_sha=old_sha, now=NOW, **dict(INPUTS, **kw))
 
 
 def test_plan_writes_nothing_and_prints_digest_and_diff(monkeypatch):
@@ -51,13 +53,49 @@ def test_plan_writes_nothing_and_prints_digest_and_diff(monkeypatch):
     p1 = build_successor(p0, **KW)
     assert wire.posts == []
     assert set(report) == {'mode', 'old_policy_sha256', 'new_policy_sha256', 'receipt_id', 'policy_diff',
-                           'ledger_diff', 'open_reservation_count', 'reservations_unchanged'}
+                           'ledger_diff', 'open_reservation_count', 'reservations_unchanged',
+                           'hydrogen_max_output_tokens', 'hydrogen_thinking_level'}
+    assert report['hydrogen_max_output_tokens'] == 4000 and report['hydrogen_thinking_level'] == 'high'
     assert report['mode'] == 'plan' and report['receipt_id'] == runtime.SUCCESSOR_RECEIPT_ID
     assert report['new_policy_sha256'] == auto.digest(p1)
     assert report['policy_diff'] == field_diff(p0, p1)
     assert report['open_reservation_count'] == 1 and report['reservations_unchanged'] is True
     text = json.dumps(report)
     assert 'AAAAAA' not in text and 'a' * 16 not in text
+
+
+def test_plan_with_6000_shows_value_cap_and_policy_diff(monkeypatch):
+    wire, old_sha, _, p0 = setup(monkeypatch)
+    report = install_module.install(wire.store, old_sha=old_sha, now=NOW, **dict(INPUTS, hydrogen_max_output_tokens=6000))
+    p1 = build_successor(p0, **dict(KW, hydrogen_max_output_tokens=6000))
+    assert wire.posts == [] and report['hydrogen_max_output_tokens'] == 6000
+    assert report['policy_diff'] == field_diff(p0, p1)
+    assert any('0.143304' in line for line in report['policy_diff'])
+    assert not any('0.128304' in line for line in report['policy_diff'])
+
+
+@pytest.mark.parametrize('bad', [5000, None, True, 3999, 6001, 7000, 12000, 15001])
+def test_install_rejects_other_output_tokens(monkeypatch, bad):
+    wire, old_sha, _, _ = setup(monkeypatch)
+    with pytest.raises(RuntimeError):
+        install_module.install(wire.store, old_sha=old_sha, now=NOW, **dict(INPUTS, hydrogen_max_output_tokens=bad))
+    assert wire.posts == []
+
+
+def test_apply_with_6000_records_it_and_rerun_with_4000_is_refused(monkeypatch):
+    wire, old_sha, _, p0 = setup(monkeypatch)
+    inputs = dict(INPUTS, hydrogen_max_output_tokens=6000)
+    p1 = build_successor(p0, **dict(KW, hydrogen_max_output_tokens=6000))
+    new_sha = auto.digest(p1)
+    report = install_module.install(wire.store, old_sha=old_sha, now=NOW, apply=True,
+                                    expected_new_sha=new_sha, **inputs)
+    assert report['mode'] == 'applied'
+    assert wire.docs[runtime.SUCCESSOR_RECEIPT_ID]['inputs'] == inputs
+    assert install_module.install(wire.store, old_sha=old_sha, now=NOW, **inputs)['mode'] == 'already_applied'
+    posts = len(wire.posts)
+    with pytest.raises(RuntimeError, match='identity mismatch'):
+        run(wire, old_sha)
+    assert len(wire.posts) == posts
 
 
 @pytest.mark.parametrize('unknown', [False, True])
@@ -179,9 +217,52 @@ def test_main_refuses_other_installed_sha(monkeypatch, capsys):
     monkeypatch.setattr(install_module, 'PrivateFirestoreStore', lambda *a, **k: reads.append(1))
     monkeypatch.setenv('SPEND_POLICY_SHA256', 'f' * 64)
     code = install_module.main(['--hydrogen-model-version', 'synthetic-hydrogen-version',
-                                '--hydrogen-tokens-per-image', '1088', '--tariff-sha256', T])
+                                '--hydrogen-tokens-per-image', '1088', '--hydrogen-max-output-tokens', '4000',
+                                '--hydrogen-thinking-level', 'high', '--tariff-sha256', T])
     out = capsys.readouterr().out.strip().splitlines()
     assert code != 0 and reads == [] and len(out) == 1 and 'error' in json.loads(out[0])
+
+
+@pytest.mark.parametrize('bad', ['low', 'xhigh', None, True, ''])
+def test_install_rejects_other_thinking_levels(monkeypatch, bad):
+    wire, old_sha, _, _ = setup(monkeypatch)
+    with pytest.raises(RuntimeError):
+        install_module.install(wire.store, old_sha=old_sha, now=NOW, **dict(INPUTS, hydrogen_thinking_level=bad))
+    assert wire.posts == []
+
+
+@pytest.mark.parametrize('tokens, cap', [(8000, '0.158304'), (10000, '0.173304'), (15000, '0.210804')])
+def test_plan_and_apply_for_other_ladder_values_with_medium(monkeypatch, tokens, cap):
+    wire, old_sha, _, p0 = setup(monkeypatch)
+    inputs = dict(INPUTS, hydrogen_max_output_tokens=tokens, hydrogen_thinking_level='medium')
+    plan = install_module.install(wire.store, old_sha=old_sha, now=NOW, **inputs)
+    assert any(cap in line for line in plan['policy_diff']) and plan['hydrogen_thinking_level'] == 'medium'
+    done = install_module.install(wire.store, old_sha=old_sha, now=NOW, apply=True,
+                                  expected_new_sha=plan['new_policy_sha256'], **inputs)
+    assert done['mode'] == 'applied'
+    assert wire.docs[runtime.SUCCESSOR_RECEIPT_ID]['inputs'] == inputs
+
+
+def test_main_requires_output_tokens_flag(monkeypatch, capsys):
+    reads = []
+    monkeypatch.setattr(install_module, 'PrivateFirestoreStore', lambda *a, **k: reads.append(1))
+    monkeypatch.setenv('SPEND_POLICY_SHA256', install_module.INSTALLED_POLICY_SHA256)
+    code = install_module.main(['--hydrogen-model-version', 'synthetic-hydrogen-version',
+                                '--hydrogen-tokens-per-image', '1088', '--tariff-sha256', T])
+    out = capsys.readouterr().out.strip().splitlines()
+    assert code == 1 and reads == [] and len(out) == 1 and 'are required' in json.loads(out[0])['error']
+    code = install_module.main(['--hydrogen-model-version', 'synthetic-hydrogen-version',
+                                '--hydrogen-tokens-per-image', '1088', '--hydrogen-max-output-tokens', '4000',
+                                '--tariff-sha256', T])
+    assert code == 1 and reads == [] and 'are required' in json.loads(capsys.readouterr().out.strip())['error']
+    code = install_module.main(['--hydrogen-model-version', 'synthetic-hydrogen-version',
+                                '--hydrogen-tokens-per-image', '1088', '--hydrogen-max-output-tokens', '5000',
+                                '--hydrogen-thinking-level', 'high', '--tariff-sha256', T])
+    assert code == 1 and reads == [] and 'error' in json.loads(capsys.readouterr().out.strip())
+    code = install_module.main(['--hydrogen-model-version', 'synthetic-hydrogen-version',
+                                '--hydrogen-tokens-per-image', '1088', '--hydrogen-max-output-tokens', '4000',
+                                '--hydrogen-thinking-level', 'low', '--tariff-sha256', T])
+    assert code == 1 and reads == [] and 'error' in json.loads(capsys.readouterr().out.strip())
 
 
 def test_observe_tariff_prints_one_json_line_of_public_numbers(monkeypatch, capsys):
@@ -196,11 +277,12 @@ def test_observe_tariff_prints_one_json_line_of_public_numbers(monkeypatch, caps
     assert seen['rates'][EMBEDDING_001_OPERATION] == {'input': '0.15', 'output': '0'}
 
 
-def applied(monkeypatch):
+def applied(monkeypatch, output_tokens=4000, level='high'):
     wire, old_sha, ledger, p0 = setup(monkeypatch)
-    p1 = build_successor(p0, **KW)
+    p1 = build_successor(p0, **dict(KW, hydrogen_max_output_tokens=output_tokens, hydrogen_thinking_level=level))
     new_sha = auto.digest(p1)
-    run(wire, old_sha, apply=True, expected_new_sha=new_sha)
+    run(wire, old_sha, apply=True, expected_new_sha=new_sha, hydrogen_max_output_tokens=output_tokens,
+        hydrogen_thinking_level=level)
     return wire, old_sha, new_sha, p1
 
 
@@ -227,11 +309,19 @@ def other_tariff(receipt):
     receipt['inputs'] = dict(receipt['inputs'], tariff_sha256='d' * 64)
 
 
+def other_output(receipt):
+    receipt['inputs'] = dict(receipt['inputs'], hydrogen_max_output_tokens=6000)
+
+
+def other_level(receipt):
+    receipt['inputs'] = dict(receipt['inputs'], hydrogen_thinking_level='medium')
+
+
 def other_tokens(receipt):
     receipt['inputs'] = dict(receipt['inputs'], hydrogen_tokens_per_image=1)
 
 
-@pytest.mark.parametrize('tamper', [other_tariff, other_tokens,
+@pytest.mark.parametrize('tamper', [other_tariff, other_tokens, other_output, other_level,
                                     lambda r: r.update(month='2026-10'),
                                     lambda r: r.update(old_policy_sha256='c' * 64)])
 def test_receipt_that_does_not_match_the_request_is_refused(monkeypatch, tamper):

@@ -25,6 +25,7 @@ import httpx
 EMBEDDING_001_MAX_COUNTED_TOKENS_PER_TEXT = 2040
 HYDROGEN_MODEL = "gemini-4-hydrogen"
 HYDROGEN_OPERATION = "generate_content:" + HYDROGEN_MODEL
+HYDROGEN_OUTPUT_TOKENS = (4000, 6000, 8000, 10000, 15000)
 HYDROGEN_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
 HYDROGEN_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
 
@@ -762,7 +763,7 @@ class BudgetGuard:
         if not self.now() + timedelta(seconds=duration) < expires <= announced:
             raise SpendBlocked("Gemini 3.8 pricing expires before bounded request completion")
 
-    def _validate_hydrogen_policy(self, limits, duration):
+    def _validate_hydrogen_policy(self, limits, duration, account):
         """Exact Hydrogen tariff and bounded multimodal shape, never inferred credits."""
         reason = "Unverified Gemini 4 Hydrogen pricing or model policy"
         if (money(limits.get("input_token_usd_per_million")) != Decimal("1.50")
@@ -777,11 +778,21 @@ class BudgetGuard:
         if (not isinstance(versions, list) or not versions
                 or any(not isinstance(v, str) or not v for v in versions)):
             raise SpendBlocked(reason)
-        for field, ceiling in (("max_input_tokens", 65536), ("max_output_tokens", 4000),
-                               ("max_input_bytes", 2000000)):
+        for field, ceiling in (("max_input_tokens", 65536), ("max_input_bytes", 2000000)):
             value = limits.get(field)
             if type(value) is not int or not 1 <= value <= ceiling:
                 raise SpendBlocked(reason)
+        output = limits.get("max_output_tokens")
+        if type(output) is not int or output not in HYDROGEN_OUTPUT_TOKENS:
+            raise SpendBlocked(reason)
+        # The per-call cap is the full input window plus the whole output allowance, exactly.
+        full_bound = (Decimal(65536) * Decimal("1.50") + Decimal(output) * Decimal("7.50")) / 1000000
+        try:
+            cap = money(account.get("operation_caps_usd", {}).get(HYDROGEN_OPERATION))
+        except SpendBlocked:
+            raise SpendBlocked(reason) from None
+        if cap != full_bound:
+            raise SpendBlocked(reason)
         images = limits.get("max_input_images")
         if type(images) is not int or not 0 <= images <= 9:
             raise SpendBlocked(reason)
@@ -804,7 +815,7 @@ class BudgetGuard:
             if model == "gemini-3.8-flash":
                 self._validate_gemini38_policy(limits, duration)
             elif model == HYDROGEN_MODEL:
-                self._validate_hydrogen_policy(limits, duration)
+                self._validate_hydrogen_policy(limits, duration, account)
             return copy.deepcopy(limits), duration
         limits, duration = self.ledger.mutate(read)
         config = kwargs.get("config") or {}
@@ -939,7 +950,7 @@ class BudgetGuard:
             elif operation == HYDROGEN_OPERATION:
                 if not isinstance(limits, dict):
                     raise SpendBlocked('Verified model pricing and request limits required')
-                self._validate_hydrogen_policy(limits, int(account.get('max_request_duration_seconds', 300)))
+                self._validate_hydrogen_policy(limits, int(account.get('max_request_duration_seconds', 300)), account)
             return (copy.deepcopy(limits), required, account['verification_reference'], copy.deepcopy(account))
         limits, required, reference, account = self.ledger.mutate(policy)
         if not required:

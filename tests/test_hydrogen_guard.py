@@ -12,22 +12,25 @@ MODEL = 'gemini-4-hydrogen'
 OP = 'generate_content:' + MODEL
 
 
-def hydrogen_limits():
+def hydrogen_limits(output_tokens=4000):
     policy = base.limits()
     policy.update(input_token_usd_per_million='1.50', output_token_usd_per_million='7.50',
-                  max_output_tokens=4000, thinking_level='high', image_tokens_per_image=1088,
+                  max_output_tokens=output_tokens, thinking_level='high', image_tokens_per_image=1088,
                   allowed_response_model_versions=['synthetic-hydrogen-version'])
     return policy
 
 
-def guard(now=NOW, mutate=None):
+def guard(now=NOW, mutate=None, cap='0.128304', output_tokens=4000):
     budget = base.guard(now)
     account = budget.ledger.document['providers']['gemini']
-    policy = hydrogen_limits()
+    policy = hydrogen_limits(output_tokens)
     if mutate:
         mutate(policy)
     account['request_limits'][OP] = policy
-    account['operation_caps_usd'][OP] = '0.128304'
+    if cap is None:
+        account['operation_caps_usd'].pop(OP, None)
+    else:
+        account['operation_caps_usd'][OP] = cap
     return budget
 
 
@@ -68,6 +71,66 @@ def test_hydrogen_full_bound_equals_cap():
     assert (Decimal(65536) * Decimal('1.50') + Decimal(4000) * Decimal('7.50')) / 1000000 == Decimal('0.128304')
 
 
+def test_hydrogen_full_bound_equals_cap_for_6000():
+    assert (Decimal(65536) * Decimal('1.50') + Decimal(6000) * Decimal('7.50')) / 1000000 == Decimal('0.143304')
+
+
+LADDER = [(4000, '0.128304'), (6000, '0.143304'), (8000, '0.158304'), (10000, '0.173304'), (15000, '0.210804')]
+
+
+@pytest.mark.parametrize('tokens, cap', LADDER)
+def test_hydrogen_ladder_caps_are_derived_and_admitted(tokens, cap):
+    assert str((Decimal(65536) * Decimal('1.50') + Decimal(tokens) * Decimal('7.50')) / 1000000) == cap
+    bounded = guard(cap=cap, output_tokens=tokens).bounded_genai_request(OP, request())
+    assert bounded['config']['max_output_tokens'] == tokens
+
+
+@pytest.mark.parametrize('index', range(len(LADDER)))
+def test_hydrogen_neighbouring_caps_are_refused(index):
+    tokens = LADDER[index][0]
+    for other in (index - 1, index + 1):
+        if 0 <= other < len(LADDER):
+            with pytest.raises(SpendBlocked, match='Unverified Gemini 4 Hydrogen pricing or model policy'):
+                guard(cap=LADDER[other][1], output_tokens=tokens).bounded_genai_request(OP, request())
+
+
+def test_hydrogen_6000_tokens_admitted_with_matching_cap():
+    budget = guard(cap='0.143304', output_tokens=6000)
+    bounded = budget.bounded_genai_request(OP, request(config={'response_mime_type': 'application/json',
+                                                               'max_output_tokens': 6000}))
+    assert bounded['config']['max_output_tokens'] == 6000
+    calls = []
+    def count(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(total_tokens=1 if len(calls) == 1 else 11)
+    maximum, _ = budget.counted_genai_cap(OP, bounded, count)
+    assert maximum == (Decimal(1) * Decimal('1.50') + Decimal(6000) * Decimal('7.50')) / 1000000
+    assert budget.bounded_genai_request(OP, request())['config']['max_output_tokens'] == 6000
+
+
+def test_hydrogen_request_above_policy_output_is_refused():
+    with pytest.raises(SpendBlocked, match='monetary bound'):
+        guard().bounded_genai_request(OP, request(config={'max_output_tokens': 6000}))
+
+
+@pytest.mark.parametrize('tokens', [1, 3999, 4001, 5000, 5999, 6001, 7000, 10001, 12000, 15001, 65536])
+def test_hydrogen_output_must_be_exactly_4000_or_6000_even_with_a_matching_cap(tokens):
+    cap = str((Decimal(65536) * Decimal('1.50') + Decimal(tokens) * Decimal('7.50')) / 1000000)
+    with pytest.raises(SpendBlocked, match='Unverified Gemini 4 Hydrogen pricing or model policy'):
+        guard(cap=cap, output_tokens=tokens).bounded_genai_request(OP, request())
+
+
+@pytest.mark.parametrize('cap, tokens', [
+    ('0.128304', 6000), ('0.143304', 4000), ('0.128303', 4000), ('0.143305', 6000),
+    ('0.2', 4000), ('0', 4000), ('not-money', 4000), (None, 4000), (None, 6000)])
+def test_hydrogen_cap_must_match_output_tokens(cap, tokens):
+    with pytest.raises(SpendBlocked, match='Unverified Gemini 4 Hydrogen pricing or model policy'):
+        guard(cap=cap, output_tokens=tokens).bounded_genai_request(OP, request())
+    budget = guard(cap=cap, output_tokens=tokens)
+    with pytest.raises(SpendBlocked, match='Unverified Gemini 4 Hydrogen pricing or model policy'):
+        budget.counted_genai_cap(OP, {'contents': 'x', 'config': {'http_options': {}}}, lambda **k: None)
+
+
 def _delete_versions(policy):
     del policy['allowed_response_model_versions']
 
@@ -77,6 +140,17 @@ def _delete_versions(policy):
     lambda p: p.update(input_token_usd_per_million='1.49'),
     lambda p: p.update(output_token_usd_per_million='7.51'),
     lambda p: p.update(max_output_tokens=4001),
+    lambda p: p.update(max_output_tokens=5999),
+    lambda p: p.update(max_output_tokens=6001),
+    lambda p: p.update(max_output_tokens=5000),
+    lambda p: p.update(max_output_tokens=7000),
+    lambda p: p.update(max_output_tokens=10001),
+    lambda p: p.update(max_output_tokens=12000),
+    lambda p: p.update(max_output_tokens=15001),
+    lambda p: p.update(max_output_tokens=3999),
+    lambda p: p.update(max_output_tokens=True),
+    lambda p: p.update(max_output_tokens='4000'),
+    lambda p: p.update(max_output_tokens=4000.0),
     lambda p: p.update(max_input_tokens=65537),
     lambda p: p.update(max_input_images=10),
     lambda p: p.update(image_tokens_per_image=0),

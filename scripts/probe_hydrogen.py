@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Manual Hydrogen probe: list models, then make up to four paid calls.
+"""Manual Hydrogen probe: list models, then make up to six paid calls.
 
 Prints model versions and token counts only. It never prints the key, response
 text, or any credential identity. The calls are two tiny ones (16 output tokens)
-and two Director-sized ones (up to 4000 output tokens each). They are authorised
+and four Director-sized ones, each with max_output_tokens 15000 on the same synthetic
+prompt (three at thinking level high, then one at medium). Each prints one numbers-only line,
+then one summary line gives max_total_output_high and max_total_output_medium (total_output =
+candidates + thoughts tokens).
+
+Coordinator rule for choosing the Hydrogen output cap (not enforced by code): take the smallest
+ladder value (4000, 6000, 8000, 10000, 15000) that is at least 1.5 times max_total_output_high;
+only if 15000 is still too small, apply the same rule at medium to max_total_output_medium.
+
+They are authorised
 outside the spend guard by the spec, so the command refuses to run without --confirm-paid-probe.
 """
 
@@ -40,8 +49,8 @@ COUNT_FIELDS = (
 )
 
 
-FIT_LEVELS = ("high", "medium")
-FIT_MAX_OUTPUT_TOKENS = 4000
+FIT_OUTPUT_TOKENS = 15000
+FIT_PLAN = (("high", FIT_OUTPUT_TOKENS),) * 3 + (("medium", FIT_OUTPUT_TOKENS),)
 FINISH_PATTERN = re.compile(r"[A-Z_]{1,32}")
 FIT_TOPICS = (
     ("harbor", "tide", "ferry", "lantern", "mooring"),
@@ -107,7 +116,7 @@ def _reply_text(response):
     return text if isinstance(text, str) else None
 
 
-def fit_row(level, response):
+def fit_row(level, max_output_tokens, response):
     usage = getattr(response, "usage_metadata", None)
     candidates = getattr(response, "candidates", None) or [None]
     finish = safe_finish(getattr(candidates[0], "finish_reason", None))
@@ -118,23 +127,27 @@ def fit_row(level, response):
             json_ok = 1 if isinstance(json.loads(text), dict) else 0
         except ValueError:
             pass
+    produced = safe_count(getattr(usage, "candidates_token_count", None))
+    thought = safe_count(getattr(usage, "thoughts_token_count", None))
+    total_output = None if produced is None or thought is None else produced + thought
     return {
         "thinking_level": level,
+        "max_output_tokens": max_output_tokens,
         "finish_reason": finish,
         "prompt_tokens": safe_count(getattr(usage, "prompt_token_count", None)),
         "candidates_tokens": safe_count(getattr(usage, "candidates_token_count", None)),
         "thoughts_tokens": safe_count(getattr(usage, "thoughts_token_count", None)),
-        "total_tokens": safe_count(getattr(usage, "total_token_count", None)),
+        "total_output": total_output,
         "json_ok": json_ok,
     }
 
 
 def run_thinking_fit(genai_client):
-    """One call per level, in order; a failure stops before the next call."""
+    """One call per (level, output cap) in FIT_PLAN, in order; a failure stops before the next call."""
     prompt = director_fit_prompt()
-    for level in FIT_LEVELS:
+    for index, (level, max_output_tokens) in enumerate(FIT_PLAN, start=1):
         config = {
-            "max_output_tokens": FIT_MAX_OUTPUT_TOKENS,
+            "max_output_tokens": max_output_tokens,
             "response_mime_type": "application/json",
             "thinking_config": {"thinking_level": level},
         }
@@ -142,10 +155,16 @@ def run_thinking_fit(genai_client):
             response = genai_client.models.generate_content(
                 model=HYDROGEN, contents=prompt, config=config
             )
-            row = fit_row(level, response)
+            row = fit_row(level, max_output_tokens, response)
         except Exception as error:
-            raise ProbeFailure("thinking_" + level, type(error).__name__) from None
+            raise ProbeFailure(f"thinking_{level}_{index}", type(error).__name__) from None
         yield row
+
+
+def max_total_output(rows, level):
+    totals = [r["total_output"] for r in rows
+              if r["thinking_level"] == level and r["total_output"] is not None]
+    return max(totals) if totals else None
 
 
 class ProbeFailure(Exception):
@@ -296,8 +315,12 @@ def main(argv=None, *, env=None, http_factory=None, genai_factory=None) -> int:
         return 2
     print(json.dumps({"status": "ok", **report, "tokens_per_image": tokens_per_image(report)}))
     try:
+        rows = []
         for row in run_thinking_fit(genai_client):
+            rows.append(row)
             print(json.dumps(row))
+        print(json.dumps({"max_total_output_" + level: max_total_output(rows, level)
+                          for level in ("high", "medium")}))
     except ProbeFailure as failure:
         print(json.dumps({"status": "failed", "phase": failure.phase,
                           "error_type": failure.error_type}))

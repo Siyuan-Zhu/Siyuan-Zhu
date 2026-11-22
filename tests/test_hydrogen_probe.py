@@ -111,7 +111,7 @@ def test_report_has_only_versions_and_counts(capsys):
 
 def test_two_calls_second_has_384px_image(capsys):
     _, _, models, _, made = run_main(capsys=capsys)
-    assert len(models.calls) == 4 and made == [KEY]  # two A8 calls, then two thinking-fit calls
+    assert len(models.calls) == 6 and made == [KEY]  # two A8 calls, then four thinking-fit calls
     for call in models.calls[:2]:
         assert call["model"] == "gemini-4-hydrogen"
         assert call["config"] == {"max_output_tokens": 16,
@@ -182,6 +182,7 @@ def test_bad_counts_print_null(capsys):
 
 def test_probe_workflow_is_minimal():
     text = (ROOT / ".github/workflows/hydrogen_probe.yml").read_text()
+    assert "up to six Hydrogen calls" in text and "up to 15000 output tokens" in text
     assert "workflow_dispatch:" in text
     for banned in ("schedule:", "push:", "pull_request", "id-token", "write",
                    "SPEND_POLICY_SHA256", "upload-artifact"):
@@ -205,12 +206,15 @@ def run_fit(capsys, **kw):
     return code, lines, models
 
 
-def test_thinking_fit_calls_high_then_medium(capsys):
+FIT_PLAN = (("high", 15000), ("high", 15000), ("high", 15000), ("medium", 15000))
+
+
+def test_thinking_fit_calls_three_high_then_one_medium_at_15000(capsys):
     code, lines, models = run_fit(capsys, text='{"a": 1}')
-    assert code == 0 and len(models.calls) == 4
-    for call, level in zip(models.calls[2:], ("high", "medium")):
+    assert code == 0 and len(models.calls) == 6
+    for call, (level, tokens) in zip(models.calls[2:], FIT_PLAN):
         assert call["model"] == "gemini-4-hydrogen"
-        assert call["config"]["max_output_tokens"] == 4000
+        assert call["config"]["max_output_tokens"] == tokens
         assert call["config"]["response_mime_type"] == "application/json"
         assert call["config"]["thinking_config"] == {"thinking_level": level}
         assert isinstance(call["contents"], str)
@@ -218,11 +222,31 @@ def test_thinking_fit_calls_high_then_medium(capsys):
 
 def test_thinking_fit_line_format(capsys):
     code, lines, _ = run_fit(capsys, text='{"a": 1}')
-    assert len(lines) == 3
+    assert len(lines) == 6
     assert json.loads(lines[1]) == {
-        "thinking_level": "high", "finish_reason": "STOP", "prompt_tokens": 2000,
-        "candidates_tokens": 300, "thoughts_tokens": 1500, "total_tokens": 3800, "json_ok": 1}
-    assert json.loads(lines[2])["thinking_level"] == "medium"
+        "thinking_level": "high", "max_output_tokens": 15000, "finish_reason": "STOP",
+        "prompt_tokens": 2000, "candidates_tokens": 300, "thoughts_tokens": 1500,
+        "total_output": 1800, "json_ok": 1}
+    assert [(json.loads(l)["thinking_level"], json.loads(l)["max_output_tokens"])
+            for l in lines[1:5]] == list(FIT_PLAN)
+    assert json.loads(lines[5]) == {"max_total_output_high": 1800, "max_total_output_medium": 1800}
+
+
+def test_summary_takes_the_max_per_level_and_null_when_none(capsys):
+    usages = [usage(12), usage(1112, image=1100)] + [
+        types.GenerateContentResponseUsageMetadata(prompt_token_count=1, candidates_token_count=c,
+                                                   thoughts_token_count=t_)
+        for c, t_ in ((100, 200), (500, 700), (50, 60), (10, 20))]
+    run_main(models=FakeModels(usages, text='{"a": 1}'), capsys=capsys)
+    lines = run_main.full.splitlines()
+    assert [json.loads(l)["total_output"] for l in lines[1:5]] == [300, 1200, 110, 30]
+    assert json.loads(lines[5]) == {"max_total_output_high": 1200, "max_total_output_medium": 30}
+    bad = types.GenerateContentResponseUsageMetadata.model_construct(
+        prompt_token_count=1, candidates_token_count=5, thoughts_token_count=None)
+    run_main(models=FakeModels([usage(12), usage(1112, image=1100), bad], text="{}"), capsys=capsys)
+    lines = run_main.full.splitlines()
+    assert json.loads(lines[1])["total_output"] is None
+    assert json.loads(lines[5]) == {"max_total_output_high": None, "max_total_output_medium": None}
 
 
 def test_json_ok_rules(capsys):
@@ -237,7 +261,7 @@ def test_json_ok_rules(capsys):
 
 def test_full_output_never_leaks_key_or_secret(capsys):
     code, lines, _ = run_fit(capsys, text=KEY + SECRET)
-    assert code == 0 and len(lines) == 3
+    assert code == 0 and len(lines) == 6
     for banned in (KEY, SECRET):
         assert banned not in run_main.full
     for row in lines[1:]:
@@ -262,7 +286,7 @@ def test_finish_reason_sanitised_and_counts_null(capsys):
     run_main(models=models, capsys=capsys)
     row = json.loads(run_main.full.splitlines()[1])
     assert [row[k] for k in ("prompt_tokens", "candidates_tokens", "thoughts_tokens",
-                             "total_tokens")] == [None] * 4
+                             "total_output")] == [None] * 4
 
 
 def test_thinking_fit_never_prints_reply_text(capsys):
@@ -278,17 +302,15 @@ def test_no_thinking_calls_when_unlisted_or_unflagged(capsys):
 
 
 def test_thinking_failure_is_type_only_and_stops(capsys):
-    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], fail_at=3)
-    code, _, models, *_ = run_main(models=models, capsys=capsys)
-    lines = run_main.full.splitlines()
-    assert code == 1 and len(models.calls) == 3 and len(lines) == 2
-    assert json.loads(lines[1]) == {"status": "failed", "phase": "thinking_high",
-                                    "error_type": "RuntimeError"}
-    assert KEY not in run_main.full
-    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], fail_at=4)
-    code, _, models, *_ = run_main(models=models, capsys=capsys)
-    assert code == 1 and len(models.calls) == 4
-    assert json.loads(run_main.full.splitlines()[-1])["phase"] == "thinking_medium"
+    base = [usage(12), usage(1112, image=1100), THINK_USAGE]
+    for fail_at, phase in ((3, "thinking_high_1"), (4, "thinking_high_2"), (5, "thinking_high_3"),
+                           (6, "thinking_medium_4")):
+        models = FakeModels(base, fail_at=fail_at)
+        code, _, models, *_ = run_main(models=models, capsys=capsys)
+        lines = run_main.full.splitlines()
+        assert code == 1 and len(models.calls) == fail_at and len(lines) == 1 + (fail_at - 3) + 1
+        assert json.loads(lines[-1]) == {"status": "failed", "phase": phase, "error_type": "RuntimeError"}
+        assert KEY not in run_main.full and SECRET not in run_main.full
 
 
 def test_director_fit_prompt_is_synthetic_and_sized():

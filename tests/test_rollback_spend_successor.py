@@ -160,6 +160,34 @@ def test_reconciliation_frozen_or_moved_ledger_blocks(monkeypatch, change):
     assert len(wire.posts) == posts
 
 
+def test_rollback_of_a_6000_successor_plans_applies_and_restores_the_old_static(monkeypatch):
+    wire, old_sha, new_sha, p1 = applied(monkeypatch, output_tokens=6000)
+    gemini = wire.docs['2026-11']['providers']['gemini']
+    assert gemini['operation_caps_usd'][HYDROGEN_OPERATION] == '0.143304'
+    ledger = copy.deepcopy(wire.docs['2026-11'])
+    old = wire.docs['policy_' + old_sha]
+    report = undo(wire, apply=True, expected_plan_sha=plan_sha(wire))
+    assert report['mode'] == 'applied'
+    assert wire.docs['2026-11'] == rollback_ledger(ledger, old, old_sha)
+    assert HYDROGEN_OPERATION not in wire.docs['2026-11']['providers']['gemini']['operation_caps_usd']
+
+
+@pytest.mark.parametrize('tokens, level', [(8000, 'medium'), (10000, 'high'), (15000, 'medium')])
+def test_rollback_works_for_other_ladder_values_and_levels(monkeypatch, tokens, level):
+    wire, old_sha, new_sha, _ = applied(monkeypatch, output_tokens=tokens, level=level)
+    ledger = copy.deepcopy(wire.docs['2026-11'])
+    old = wire.docs['policy_' + old_sha]
+    report = undo(wire, apply=True, expected_plan_sha=plan_sha(wire))
+    assert report['mode'] == 'applied' and wire.docs['2026-11'] == rollback_ledger(ledger, old, old_sha)
+
+
+def test_6000_successor_ledger_with_the_4000_cap_is_drift(monkeypatch):
+    wire, old_sha, _, _ = applied(monkeypatch, output_tokens=6000)
+    wire.docs['2026-11']['providers']['gemini']['operation_caps_usd'][HYDROGEN_OPERATION] = '0.128304'
+    with pytest.raises(RuntimeError, match='differ'):
+        undo(wire)
+
+
 def test_ledger_gemini_limits_that_drifted_from_the_successor_block(monkeypatch):
     wire, old_sha, _, _ = applied(monkeypatch)
     del wire.docs['2026-11']['providers']['gemini']['operation_caps_usd'][HYDROGEN_OPERATION]

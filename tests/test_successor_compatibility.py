@@ -23,7 +23,8 @@ def policies():
     ledger0, p0 = installed()
     p0['providers']['gemini']['price_snapshot_sha256'] = OLD_PIN
     ledger0.update(credit_only_providers=p0['credit_only_providers'], automatic_policy_sha256=auto.digest(p0))
-    p1 = build_successor(p0, hydrogen_model_version=HYDROGEN_VERSION, hydrogen_tokens_per_image=1088, tariff_sha256=T)
+    p1 = build_successor(p0, hydrogen_model_version=HYDROGEN_VERSION, hydrogen_tokens_per_image=1088, hydrogen_max_output_tokens=4000,
+                         hydrogen_thinking_level='high', tariff_sha256=T)
     return ledger0, p0, p1
 
 

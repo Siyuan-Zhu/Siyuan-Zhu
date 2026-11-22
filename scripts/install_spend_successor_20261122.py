@@ -20,6 +20,7 @@ from src.zeitgeist.automatic_spend import digest, validate_policy
 from src.zeitgeist.automatic_spend_runtime import PrivateFirestoreStore, SUCCESSOR_RECEIPT_ID
 from src.zeitgeist.gemini_tariff import observe_gemini_tariff
 from src.zeitgeist.provider_lifecycle import APIFY_START_REQUEST_SECONDS
+from src.zeitgeist.spend_guard import HYDROGEN_OUTPUT_TOKENS
 from src.zeitgeist.spend_successor import (
     INSTALLED_POLICY_SHA256, assert_no_hold_in_flight, build_successor, field_diff,
     rollback_ledger, successor_ledger)
@@ -57,20 +58,26 @@ def _open_count(ledger):
                if record.get('status') != 'settled')
 
 
-def _report(mode, old_sha, new_sha, policy_diff, ledger_diff, ledger, reservations_unchanged):
+def _report(mode, old_sha, new_sha, policy_diff, ledger_diff, ledger, reservations_unchanged,
+            hydrogen_max_output_tokens, hydrogen_thinking_level):
     return {'mode': mode, 'old_policy_sha256': old_sha, 'new_policy_sha256': new_sha,
             'receipt_id': SUCCESSOR_RECEIPT_ID, 'policy_diff': policy_diff,
             'ledger_diff': ledger_diff, 'open_reservation_count': _open_count(ledger),
-            'reservations_unchanged': reservations_unchanged}
+            'reservations_unchanged': reservations_unchanged,
+            'hydrogen_max_output_tokens': hydrogen_max_output_tokens,
+            'hydrogen_thinking_level': hydrogen_thinking_level}
 
 
-def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image, tariff_sha256,
-            apply=False, expected_new_sha=None, now=None):
+def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image,
+            hydrogen_max_output_tokens, hydrogen_thinking_level, tariff_sha256, apply=False,
+            expected_new_sha=None, now=None):
     now = now or datetime.now(timezone.utc)
     old = store.read('policy_' + old_sha).to_dict()
     validate_policy(old, old_sha, now)
     inputs = {'hydrogen_model_version': hydrogen_model_version,
-              'hydrogen_tokens_per_image': hydrogen_tokens_per_image, 'tariff_sha256': tariff_sha256}
+              'hydrogen_tokens_per_image': hydrogen_tokens_per_image,
+              'hydrogen_max_output_tokens': hydrogen_max_output_tokens,
+              'hydrogen_thinking_level': hydrogen_thinking_level, 'tariff_sha256': tariff_sha256}
     new = build_successor(old, **inputs)
     new_sha = digest(new)
     validate_policy(new, new_sha, now)
@@ -93,7 +100,8 @@ def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image
         # reservations are provably the ones that were there; once it moves on, nothing is claimed.
         return _report('already_applied', old_sha, new_sha, policy_diff,
                        field_diff(rollback_ledger(current, old, old_sha), current), current,
-                       digest(current) == receipt.get('after_sha256'))
+                       digest(current) == receipt.get('after_sha256'),
+                       hydrogen_max_output_tokens, hydrogen_thinking_level)
 
     ledger_snapshot = store.read(month)
     ledger = ledger_snapshot.to_dict()
@@ -120,7 +128,8 @@ def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image
                'change': CHANGE, 'inputs': inputs}
     ledger_diff = field_diff(ledger, after)
     if not apply:
-        return _report('plan', old_sha, new_sha, policy_diff, ledger_diff, ledger, unchanged)
+        return _report('plan', old_sha, new_sha, policy_diff, ledger_diff, ledger, unchanged,
+                       hydrogen_max_output_tokens, hydrogen_thinking_level)
     if expected_new_sha != new_sha:
         raise RuntimeError('Apply requires the planned new policy digest')
 
@@ -137,7 +146,8 @@ def install(store, *, old_sha, hydrogen_model_version, hydrogen_tokens_per_image
             or store.read('policy_' + new_sha).to_dict() != new):
         raise RuntimeError('Install outcome unresolved; read before any further action')
     return _report('applied', old_sha, new_sha, policy_diff, ledger_diff, final,
-                   digest(final['reservations']) == digest(ledger['reservations']))
+                   digest(final['reservations']) == digest(ledger['reservations']),
+                   hydrogen_max_output_tokens, hydrogen_thinking_level)
 
 
 def main(argv=None):
@@ -145,6 +155,8 @@ def main(argv=None):
     parser.add_argument('--observe-tariff', action='store_true')
     parser.add_argument('--hydrogen-model-version')
     parser.add_argument('--hydrogen-tokens-per-image', type=int)
+    parser.add_argument('--hydrogen-max-output-tokens', type=int)
+    parser.add_argument('--hydrogen-thinking-level')
     parser.add_argument('--tariff-sha256')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--expected-new-sha')
@@ -156,11 +168,18 @@ def main(argv=None):
             if os.environ.get('SPEND_POLICY_SHA256') != INSTALLED_POLICY_SHA256:
                 raise RuntimeError('SPEND_POLICY_SHA256 is not the reviewed installed policy')
             if (args.hydrogen_model_version is None or args.hydrogen_tokens_per_image is None
+                    or args.hydrogen_max_output_tokens is None or args.hydrogen_thinking_level is None
                     or args.tariff_sha256 is None):
-                raise RuntimeError('Model version, tokens per image and tariff digest are required')
+                raise RuntimeError('Model version, tokens per image, max output tokens, thinking level and tariff digest are required')
+            if args.hydrogen_max_output_tokens not in HYDROGEN_OUTPUT_TOKENS:
+                raise RuntimeError('Hydrogen max output tokens must be one of 4000, 6000, 8000, 10000, 15000')
+            if args.hydrogen_thinking_level not in ('high', 'medium'):
+                raise RuntimeError('Hydrogen thinking level must be high or medium')
             result = install(PrivateFirestoreStore(), old_sha=INSTALLED_POLICY_SHA256,
                              hydrogen_model_version=args.hydrogen_model_version,
                              hydrogen_tokens_per_image=args.hydrogen_tokens_per_image,
+                             hydrogen_max_output_tokens=args.hydrogen_max_output_tokens,
+                             hydrogen_thinking_level=args.hydrogen_thinking_level,
                              tariff_sha256=args.tariff_sha256, apply=args.apply,
                              expected_new_sha=args.expected_new_sha)
     except RuntimeError as exc:

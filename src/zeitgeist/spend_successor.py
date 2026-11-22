@@ -7,41 +7,57 @@ import copy
 import json
 import re
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from .automatic_spend import _time
-from .spend_guard import HYDROGEN_OPERATION
+from .spend_guard import HYDROGEN_OPERATION, HYDROGEN_OUTPUT_TOKENS
 
 INSTALLED_POLICY_SHA256 = "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
 FLASH_OPERATION = "generate_content:gemini-3.8-flash"
 EMBEDDING_001_OPERATION = "embed_content:gemini-embedding-001"
-HYDROGEN_CAP_USD = "0.128304"
 
 REDACTED_KEYS = frozenset({"billing_account_id", "credential_fingerprint", "account_id",
                            "account_fingerprint", "approval_reference", "reference",
                            "verification_reference"})
 
 
-def _check_inputs(model_version, tokens_per_image):
+def hydrogen_cap_usd(max_output_tokens: int) -> str:
+    """The exact per-call cap: a full 65536-token input window plus the whole output allowance."""
+    total = Decimal(65536) * Decimal("1.50") + Decimal(max_output_tokens) * Decimal("7.50")
+    return format(total / Decimal(1000000), "f")
+
+
+HYDROGEN_BUILD_THINKING_LEVELS = ("high", "medium")
+
+
+def _check_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level):
     if not isinstance(model_version, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", model_version):
         raise RuntimeError("Hydrogen model version is malformed")
     if type(tokens_per_image) is not int or not 1 <= tokens_per_image <= 4096:
         raise RuntimeError("Hydrogen tokens per image must be an integer from 1 to 4096")
+    if type(max_output_tokens) is not int or max_output_tokens not in HYDROGEN_OUTPUT_TOKENS:
+        raise RuntimeError("Hydrogen max output tokens must be one of 4000, 6000, 8000, 10000, 15000")
+    if type(thinking_level) is not str or thinking_level not in HYDROGEN_BUILD_THINKING_LEVELS:
+        raise RuntimeError("Hydrogen thinking level must be high or medium")
 
 
-def hydrogen_operation(flash_limits: dict, *, model_version: str, tokens_per_image: int) -> tuple[str, str, dict]:
-    _check_inputs(model_version, tokens_per_image)
+def hydrogen_operation(flash_limits: dict, *, model_version: str, tokens_per_image: int,
+                       max_output_tokens: int, thinking_level: str) -> tuple[str, str, dict]:
+    _check_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level)
     limits = copy.deepcopy(flash_limits)
     limits.update(input_token_usd_per_million="1.50", output_token_usd_per_million="7.50",
-                  max_output_tokens=4000, thinking_level="high",
+                  max_output_tokens=max_output_tokens, thinking_level=thinking_level,
                   image_tokens_per_image=tokens_per_image,
                   allowed_response_model_versions=[model_version])
-    return HYDROGEN_OPERATION, HYDROGEN_CAP_USD, limits
+    return HYDROGEN_OPERATION, hydrogen_cap_usd(max_output_tokens), limits
 
 
 def build_successor(installed: dict, *, hydrogen_model_version: str, hydrogen_tokens_per_image: int,
+                    hydrogen_max_output_tokens: int, hydrogen_thinking_level: str,
                     tariff_sha256: str) -> dict:
-    _check_inputs(hydrogen_model_version, hydrogen_tokens_per_image)
+    _check_inputs(hydrogen_model_version, hydrogen_tokens_per_image, hydrogen_max_output_tokens,
+                  hydrogen_thinking_level)
     if not isinstance(tariff_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", tariff_sha256):
         raise RuntimeError("Tariff digest must be 64 lowercase hex characters")
     gemini = installed["providers"]["gemini"]
@@ -53,7 +69,9 @@ def build_successor(installed: dict, *, hydrogen_model_version: str, hydrogen_to
     if not isinstance(flash, dict):
         raise RuntimeError("Installed policy has no Flash limits to derive Hydrogen from")
     operation, cap, limits = hydrogen_operation(flash, model_version=hydrogen_model_version,
-                                                tokens_per_image=hydrogen_tokens_per_image)
+                                                tokens_per_image=hydrogen_tokens_per_image,
+                                                max_output_tokens=hydrogen_max_output_tokens,
+                                                thinking_level=hydrogen_thinking_level)
     successor = copy.deepcopy(installed)
     new = successor["providers"]["gemini"]
     new["account"]["operation_caps_usd"][operation] = cap
