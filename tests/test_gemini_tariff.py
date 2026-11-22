@@ -2,7 +2,7 @@
 from datetime import datetime,timezone
 from types import SimpleNamespace
 import pytest
-from src.zeitgeist.gemini_tariff import HYDROGEN_SECTION, MODELS, normalize_gemini_tariff, observe_gemini_tariff
+from src.zeitgeist.gemini_tariff import EMBEDDING_2_SECTION, HYDROGEN_SECTION, MODELS, normalize_gemini_tariff, observe_gemini_tariff
 from src.zeitgeist.spend_guard import SpendBlocked
 
 NOW=datetime(2026,10,30,19,tzinfo=timezone.utc)
@@ -25,7 +25,17 @@ def hydrogen_section(rows=None,code='gemini-4-hydrogen'):
         '<section><h3>Standard</h3>'+table(HYDROGEN_ROWS if rows is None else rows)+'</section><section><h3>Batch</h3>'+table([('Input price','\u00240.75')])+'</section>')
 
 
-def fixture(*,hydrogen=None,embedding_price='\u00240.15',generation_input='\u00240.75 through December 31, 2026.<br>\u00241.50 starting January 1, 2027.',extra_row=None):
+EMBEDDING_2_ROWS=[('Text input price','\u00240.20'),('Image input price','\u00240.45 (\u00240.00012 per image)'),
+    ('Audio input price','\u00246.50 (\u00240.00016 per second)'),('Video input price','\u002412.00 (\u00240.00079 per frame)'),
+    ('Used to improve our products','No')]
+
+
+def embedding_2_section(rows=None,code='gemini-embedding-2'):
+    return ('<h2 id="'+EMBEDDING_2_SECTION+'">Gemini Embedding 2</h2><em><a href="/gemini-api/docs/models/gemini-embedding-2"><code>'+code+'</code></a></em>'+
+        '<section><h3>Standard</h3>'+table(EMBEDDING_2_ROWS if rows is None else rows)+'</section><section><h3>Batch</h3>'+table([('Text input price','\u00240.10')])+'</section>')
+
+
+def fixture(*,hydrogen=None,embedding_2=None,embedding_price='\u00240.15',generation_input='\u00240.75 through December 31, 2026.<br>\u00241.50 starting January 1, 2027.',extra_row=None):
     generation=[('Input price',generation_input),('Output price (including thinking tokens)','\u00243.75 through December 31, 2026.<br>\u00247.50 starting January 1, 2027.'),
         ('Context caching price','\u00240.075 through December 31, 2026.'),
         ('Grounding with Google Search<sup>*</sup>','5,000 free search requests, then \u002414 per 1,000 requests.'),
@@ -35,14 +45,15 @@ def fixture(*,hydrogen=None,embedding_price='\u00240.15',generation_input='\u002
     # The same semantic heading/code/standard table structure as public HTML.
     return ('<h2 id="gemini-3.8-flash">Gemini 3.8 Flash</h2><em><a href="/gemini-api/docs/models/gemini-3.8-flash"><code>gemini-3.8-flash</code></a></em>'+
         '<section><h3>Standard</h3>'+table(generation)+'</section><section><h3>Batch</h3>'+table([('Input price','\u00240.375')])+'</section>'+(hydrogen_section() if hydrogen is None else hydrogen)+
-        '<h2 id="gemini-embedding-2">Gemini Embedding 2</h2><code>gemini-embedding-2</code><h3>Standard</h3>'+table([('Input price','\u00240.20')])+
+        (embedding_2_section() if embedding_2 is None else embedding_2)+
         '<h2 id="gemini-embedding">Gemini Embedding</h2><em><a href="/gemini-api/docs/models/gemini-embedding-001"><code>gemini-embedding-001</code></a></em>'+
         '<section><h3>Standard</h3>'+table(embedding)+'</section><section><h3>Batch</h3>'+table([('Input price','\u00240.075')])+'</section>')
 
 
 def test_exact_standard_paid_tariffs_and_only_generation_has_published_deadline():
     result=normalize_gemini_tariff(fixture())
-    assert set(result['operations'])=={'generate_content:gemini-3.8-flash','generate_content:gemini-4-hydrogen','embed_content:gemini-embedding-001'}
+    assert set(result['operations'])=={'generate_content:gemini-3.8-flash','generate_content:gemini-4-hydrogen',
+        'embed_content:gemini-embedding-2','embed_content:gemini-embedding-001'}
     generation=result['operations']['generate_content:gemini-3.8-flash']
     embedding=result['operations']['embed_content:gemini-embedding-001']
     assert generation['input_token_usd_per_million']=='0.75'
@@ -241,7 +252,7 @@ def test_page_without_hydrogen_still_parses_the_old_operations():
     contract=normalize_gemini_tariff(markdoc_20261113())
     assert set(contract['operations'])=={'generate_content:gemini-3.8-flash','embed_content:gemini-embedding-001'}
     assert 'gemini-4-hydrogen' not in contract['standard_conditions']
-    assert set(normalize_gemini_tariff(fixture(hydrogen=''))['operations'])==set(contract['operations'])
+    assert set(normalize_gemini_tariff(fixture(hydrogen='',embedding_2=''))['operations'])==set(contract['operations'])
 
 
 def test_flash_never_carries_current_only():
@@ -261,4 +272,26 @@ def _hydrogen_rows(**changes):
     lambda:fixture(hydrogen=hydrogen_section([('Output price' if label.startswith('Output price') else label,value) for label,value in HYDROGEN_ROWS])),
 ])
 def test_unreviewed_hydrogen_forms_reject(body):
+    with pytest.raises(SpendBlocked):normalize_gemini_tariff(body())
+
+
+def test_embedding_2_text_rate():
+    assert EMBEDDING_2_SECTION=='gemini-embedding-2' and MODELS[EMBEDDING_2_SECTION]=='gemini-embedding-2'
+    contract=normalize_gemini_tariff(fixture())
+    assert contract['operations']['embed_content:gemini-embedding-2']=={'model':'gemini-embedding-2',
+        'input_token_usd_per_million':'0.2','billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'}
+    assert 'gemini-embedding-2' in contract['standard_conditions']
+    assert normalize_gemini_tariff(markdoc())['operations']['embed_content:gemini-embedding-2']==contract['operations']['embed_content:gemini-embedding-2']
+
+
+def _embedding_2_rows(**changes):
+    return [(label,changes.get(label,value)) for label,value in EMBEDDING_2_ROWS]
+
+
+@pytest.mark.parametrize('body',[
+    lambda:fixture(embedding_2=embedding_2_section(_embedding_2_rows(**{'Text input price':'\u00240.20 per character'}))),
+    lambda:fixture(embedding_2=embedding_2_section(EMBEDDING_2_ROWS+[('Mandatory request fee','\u00240.01')])),
+    lambda:fixture(embedding_2=embedding_2_section(code='gemini-embedding-2-preview')),
+])
+def test_unreviewed_embedding_2_forms_reject(body):
     with pytest.raises(SpendBlocked):normalize_gemini_tariff(body())
