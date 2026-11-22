@@ -57,7 +57,7 @@ def _thumb(photo_id):
 
 
 def _world(monkeypatch, *, per_query=3, flash=FLASH_ROWS, hydrogen=HYDROGEN_ROWS, flash_raises=None,
-           refuse_hydrogen=False, flash_blocked_batches=()):
+           refuse_hydrogen=False, flash_blocked_batches=(), hydrogen_blocked_batches=()):
     """Fake Unsplash and a fake critic for both models; each photo has its own thumbnail.
 
     Scores are dealt by the photo's position in the model's own sequence of batches. Returns the critic calls
@@ -91,7 +91,8 @@ def _world(monkeypatch, *, per_query=3, flash=FLASH_ROWS, hydrogen=HYDROGEN_ROWS
             raise _refusal()
         dealt = rows[model][done:done + len(images)]
         batch = sum(call[0] == model for call in calls) - 1
-        blocked = model == mc.FLASH and batch in flash_blocked_batches
+        blocked = (model == mc.FLASH and batch in flash_blocked_batches
+                   or model == mc.HYDROGEN and batch in hydrogen_blocked_batches)
         return SimpleNamespace(text=json.dumps({"candidates": [dict(r, index=i) for i, r in enumerate(dealt)]}),
                                candidates=[SimpleNamespace(finish_reason="SAFETY")] if blocked else [])
 
@@ -313,4 +314,16 @@ def test_no_marks_are_written_when_a_flash_batch_fails_closed(monkeypatch, per_q
     assert line == (f"[judge_calibration] photos={photos} flash_pass_meaning=0 flash_pass_composite=0 "
                     "meaning_min=0.70 composite_min=0.68 written=0")
     assert sum(call[0] == mc.FLASH for call in calls) == len(range(0, photos, 9))
+    assert store.saved == [] and result.exit_code == 0
+
+
+def test_no_calibration_is_written_when_the_judge_safety_blocked_a_batch(monkeypatch):
+    # Task F3: Hydrogen safety-blocks the first of two batches; Flash is not asked about any photo of the run.
+    calls = _world(monkeypatch, per_query=6, flash=FLASH_ROWS * 2, hydrogen=HYDROGEN_ROWS * 2,
+                   hydrogen_blocked_batches=(0,))
+    store = Store()
+    result, line = _measure(store)
+    assert line == ("[judge_calibration] photos=18 flash_pass_meaning=0 flash_pass_composite=0 "
+                    "meaning_min=0.70 composite_min=0.68 written=0")
+    assert [call[0] for call in calls] == [mc.HYDROGEN, mc.HYDROGEN]
     assert store.saved == [] and result.exit_code == 0
