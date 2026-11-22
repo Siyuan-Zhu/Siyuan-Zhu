@@ -934,8 +934,15 @@ class _UnusableBatch(Exception):
         self.safety_block = safety_block
 
 
+class _SafetyBlockedBatch(list):
+    """The fail-closed scores of a batch the judge safety-blocked; no other model is asked about it."""
+
+
 def _read_photo_batch(response, count, strict_errors):
-    for choice in getattr(response, 'candidates', None) or []:
+    choices = getattr(response, 'candidates', None) or []
+    if not choices and getattr(getattr(response, 'prompt_feedback', None), 'block_reason', None):
+        raise _UnusableBatch(safety_block=True)
+    for choice in choices:
         reason = getattr(choice, 'finish_reason', '')
         if any(token in str(getattr(reason, 'name', reason)).upper() for token in _SAFETY_BLOCK_FINISH_REASONS):
             raise _UnusableBatch(safety_block=True)
@@ -985,10 +992,11 @@ def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, 
         response = _critic_call(call, model_name)
         try:
             return _read_photo_batch(response, len(candidates), strict_errors)
-        except _UnusableBatch:
+        except _UnusableBatch as unusable:
             # Strict runs only: an unusable reply from a non-Flash judge is scored once more on Flash.
+            # A safety block is never a reason to ask another model.
             run_models = model_choice.active()
-            if not (strict_errors and run_models is not None and run_models.give_up("judge")):
+            if unusable.safety_block or not (strict_errors and run_models is not None and run_models.give_up("judge")):
                 raise
         return _read_photo_batch(_critic_call(call, model_name), len(candidates), strict_errors)
     except SpendBlocked:
@@ -996,7 +1004,7 @@ def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, 
     except _UnusableBatch as unusable:
         if strict_errors and not unusable.safety_block:
             raise PhotoCriticUnavailable('Photo critic unavailable or response invalid') from None
-        return failed
+        return _SafetyBlockedBatch(failed) if unusable.safety_block else failed
     except Exception:
         if strict_errors:
             raise PhotoCriticUnavailable('Photo critic unavailable or response invalid') from None
@@ -1132,7 +1140,7 @@ def _score_in_batches(candidates, *, word, gloss, thesis, gemini_api_key=None, m
         judged_by.append(run_models.current("judge") if run_models is not None else None)
     if run_models is not None and run_models.current("judge") == model_choice.FLASH:
         for number, judge in enumerate(judged_by):
-            if judge != model_choice.FLASH:
+            if judge != model_choice.FLASH and not isinstance(scores[number], _SafetyBlockedBatch):
                 scores[number] = _score_photo_batch(batches[number], word=word, gloss=gloss, thesis=thesis,
                     gemini_api_key=gemini_api_key, model_name=model_choice.FLASH, strict_errors=strict_errors)
     return [score for batch_scores in scores for score in batch_scores]

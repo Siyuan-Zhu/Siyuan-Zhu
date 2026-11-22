@@ -228,7 +228,10 @@ UNUSABLE = {
 }
 
 
-@pytest.mark.parametrize("reply", list(UNUSABLE.values()), ids=list(UNUSABLE))
+HANDED_OVER = {name: reply for name, reply in UNUSABLE.items() if name != "safety-block"}  # Task F2
+
+
+@pytest.mark.parametrize("reply", list(HANDED_OVER.values()), ids=list(HANDED_OVER))
 def test_unusable_hydrogen_batch_is_scored_once_on_flash(monkeypatch, reply):
     calls = _judge_client(monkeypatch, reply)
     rm = _hydrogen()
