@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ from src.zeitgeist import adk_pipeline as pipeline
 from src.zeitgeist import model_choice as mc
 from src.zeitgeist import photo_recovery
 from src.zeitgeist import spend_guard
+from src.zeitgeist import visual_router as vr
 from src.zeitgeist.adk_pipeline import commission_daily_zeitgeist
 from src.zeitgeist.spend_guard import SpendBlocked
 from tests.test_understanding_pipeline import _clusters, _reply
@@ -101,7 +103,7 @@ class Stop(Exception):
     pass
 
 
-def _live(tmp_path, monkeypatch, replies, *, director=None, recover=None, telemetry=None):
+def _live(tmp_path, monkeypatch, replies, *, director=None, judge=None, recover=None, telemetry=None):
     from src.state_store import InMemoryStateStore
 
     (tmp_path / "config").mkdir()
@@ -113,6 +115,8 @@ def _live(tmp_path, monkeypatch, replies, *, director=None, recover=None, teleme
         monkeypatch.delenv(name, raising=False)
     if director:
         monkeypatch.setenv(mc.DIRECTOR_ENV, director)
+    if judge:
+        monkeypatch.setenv(mc.JUDGE_ENV, judge)
     monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
     client = _client(replies)
@@ -229,3 +233,124 @@ def test_telemetry_model_id_is_director_in_force(tmp_path, monkeypatch, replies,
 
     _live(tmp_path, monkeypatch, replies, director=mc.HYDROGEN, recover=recover, telemetry=telemetry)
     assert seen["model_id"] == expected
+
+
+
+# ---- Task C3: photo critic on the chosen model ----
+
+
+_SCORES = {"semantic_alignment": 0.9, "compositional_clarity": 0.9, "editorial_memorability": 0.9, "safety_pass": True}
+
+
+def _thumb():
+    from PIL import Image
+
+    encoded = BytesIO()
+    Image.new("RGB", (8, 8), (120, 130, 140)).save(encoded, format="JPEG")
+    return encoded.getvalue()
+
+
+def _critic_client(monkeypatch, refuse=None):
+    calls = []
+
+    def generate(*, model, contents, config):
+        calls.append({"model": model, "config": dict(config)})
+        if refuse is not None and model == mc.HYDROGEN:
+            raise _refusal(refuse)
+        batch = any(isinstance(part, str) and "Candidate index" in part for part in contents)
+        return SimpleNamespace(text=json.dumps({"candidates": [dict(_SCORES, index=0)]} if batch else _SCORES),
+                               candidates=[])
+
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setattr("google.genai.Client", lambda **kw: SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr(vr, "guard_genai_client", lambda client, **kw: client)
+    return calls
+
+
+def _single(model_name=mc.FLASH):
+    return vr._score_candidate_with_gemini_vision(_thumb(), "ANCHOR", "Rooted craft", "Physical stability",
+                                                  model_name=model_name)
+
+
+def _batch(model_name=mc.FLASH):
+    return vr._score_photo_batch([{"thumb_bytes": _thumb()}], word="ANCHOR", gloss="Rooted craft",
+                                 thesis="Physical stability", model_name=model_name, strict_errors=True)[0]
+
+
+_LEAVES = pytest.mark.parametrize("leaf", [_single, _batch], ids=["single", "batch"])
+
+
+def test_critic_config_adds_temperature_only_where_sampling_is_supported():
+    assert vr.critic_config("gemini-2.5-flash") == {"response_mime_type": "application/json", "temperature": 0.1}
+    for model in (mc.FLASH, mc.HYDROGEN):
+        assert vr.critic_config(model) == {"response_mime_type": "application/json"}
+
+
+@_LEAVES
+def test_hydrogen_judge_sends_hydrogen_without_temperature(monkeypatch, leaf):
+    calls = _critic_client(monkeypatch)
+    rm = mc.resolve_run_models({}, {mc.JUDGE_ENV: mc.HYDROGEN})
+    with mc.activate(rm):
+        assert leaf()["safety_pass"] is True
+    assert calls == [{"model": mc.HYDROGEN, "config": {"response_mime_type": "application/json"}}]
+    assert not rm.fallback_fired
+
+
+@_LEAVES
+def test_judge_refusal_retries_on_flash_and_moves_the_run_to_flash(monkeypatch, leaf):
+    calls = _critic_client(monkeypatch, refuse=True)
+    rm = mc.resolve_run_models({}, {mc.DIRECTOR_ENV: mc.HYDROGEN, mc.JUDGE_ENV: mc.HYDROGEN})
+    with mc.activate(rm):
+        assert leaf(mc.HYDROGEN)["safety_pass"] is True
+        assert mc.active().current("director") == mc.FLASH
+        assert mc.active().current("judge") == mc.FLASH
+    assert [c["model"] for c in calls] == [mc.HYDROGEN, mc.FLASH]
+    assert all("temperature" not in c["config"] for c in calls)
+    assert rm.fallback_fired and "fallback=1" in mc.model_choice_line(rm, 0)
+
+
+@_LEAVES
+def test_judge_post_dispatch_block_propagates_without_flash_call(monkeypatch, leaf):
+    calls = _critic_client(monkeypatch, refuse=False)
+    rm = mc.resolve_run_models({}, {mc.JUDGE_ENV: mc.HYDROGEN})
+    with mc.activate(rm), pytest.raises(SpendBlocked):
+        leaf(mc.HYDROGEN)
+    assert [c["model"] for c in calls] == [mc.HYDROGEN]
+    assert not rm.fallback_fired and rm.current("judge") == mc.HYDROGEN
+
+
+@_LEAVES
+def test_outside_activate_the_critic_uses_model_name_as_before(monkeypatch, leaf):
+    calls = _critic_client(monkeypatch)
+    assert mc.active() is None
+    leaf("gemini-2.5-flash")
+    assert calls == [{"model": "gemini-2.5-flash", "config": {"response_mime_type": "application/json", "temperature": 0.1}}]
+
+
+def _render_judges(tmp_path, monkeypatch, replies, *, director=None, judge=None):
+    judges = []
+
+    def render(**kwargs):
+        judges.append(kwargs["judge_model"])
+        raise Stop()
+
+    def recover(commission, *, render, **kw):
+        render(commission, photo_only=True)
+
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets", render)
+    _live(tmp_path, monkeypatch, replies, director=director, judge=judge, recover=recover)
+    return judges
+
+
+def test_pipeline_judge_variable_reaches_the_renderer(tmp_path, monkeypatch):
+    assert _render_judges(tmp_path, monkeypatch, [_reply()], judge=mc.HYDROGEN) == [mc.HYDROGEN]
+
+
+def test_pipeline_renderer_judge_follows_director_fallback(tmp_path, monkeypatch):
+    judges = _render_judges(tmp_path, monkeypatch, [_refuse_hydrogen(), _reply()], director=mc.HYDROGEN, judge=mc.HYDROGEN)
+    assert judges == [mc.FLASH]
+
+
+def test_pipeline_renderer_judge_unset_is_flash_as_before(tmp_path, monkeypatch):
+    assert _render_judges(tmp_path, monkeypatch, [_reply()]) == [mc.FLASH]

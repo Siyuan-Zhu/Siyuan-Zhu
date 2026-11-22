@@ -839,7 +839,8 @@ class ZeitgeistADKOrchestrator:
                     requested_medium="photo" if photo_only is True else requested_medium,
                     require_semantic_rescore=bool(owner.get("enabled") and not _offline_demo_enabled(offline_demo)),
                     photo_history_30d=feed_entries,
-                    judge_model=str(config.get("budget_guardrails", {}).get("multimodal_judge_model", "gemini-3.8-flash")),
+                    judge_model=(run_models.current("judge") if genai_client is not None else
+                                 str(config.get("budget_guardrails", {}).get("multimodal_judge_model", "gemini-3.8-flash"))),
                     strict_photo_errors=genai_client is not None,
                     offline_demo=offline_demo is True,
                 )

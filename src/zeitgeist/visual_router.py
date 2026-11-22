@@ -19,7 +19,8 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, quote
 
 from .methodology import WeightedOrbitAnalysis
-from .spend_guard import SpendBlocked, get_spend_guard, guard_genai_client
+from . import model_choice
+from .spend_guard import SpendBlocked, get_spend_guard, guard_genai_client, sampling_controls_supported
 
 
 @dataclass(frozen=True)
@@ -798,6 +799,19 @@ def update_svg_mood_vote_bar(
     return updated_svg
 
 
+def critic_config(model: str) -> Dict[str, Any]:
+    config: Dict[str, Any] = {"response_mime_type": "application/json"}
+    if sampling_controls_supported(model):
+        config["temperature"] = 0.1
+    return config
+
+
+def _critic_call(call: Callable[[str], Any], model_name: str) -> Any:
+    """Inside a run, the judge in force answers and a pre-dispatch refusal moves the run to Flash."""
+    run_models = model_choice.active()
+    return run_models.call("judge", call) if run_models else call(model_name)
+
+
 def _score_candidate_with_gemini_vision(
     thumb_bytes: bytes,
     word: str,
@@ -842,15 +856,9 @@ def _score_candidate_with_gemini_vision(
             "minimalist, non-violent, non-NSFW, and free of watermarks or memes."
         )
         part = types.Part.from_bytes(data=thumb_bytes, mime_type="image/jpeg")
-        request_config = {"response_mime_type": "application/json"}
-        if not model_name.startswith("gemini-3"):
-            request_config["temperature"] = 0.1
+        call = lambda m: client.models.generate_content(model=m, contents=[part, prompt], config=critic_config(m))
         try:
-            resp = client.models.generate_content(
-                model=model_name,
-                contents=[part, prompt],
-                config=request_config,
-            )
+            resp = _critic_call(call, model_name)
         except SpendBlocked:
             raise
         except Exception as model_exc:
@@ -935,10 +943,8 @@ def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, 
             'safety_pass must be a JSON boolean, true only when completely safe, nonviolent, non-NSFW, '
             'minimalist, free of watermarks and memes. Judge semantic fit to the actual commission.')
         client = guard_genai_client(genai.Client(api_key=key), credential_key=key)
-        request_config = {'response_mime_type': 'application/json'}
-        if not model_name.startswith('gemini-3'):
-            request_config['temperature'] = 0.1
-        response = client.models.generate_content(model=model_name, contents=parts, config=request_config)
+        call = lambda m: client.models.generate_content(model=m, contents=parts, config=critic_config(m))
+        response = _critic_call(call, model_name)
         for choice in getattr(response, 'candidates', None) or []:
             reason = getattr(choice, 'finish_reason', '')
             if any(token in str(getattr(reason, 'name', reason)).upper() for token in _SAFETY_BLOCK_FINISH_REASONS):
