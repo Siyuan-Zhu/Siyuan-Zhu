@@ -829,6 +829,8 @@ class ScoredCluster:
     unique_sources_count: int
     commission_score: float
     threshold_used: float = 0.78
+    legacy_s_intra: float = 0.0
+    legacy_commission_score: float = 0.0
 
     @property
     def keywords(self) -> List[str]:
@@ -1006,12 +1008,48 @@ def _compute_silhouette_scores(
     return cluster_silhouettes
 
 
+COHESION_MODES: Tuple[str, ...] = ("legacy", "offdiag")
+
+
+def _cohesion(sub_sim: np.ndarray, mode: str) -> float:
+    """Mean intra-cluster similarity: 'legacy' includes the diagonal, 'offdiag' excludes it."""
+    if mode not in COHESION_MODES:
+        raise ValueError(f"unknown cohesion_mode: {mode!r}")
+    n = int(sub_sim.shape[0])
+    total = float(np.sum(sub_sim))
+    if mode == "legacy":
+        return total / float(n ** 2)
+    if n <= 1:
+        return 0.0
+    return max(0.0, (total - float(np.trace(sub_sim))) / float(n * (n - 1)))
+
+
+def legacy_top_cluster(clusters: Sequence[ScoredCluster]) -> Optional[ScoredCluster]:
+    """Top cluster under the legacy score, regardless of the cohesion mode that ranked the list."""
+    if not clusters:
+        return None
+    return min(
+        clusters,
+        key=lambda c: (
+            -c.legacy_commission_score,
+            -c.w_recent,
+            -c.legacy_s_intra,
+            -c.unique_sources_count,
+            c.cluster_id,
+        ),
+    )
+
+
 def cluster_and_score(
     items: Sequence[Any],
     now_utc: Optional[datetime | str] = None,
     anchored_hashes_14d: Optional[Iterable[str]] = None,
+    *,
+    cohesion_mode: str = "legacy",
 ) -> List[ScoredCluster]:
     """Cluster items via pure-numpy average linkage and rank by Disjoint Surge Velocity & Orbit Resonance."""
+    if cohesion_mode not in COHESION_MODES:
+        raise ValueError(f"unknown cohesion_mode: {cohesion_mode!r}")
     if not items:
         return []
 
@@ -1158,13 +1196,14 @@ def cluster_and_score(
 
         idx_arr = np.asarray(c_indices, dtype=np.int64)
         sub_sim = sim_matrix[np.ix_(idx_arr, idx_arr)]
-        s_intra = float(np.sum(sub_sim)) / float(len(c_indices) ** 2)
+        legacy_s_intra = _cohesion(sub_sim, "legacy")
+        s_intra = _cohesion(sub_sim, cohesion_mode)
 
         unique_sources_sorted = tuple(sorted(all_sources))
         unique_count = len(unique_sources_sorted)
-        commission_score = (
-            velocity * m_orbit * s_intra * math.log(1.0 + float(unique_count))
-        )
+        _log_sources = math.log(1.0 + float(unique_count))
+        commission_score = velocity * m_orbit * s_intra * _log_sources
+        legacy_commission_score = velocity * m_orbit * legacy_s_intra * _log_sources
 
         scored_clusters.append(
             ScoredCluster(
@@ -1182,6 +1221,8 @@ def cluster_and_score(
                 unique_sources_count=unique_count,
                 commission_score=float(commission_score),
                 threshold_used=float(chosen_tau),
+                legacy_s_intra=float(legacy_s_intra),
+                legacy_commission_score=float(legacy_commission_score),
             )
         )
 
@@ -1202,6 +1243,7 @@ def score_and_cluster_signals(
     *,
     now_utc: Optional[datetime | str] = None,
     anchored_hashes_14d: Optional[Iterable[str]] = None,
+    cohesion_mode: str = "legacy",
 ) -> List[ScoredCluster]:
     """Run Stage 1-2 stratified windowing (14d Orbit / 4d Macro) followed by average-linkage clustering."""
     window_items = load_asymmetric_window(
@@ -1213,6 +1255,7 @@ def score_and_cluster_signals(
         items=window_items,
         now_utc=now_utc,
         anchored_hashes_14d=anchored_hashes_14d,
+        cohesion_mode=cohesion_mode,
     )
 
 
