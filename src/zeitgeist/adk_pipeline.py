@@ -678,11 +678,9 @@ class ZeitgeistADKOrchestrator:
         reference_time = _reference_clock(date_iso, now_epoch,
             _offline_demo_enabled(offline_demo) and not _live_collection_enabled(live_collect))
         understanding_v1 = understanding_v1_enabled()
-        score_kwargs: Dict[str, Any] = {"cohesion_mode": "offdiag"} if understanding_v1 else {}
         scored_clusters = score_and_cluster_signals(
             raw_signals,
             now_utc=reference_time,
-            **score_kwargs,
         )
 
         # Extract 30-day word & visual medium history from pulse_feed.json

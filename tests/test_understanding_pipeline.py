@@ -249,14 +249,16 @@ LINE_RE = re.compile(
 def _run_offline(tmp_path, monkeypatch):
     (tmp_path / "config").mkdir()
     (tmp_path / "config/orbit_sources.json").write_text("{}")
-    seen = {"cohesion": [], "bonus": [], "legacy_top": []}
+    seen = {"cohesion": [], "bonus": [], "legacy_top": [], "scored": []}
     real_score = pipeline.score_and_cluster_signals
     real_collect = pipeline.collect_96h_signals
     real_legacy = pipeline.legacy_top_cluster
 
     def score(rows, **kw):
         seen["cohesion"].append(kw.get("cohesion_mode"))
-        return real_score(rows, **kw)
+        out = real_score(rows, **kw)
+        seen["scored"].append(out)
+        return out
 
     def collect(*a, health=None, **kw):
         out = real_collect(*a, health=health, **kw)
@@ -334,7 +336,9 @@ def test_pipeline_public_keywords_off(tmp_path, monkeypatch):
 def test_pipeline_switch_on(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
     seen, staged = _run_offline(tmp_path, monkeypatch)
-    assert seen["cohesion"] == ["offdiag"]
+    assert seen["cohesion"] == [None]
+    assert seen["scored"] and seen["scored"][0]
+    assert all(c.commission_score == c.legacy_commission_score for c in seen["scored"][0])
     assert seen["bonus"] and seen["legacy_top"]
     assert seen["bonus"][0] == list(seen["legacy_top"][0].items)
     lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("[understanding_v1]")]
