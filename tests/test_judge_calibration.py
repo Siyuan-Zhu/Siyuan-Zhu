@@ -138,6 +138,16 @@ def test_matched_marks_refuse_a_match_on_a_zero_judge_score():
     assert jc.matched_marks(flash, judge) == (0.85, 0.61)
 
 
+def test_matched_marks_refuse_a_judge_whose_best_score_is_zero_even_when_flash_passes_none():
+    # Every judge batch blocked (all scores zero) and Flash passes nothing: the floor marks would be invented.
+    flash = _pairs([0.10] * 9, [0.10] * 9)
+    assert jc.matched_marks(flash, _pairs([0.0] * 9, [0.0] * 9)) is None
+    assert jc.matched_marks(flash, _pairs([-0.2] * 9, [-0.1] * 9)) is None
+    # Either axis alone with no score above zero is enough to refuse.
+    assert jc.matched_marks(flash, _pairs([0.0] * 9, [0.60] * 9)) is None
+    assert jc.matched_marks(flash, _pairs([0.60] * 9, [0.0] * 9)) is None
+
+
 def test_matched_marks_need_nine_photos():
     assert jc.matched_marks(FLASH_12[:8], JUDGE_12[:8]) is None
     assert jc.matched_marks([], []) is None

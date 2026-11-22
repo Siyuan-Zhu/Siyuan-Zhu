@@ -25,6 +25,9 @@ def _round_down(value: float) -> float:
 def _matched_mark(flash: Sequence[float], judge: Sequence[float], flash_mark: float) -> Optional[float]:
     passing = sum(score >= flash_mark for score in flash)
     ranked = sorted(judge, reverse=True)
+    if ranked[0] <= 0.0:
+        # The judge scored no photo above zero (every batch blocked, say): there is nothing to match.
+        return None
     if passing and ranked[passing - 1] <= 0.0:
         # The judge scored fewer photos above zero than Flash passes: there is nothing to match.
         return None
@@ -39,8 +42,8 @@ def matched_marks(
     """(meaning, composite) marks that pass as many photos under the judge as pass under Flash today.
 
     Each tuple is (meaning, composite) for the same photo in the same order. None when fewer than
-    MIN_PHOTOS pairs, when the two lists do not pair up, or when on either axis Flash passes k photos but the
-    judge's k-th highest score is zero.
+    MIN_PHOTOS pairs, when the two lists do not pair up, or when on either axis the judge's highest score is
+    zero or less, or Flash passes k photos but the judge's k-th highest score is zero.
     """
     if len(flash_scores) != len(judge_scores) or len(flash_scores) < MIN_PHOTOS:
         return None

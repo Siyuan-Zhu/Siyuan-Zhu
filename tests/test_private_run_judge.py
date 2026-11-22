@@ -293,6 +293,16 @@ def test_no_marks_are_written_when_the_judge_scored_fewer_photos_than_flash_pass
     assert store.saved == [] and result.exit_code == 0
 
 
+def test_no_marks_are_written_when_the_judge_scored_every_photo_zero_and_flash_passes_none(monkeypatch):
+    # Every Hydrogen score is zero and Flash passes nothing: there is nothing to match, so today's marks stay.
+    _world(monkeypatch, flash=[_row(0.10)] * 9, hydrogen=[_row(0.0)] * 9)
+    store = Store()
+    result, line = _measure(store)
+    assert line == ("[judge_calibration] photos=9 flash_pass_meaning=0 flash_pass_composite=0 "
+                    "meaning_min=0.70 composite_min=0.68 written=0")
+    assert store.saved == [] and result.exit_code == 0
+
+
 @pytest.mark.parametrize("per_query, blocked, photos", [(3, (0,), 9), (6, (1,), 18)],
                          ids=["only-batch-blocked", "second-batch-blocked"])
 def test_no_marks_are_written_when_a_flash_batch_fails_closed(monkeypatch, per_query, blocked, photos):
