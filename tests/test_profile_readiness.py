@@ -145,7 +145,7 @@ def test_canary_workflow_mirrors_preflight_job_without_writes():
     assert 'cron: "0 20 * * *"' in text and 'timezone: "America/New_York"' in text
     assert 'workflow_dispatch:' in text and 'group: provider-canary' in text
     assert 'contents: read' in text and 'id-token: write' in text
-    assert 'e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f' in text
+    assert '6657e657bd261d5a76ffd939d16f0dc1b817e847bfa50a3ce1f39881d102cc96' in text
     for forbidden in ('inputs.','upload-artifact','--apply','run_zeitgeist.py','build_readme.py','contents: write'):
         assert forbidden not in text
 
