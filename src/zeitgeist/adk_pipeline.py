@@ -66,7 +66,7 @@ from .visual_router import (
 )
 
 from .spend_guard import SpendBlocked, sampling_controls_supported
-from .model_choice import RunModels, activate, model_choice_line, resolve_run_models
+from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
 
 logger = logging.getLogger(__name__)
@@ -770,7 +770,7 @@ class ZeitgeistADKOrchestrator:
             **commission_kwargs,
         )
         if genai_client is not None:
-            print(model_choice_line(run_models, 0))
+            print(model_choice_line(run_models, commission.slate_count))
         if (os.environ.get("ZEITGEIST_LIVE_LLM") == "1"
                 and not _offline_demo_enabled(offline_demo) and commission.fallback_used):
             raise ValueError("Live Director commissioning unavailable; retain last publication")
@@ -1104,6 +1104,7 @@ class DirectorCommission:
     fallback_used: bool = False
     packet_used: bool = False
     echo_rejections: int = 0
+    slate_count: int = 0
 
     def __post_init__(self) -> None:
         if not self.flux_3_commission_prompts:
@@ -1127,6 +1128,8 @@ class DirectorCommission:
         if not self.packet_used and not self.echo_rejections:
             data.pop("packet_used", None)
             data.pop("echo_rejections", None)
+        if not self.slate_count:
+            data.pop("slate_count", None)
         return data
 
 
@@ -1200,21 +1203,54 @@ def validate_director_commission(
     return True, "valid"
 
 
+def _strip_code_fence(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = [
+            ln
+            for ln in cleaned.splitlines()
+            if not ln.strip().startswith("```")
+        ]
+        cleaned = "\n".join(lines).strip()
+    return cleaned
+
+
+def _take_candidate_slate(raw: Any) -> Tuple[Any, int]:
+    """Pop candidate_words from a director reply; return (reply, count). Never raises.
+
+    The count is the number of well-formed entries, and only when there are 8 to 12 of
+    them; otherwise 0. The words themselves are dropped here and go nowhere else.
+    """
+    try:
+        payload = raw.text if hasattr(raw, "text") and isinstance(raw.text, str) else raw
+        if isinstance(payload, str):
+            data = json.loads(_strip_code_fence(payload))
+        elif isinstance(payload, dict):
+            data = dict(payload)
+        else:
+            return raw, 0
+        if not isinstance(data, dict):
+            return raw, 0
+    except Exception:
+        return raw, 0
+    slate = data.pop("candidate_words", None)
+    count = 0
+    if isinstance(slate, list):
+        count = sum(
+            1 for entry in slate
+            if isinstance(entry, dict)
+            and all(isinstance(entry.get(k), str) and entry.get(k).strip() for k in ("word", "fit"))
+        )
+    return data, count if 8 <= count <= 12 else 0
+
+
 def _coerce_director_commission(raw: Any) -> DirectorCommission:
     if isinstance(raw, DirectorCommission):
         return raw
     if hasattr(raw, "text") and isinstance(raw.text, str):
         raw = raw.text
     if isinstance(raw, str):
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            lines = [
-                ln
-                for ln in cleaned.splitlines()
-                if not ln.strip().startswith("```")
-            ]
-            cleaned = "\n".join(lines).strip()
-        data = json.loads(cleaned)
+        data = json.loads(_strip_code_fence(raw))
     elif isinstance(raw, dict):
         data = raw
     else:
@@ -1259,9 +1295,10 @@ def _build_director_prompt(
     *,
     evidence_packet: bool = False,
     now_utc: Any = None,
+    slate: bool = False,
 ) -> str:
     if evidence_packet:
-        return _build_packet_director_prompt(top_clusters, history_words_30d, rejection_reason, now_utc)
+        return _build_packet_director_prompt(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)
     cluster_summaries: List[str] = []
     for idx, cluster in enumerate(top_clusters[:5]):
         cid = getattr(cluster, "cluster_id", f"cluster_{idx}")
@@ -1305,6 +1342,13 @@ def _build_director_prompt(
     )
 
 
+_SLATE_LINE = (
+    "Before the commission, list 8 to 12 candidate words the evidence supports, each with a one-line note on how "
+    "it fits the evidence, under the key candidate_words as [{\"word\": \"...\", \"fit\": \"...\"}]. "
+    "Then choose one and return the commission keys below."
+)
+
+
 _PACKET_ONLY_REASONS = frozenset(
     {"Echoes source text", "Names a source account", "Names an internal cluster id"}
 )
@@ -1315,6 +1359,8 @@ def _build_packet_director_prompt(
     history_words_30d: Sequence[str],
     rejection_reason: Optional[str],
     now_utc: Any,
+    *,
+    slate: bool = False,
 ) -> str:
     packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc)
     history_block = ", ".join(history_words_30d) if history_words_30d else "None"
@@ -1339,6 +1385,7 @@ def _build_packet_director_prompt(
         f"Top Candidate Clusters:\n{packet}\n"
         "Return JSON with keys: selected_cluster_id (one of the provided cluster IDs), word, gloss, commissioned_thesis, visual_anchor, "
         "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
+        + ("\n" + _SLATE_LINE if slate else "")
     )
 
 
@@ -1464,6 +1511,7 @@ def commission_daily_zeitgeist(
                     last_rejection_reason = None
                     gloss_rejected = False
             prompt = None
+            slate_prompt = None
             if use_packet:
                 try:
                     prompt = _build_director_prompt(
@@ -1473,6 +1521,15 @@ def commission_daily_zeitgeist(
                         evidence_packet=True,
                         now_utc=now_utc,
                     )
+                    if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
+                        slate_prompt = _build_director_prompt(
+                            top_clusters=top_clusters[:5],
+                            history_words_30d=history_list,
+                            rejection_reason=last_rejection_reason,
+                            evidence_packet=True,
+                            now_utc=now_utc,
+                            slate=True,
+                        )
                 except Exception:
                     packet_phase_over = True
                     continue
@@ -1491,6 +1548,7 @@ def commission_daily_zeitgeist(
                     "visual_anchor, three specific photographic search queries and the image prompt around those meanings "
                     "and the personal note. Do not retain imagery for a different daily word. Never render text in the photograph."
                 )
+            slate_sent = False
             try:
                 if llm_callable is not None:
                     sig = inspect.signature(llm_callable)
@@ -1500,7 +1558,9 @@ def commission_daily_zeitgeist(
                         raw_resp = llm_callable(prompt)
                 elif run_models is not None:
                     def prompt_for(model: str, prompt: str = prompt) -> str:
-                        return prompt
+                        nonlocal slate_sent
+                        slate_sent = slate_prompt is not None and model == HYDROGEN
+                        return slate_prompt if slate_sent else prompt
 
                     raw_resp = run_models.call("director", lambda m: genai_client.models.generate_content(
                         model=m, contents=prompt_for(m), config=_director_config(m, temperature)))
@@ -1510,6 +1570,9 @@ def commission_daily_zeitgeist(
                         config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
                                 {"temperature": temperature, "response_mime_type": "application/json"}),
                     )
+                slate_count = 0
+                if slate_sent:
+                    raw_resp, slate_count = _take_candidate_slate(raw_resp)
                 commission = _coerce_director_commission(raw_resp)
             except SpendBlocked:
                 raise
@@ -1549,6 +1612,7 @@ def commission_daily_zeitgeist(
                 commission.fallback_used = False
                 commission.packet_used = use_packet
                 commission.echo_rejections = echo_rejections
+                commission.slate_count = slate_count
                 return commission
 
             last_rejection_reason = reason

@@ -103,7 +103,8 @@ class Stop(Exception):
     pass
 
 
-def _live(tmp_path, monkeypatch, replies, *, director=None, judge=None, recover=None, telemetry=None):
+def _live(tmp_path, monkeypatch, replies, *, director=None, judge=None, recover=None, telemetry=None,
+          understanding=False):
     from src.state_store import InMemoryStateStore
 
     (tmp_path / "config").mkdir()
@@ -115,6 +116,8 @@ def _live(tmp_path, monkeypatch, replies, *, director=None, judge=None, recover=
         monkeypatch.delenv(name, raising=False)
     if director:
         monkeypatch.setenv(mc.DIRECTOR_ENV, director)
+    if understanding:
+        monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
     if judge:
         monkeypatch.setenv(mc.JUDGE_ENV, judge)
     monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
@@ -354,3 +357,171 @@ def test_pipeline_renderer_judge_follows_director_fallback(tmp_path, monkeypatch
 
 def test_pipeline_renderer_judge_unset_is_flash_as_before(tmp_path, monkeypatch):
     assert _render_judges(tmp_path, monkeypatch, [_reply()]) == [mc.FLASH]
+
+
+
+# ---- Task C4: candidate-word slate on Hydrogen packet attempts ----
+
+
+SLATE_LINE = (
+    "Before the commission, list 8 to 12 candidate words the evidence supports, each with a one-line note on how "
+    "it fits the evidence, under the key candidate_words as [{\"word\": \"...\", \"fit\": \"...\"}]. "
+    "Then choose one and return the commission keys below."
+)
+NOW = "2026-11-21T12:00:00Z"
+HISTORY = ["Entropy", "Tessellation"]
+# sha256 of the Stage 0 packet prompt for these synthetic clusters, taken before Task C4.
+STAGE0_PACKET_SHA256 = "b4989b0b8b7098a9989f2f80d3b8cdc8012f4cb0b40d30ab94fecf9e676ad2f4"
+
+
+def _slate(n, start=0):
+    return [{"word": f"Zqcand{i}", "fit": f"synthetic fit {i}"} for i in range(start, start + n)]
+
+
+def _slate_reply(slate):
+    return _reply(candidate_words=slate)
+
+
+def _packet_run(replies, director=None):
+    client = _client(replies)
+    env = {mc.DIRECTOR_ENV: director} if director else {}
+    rm = mc.resolve_run_models({}, env)
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, genai_client=client, run_models=rm,
+                                            evidence_packet=True, now_utc=NOW)
+    return commission, client.models.calls, rm
+
+
+def _stage0_packet_prompt():
+    return pipeline._build_director_prompt(_clusters()[:5], HISTORY, None, evidence_packet=True, now_utc=NOW)
+
+
+def test_stage0_packet_prompt_is_unchanged():
+    import hashlib
+
+    assert hashlib.sha256(_stage0_packet_prompt().encode()).hexdigest() == STAGE0_PACKET_SHA256
+
+
+def test_hydrogen_packet_prompt_ends_with_slate_line_and_legacy_attempt_does_not():
+    commission, calls, _ = _packet_run(["not json", "not json", _reply()], director=mc.HYDROGEN)
+    assert [c["model"] for c in calls] == [mc.HYDROGEN] * 3
+    assert calls[0]["contents"] == _stage0_packet_prompt() + "\n" + SLATE_LINE
+    assert calls[1]["contents"].endswith("\n" + SLATE_LINE)
+    assert "most telling of the day's climate" in calls[1]["contents"]
+    assert "most compelling" in calls[2]["contents"] and SLATE_LINE not in calls[2]["contents"]
+    assert "candidate_words" not in calls[2]["contents"]
+    assert not commission.packet_used and commission.slate_count == 0
+
+
+def test_flash_packet_prompt_is_stage0_byte_for_byte():
+    commission, calls, _ = _packet_run([_reply()])
+    assert [c["model"] for c in calls] == [mc.FLASH]
+    assert calls[0]["contents"] == _stage0_packet_prompt()
+    assert "candidate_words" not in calls[0]["contents"]
+    assert commission.packet_used and commission.slate_count == 0
+
+
+def test_ten_entry_slate_is_counted_and_kept_out_of_state_and_line(capsys):
+    commission, calls, rm = _packet_run([_slate_reply(_slate(10))], director=mc.HYDROGEN)
+    assert commission.slate_count == 10 and commission.packet_used and not commission.fallback_used
+    assert commission.word == "Selvedge"
+    stored = json.dumps(commission.to_dict())
+    line = mc.model_choice_line(rm, commission.slate_count)
+    assert line.endswith(" slate=10")
+    for entry in _slate(10):
+        assert entry["word"] not in stored and entry["fit"] not in stored and entry["word"] not in line
+    assert "candidate_words" not in stored
+    assert "Zqcand" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("slate, expected", [
+    (_slate(7), 0),
+    (_slate(8), 8),
+    (_slate(12), 12),
+    (_slate(13), 0),
+    (_slate(9) + [{"word": "", "fit": "x"}, {"word": "Zqcandz", "fit": 3}, "Zqcandq"], 9),
+    (_slate(7) + [{"word": " ", "fit": "x"}, {"fit": "x"}], 0),
+    ("Zqcand0, Zqcand1", 0),
+    ({"word": "Zqcand0", "fit": "x"}, 0),
+    (None, 0),
+], ids=["seven", "eight", "twelve", "thirteen", "valid-nine-of-twelve", "valid-seven-of-nine",
+        "string", "dict", "null"])
+def test_slate_count_bounds_and_malformed_slates_never_reject(slate, expected):
+    commission, calls, _ = _packet_run([_slate_reply(slate)], director=mc.HYDROGEN)
+    assert len(calls) == 1
+    assert commission.slate_count == expected
+    assert commission.word == "Selvedge" and commission.packet_used and not commission.fallback_used
+    assert "Zqcand" not in json.dumps(commission.to_dict())
+
+
+def test_missing_slate_is_accepted_with_zero_count():
+    commission, calls, _ = _packet_run([_reply()], director=mc.HYDROGEN)
+    assert len(calls) == 1 and commission.slate_count == 0 and not commission.fallback_used
+    assert "slate_count" not in commission.to_dict()
+
+
+def test_fenced_hydrogen_reply_still_counts_the_slate():
+    fenced = "```json\n" + _slate_reply(_slate(9)) + "\n```"
+    commission, _, _ = _packet_run([fenced], director=mc.HYDROGEN)
+    assert commission.slate_count == 9 and commission.word == "Selvedge"
+
+
+def test_seven_entries_on_rejected_then_accepted_attempt_keep_count_of_accepted_reply():
+    replies = [_slate_reply(_slate(10)).replace("Selvedge", "Entropy"), _slate_reply(_slate(7))]
+    commission, calls, _ = _packet_run(replies, director=mc.HYDROGEN)
+    assert len(calls) == 2 and commission.slate_count == 0 and commission.attempts_used == 2
+
+
+def test_no_slate_after_mid_run_fallback_to_flash():
+    commission, calls, rm = _packet_run([_refuse_hydrogen(), "not json", _slate_reply(_slate(10))],
+                                        director=mc.HYDROGEN)
+    assert [c["model"] for c in calls] == [mc.HYDROGEN, mc.FLASH, mc.FLASH]
+    assert calls[0]["contents"].endswith(SLATE_LINE)
+    assert calls[1]["contents"] == _stage0_packet_prompt()
+    assert "candidate_words" not in calls[2]["contents"]
+    assert rm.fallback_fired and commission.slate_count == 0
+    assert "Zqcand" not in json.dumps(commission.to_dict())
+
+
+def test_flash_reply_carrying_a_slate_is_not_counted():
+    commission, _, _ = _packet_run([_slate_reply(_slate(10))])
+    assert commission.slate_count == 0 and commission.word == "Selvedge"
+    assert "Zqcand" not in json.dumps(commission.to_dict())
+
+
+def test_slate_never_requested_without_the_packet_or_on_the_llm_callable_path():
+    client = _client([_reply()])
+    rm = mc.resolve_run_models({}, {mc.DIRECTOR_ENV: mc.HYDROGEN})
+    commission_daily_zeitgeist(_clusters(), HISTORY, genai_client=client, run_models=rm)
+    assert "candidate_words" not in client.models.calls[0]["contents"]
+    prompts = []
+    commission_daily_zeitgeist(_clusters(), HISTORY, evidence_packet=True, now_utc=NOW,
+                               llm_callable=lambda p: prompts.append(p) or _reply())
+    assert prompts and "candidate_words" not in prompts[0]
+
+
+def test_pipeline_line_reports_slate_count_and_hides_the_words(tmp_path, monkeypatch, capsys):
+    seen = []
+
+    def recover(commission, **kw):
+        seen.append(commission)
+        raise Stop()
+
+    client, _ = _live(tmp_path, monkeypatch, [_slate_reply(_slate(11))], director=mc.HYDROGEN,
+                      recover=recover, understanding=True)
+    assert client.models.calls[0]["contents"].endswith("\n" + SLATE_LINE)
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if ln.startswith("[model_choice]")]
+    assert lines == [
+        "[model_choice] director=gemini-4-hydrogen judge=gemini-3.8-flash embedding=gemini-embedding-001 "
+        "fallback=0 unrecognized=0 slate=11"
+    ]
+    assert "Zqcand" not in out and "synthetic fit" not in out
+    assert seen[0].slate_count == 11
+    stored = json.dumps(seen[0].to_dict())
+    assert "Zqcand" not in stored and "synthetic fit" not in stored and "candidate_words" not in stored
+
+
+def test_pipeline_flash_packet_line_reports_zero(tmp_path, monkeypatch, capsys):
+    client, _ = _live(tmp_path, monkeypatch, [_slate_reply(_slate(10))], understanding=True)
+    assert "candidate_words" not in client.models.calls[0]["contents"]
+    assert _lines(capsys)[0].endswith(" slate=0")
