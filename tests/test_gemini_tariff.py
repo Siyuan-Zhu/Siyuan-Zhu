@@ -177,6 +177,21 @@ def _from(page,anchor,change):
     lambda s:s.replace('Output price (including thinking tokens)','Output price'),
     lambda s:_from(s,'## Gemini 3.8 Flash',lambda t:t.replace('{% /table %}','',1)),
     lambda s:_from(s,'## Gemini 3.8 Flash',lambda t:t.replace('* Input price','* Unexpected fee',1)),
+    lambda s:_from(s,'## Gemini 3.8 Flash',lambda t:t.replace('* Used to improve our products','* Used to improve our products{% sup %}*{% /sup %}',1)),
+    lambda s:s.replace('gemini-embedding-001','wrong-model'),
+    lambda s:s+ s,
+])
+def test_markdoc_unknown_missing_malformed_never_infers_free(change):
+    with pytest.raises(SpendBlocked): normalize_gemini_tariff(change(markdoc()))
+
+
+def _assert_only_left_out(contract, reference, operation, section):
+    assert operation not in contract['operations'] and section not in contract['standard_conditions']
+    for kept in ('generate_content:gemini-3.8-flash', 'embed_content:gemini-embedding-001'):
+        assert contract['operations'][kept] == reference['operations'][kept]
+
+
+@pytest.mark.parametrize('change', [
     lambda s:_from(s,'## Gemini 4 Hydrogen',lambda t:t.replace('{% /table %}','',1)),
     lambda s:_from(s,'## Gemini 4 Hydrogen',lambda t:t.replace('* Input price','* Unexpected fee',1)),
     lambda s:_from(s,'## Gemini 4 Hydrogen',lambda t:t.replace('* \u00241.50\n','* \u00241.50, prompts <= 200k tokens\n',1)),
@@ -184,12 +199,10 @@ def _from(page,anchor,change):
     lambda s:_from(s,'## Gemini 4 Hydrogen',lambda t:t.replace('* Free of charge','* Free of charge{% sup %}*{% /sup %}',1)),
     lambda s:_from(s,'## Gemini 4 Hydrogen',lambda t:t.replace('* [No](/docs/terms)','* [No](/docs/terms){% sup %}*{% /sup %}',1)),
     lambda s:_from(s,'## Gemini 4 Hydrogen',lambda t:t.replace('* Context caching price','* Context caching price{% sup %}*{% /sup %}',1)),
-    lambda s:_from(s,'## Gemini 3.8 Flash',lambda t:t.replace('* Used to improve our products','* Used to improve our products{% sup %}*{% /sup %}',1)),
-    lambda s:s.replace('gemini-embedding-001','wrong-model'),
-    lambda s:s+ s,
 ])
-def test_markdoc_unknown_missing_malformed_never_infers_free(change):
-    with pytest.raises(SpendBlocked): normalize_gemini_tariff(change(markdoc()))
+def test_markdoc_hydrogen_section_trouble_leaves_only_hydrogen_out(change):
+    _assert_only_left_out(normalize_gemini_tariff(change(markdoc())), normalize_gemini_tariff(markdoc()),
+                          'generate_content:gemini-4-hydrogen', 'gemini-4-hydrogen')
 
 
 @pytest.mark.parametrize('kind', ['text/plain; charset=utf-8', 'text/markdown; charset=utf-8'])
@@ -270,9 +283,14 @@ def _hydrogen_rows(**changes):
     lambda:fixture(hydrogen=hydrogen_section()*2),
     lambda:fixture(hydrogen=hydrogen_section(_hydrogen_rows(**{'Input price':'Free of charge'}))),
     lambda:fixture(hydrogen=hydrogen_section([('Output price' if label.startswith('Output price') else label,value) for label,value in HYDROGEN_ROWS])),
+    lambda:fixture(hydrogen=hydrogen_section().replace('<h3>Standard</h3>','<h3>Standard</h3>'+table([('Input price','\u00240.01')]),1)),
+    lambda:fixture(hydrogen=hydrogen_section().replace('<table class="pricing-table">','<table>',1)),
+    lambda:fixture(hydrogen=hydrogen_section().replace('</table>','',1)),
+    lambda:fixture(hydrogen=hydrogen_section().replace('<td>Input price</td>','<td>Input price<td>nested</td></td>',1)),
 ])
-def test_unreviewed_hydrogen_forms_reject(body):
-    with pytest.raises(SpendBlocked):normalize_gemini_tariff(body())
+def test_unreviewed_hydrogen_forms_are_left_out(body):
+    _assert_only_left_out(normalize_gemini_tariff(body()), normalize_gemini_tariff(fixture()),
+                          'generate_content:gemini-4-hydrogen', 'gemini-4-hydrogen')
 
 
 def test_embedding_2_text_rate():
@@ -293,5 +311,6 @@ def _embedding_2_rows(**changes):
     lambda:fixture(embedding_2=embedding_2_section(EMBEDDING_2_ROWS+[('Mandatory request fee','\u00240.01')])),
     lambda:fixture(embedding_2=embedding_2_section(code='gemini-embedding-2-preview')),
 ])
-def test_unreviewed_embedding_2_forms_reject(body):
-    with pytest.raises(SpendBlocked):normalize_gemini_tariff(body())
+def test_unreviewed_embedding_2_forms_are_left_out(body):
+    _assert_only_left_out(normalize_gemini_tariff(body()), normalize_gemini_tariff(fixture()),
+                          'embed_content:gemini-embedding-2', 'gemini-embedding-2')
