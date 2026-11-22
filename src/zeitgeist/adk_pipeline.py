@@ -65,7 +65,8 @@ from .visual_router import (
     select_and_render_pulse_assets,
 )
 
-from .spend_guard import SpendBlocked
+from .spend_guard import SpendBlocked, sampling_controls_supported
+from .model_choice import RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
 
 logger = logging.getLogger(__name__)
@@ -638,10 +639,28 @@ class ZeitgeistADKOrchestrator:
         offline_demo: bool | None = None,
     ) -> Tuple[WeightedOrbitAnalysis, VisualDecision, ADKRunTelemetry]:
         """Execute 96h signal collection -> clustering -> Editorial Director -> Visual Critic & Renderer."""
+        config = load_orbit_config(self.config_path)
+        run_models = resolve_run_models(config)
+        with activate(run_models):
+            return self._run_staged_on_models(
+                config, run_models, date_iso, prefer_visual_mode,
+                live_collect=live_collect, now_epoch=now_epoch, offline_demo=offline_demo,
+            )
+
+    def _run_staged_on_models(
+        self,
+        config: dict,
+        run_models: RunModels,
+        date_iso: str | None,
+        prefer_visual_mode: Optional[str],
+        *,
+        live_collect: Optional[bool],
+        now_epoch: float | None,
+        offline_demo: bool | None,
+    ) -> Tuple[WeightedOrbitAnalysis, VisualDecision, ADKRunTelemetry]:
         from src.state_store import get_state_store
 
         date_iso = str(date_iso or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
-        config = load_orbit_config(self.config_path)
         owner = dict(config.get("active_interjection") or {})
         if prefer_visual_mode is not None:
             owner.update(enabled=True, override_visual_mode=prefer_visual_mode)
@@ -747,8 +766,11 @@ class ZeitgeistADKOrchestrator:
             genai_client=genai_client,
             owner_override=owner,
             model_name=str(config.get("budget_guardrails", {}).get("primary_text_model", "gemini-3.8-flash")),
+            run_models=run_models,
             **commission_kwargs,
         )
+        if genai_client is not None:
+            print(model_choice_line(run_models, 0))
         if (os.environ.get("ZEITGEIST_LIVE_LLM") == "1"
                 and not _offline_demo_enabled(offline_demo) and commission.fallback_used):
             raise ValueError("Live Director commissioning unavailable; retain last publication")
@@ -841,8 +863,8 @@ class ZeitgeistADKOrchestrator:
                 locks = revision_owner_constraints(owner, current, change_word=change_word)
                 revised = commission_daily_zeitgeist(selected,
                     history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
-                    genai_client=genai_client, model_name=str(config.get("budget_guardrails",{}).get("primary_text_model","gemini-3.8-flash")),
-                    max_retries=0, owner_override=locks)
+                    genai_client=genai_client, model_name=run_models.current("director"),
+                    run_models=run_models, max_retries=0, owner_override=locks)
                 if revised.fallback_used or revised.selected_cluster_id!=current.selected_cluster_id:
                     raise ValueError("Same-story photo recovery did not produce a grounded commission")
                 return revised
@@ -894,7 +916,7 @@ class ZeitgeistADKOrchestrator:
         telemetry = ADKRunTelemetry(
             timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             adk_mode=adk_mode,
-            model_id=str(guardrails.get("primary_text_model", "gemini-3.8-flash")),
+            model_id=run_models.current("director"),
             estimated_input_tokens=est_in_tokens,
             estimated_output_tokens=est_out_tokens,
             estimated_monthly_cost_index=monthly_cost_index,
@@ -1393,6 +1415,13 @@ def _deterministic_fallback_commission(
     )
 
 
+def _director_config(model: str, temperature: float) -> Dict[str, Any]:
+    config: Dict[str, Any] = {"response_mime_type": "application/json"}
+    if sampling_controls_supported(model):
+        config["temperature"] = temperature
+    return config
+
+
 def commission_daily_zeitgeist(
     top_clusters: Sequence[Any],
     history_words_30d: Optional[Iterable[str]] = None,
@@ -1405,6 +1434,7 @@ def commission_daily_zeitgeist(
     owner_override: dict | None = None,
     evidence_packet: bool = False,
     now_utc: Any = None,
+    run_models: Optional[RunModels] = None,
 ) -> DirectorCommission:
     """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3)."""
     owner = validate_owner_interjection(owner_override or {})
@@ -1467,6 +1497,12 @@ def commission_daily_zeitgeist(
                         raw_resp = llm_callable(prompt, temperature)
                     else:
                         raw_resp = llm_callable(prompt)
+                elif run_models is not None:
+                    def prompt_for(model: str, prompt: str = prompt) -> str:
+                        return prompt
+
+                    raw_resp = run_models.call("director", lambda m: genai_client.models.generate_content(
+                        model=m, contents=prompt_for(m), config=_director_config(m, temperature)))
                 else:
                     raw_resp = genai_client.models.generate_content(
                         model=model_name, contents=prompt,
