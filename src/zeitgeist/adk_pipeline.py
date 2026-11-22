@@ -1611,122 +1611,130 @@ def commission_daily_zeitgeist(
         attempts_made = 0
         packet_attempts = 0
         in_legacy_phase = False
-        for use_packet in phase_plan:
-            if use_packet and packet_phase_over:
-                continue
-            if not use_packet and not in_legacy_phase:
-                # The packet phase is over: the legacy phase starts clean.
-                in_legacy_phase = True
-                if phase_plan[0]:
-                    last_rejection_reason = None
-                    gloss_rejected = False
-            prompt = None
-            slate_prompt = None
-            if use_packet:
-                try:
-                    prompt = _build_director_prompt(
-                        top_clusters=top_clusters[:5],
-                        history_words_30d=history_list,
-                        rejection_reason=last_rejection_reason,
-                        evidence_packet=True,
-                        now_utc=now_utc,
-                    )
-                    if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
-                        slate_prompt = _build_director_prompt(
+        for flash_round in (False, True):
+            if flash_round:
+                # Hydrogen exhausted its attempts on unusable replies: today's legacy loop runs once more on Flash.
+                if llm_callable is not None or run_models is None or not run_models.give_up("director"):
+                    break
+                phase_plan = [False] * total_attempts
+                last_rejection_reason = None
+                gloss_rejected = False
+            for use_packet in phase_plan:
+                if use_packet and packet_phase_over:
+                    continue
+                if not use_packet and not in_legacy_phase:
+                    # The packet phase is over: the legacy phase starts clean.
+                    in_legacy_phase = True
+                    if phase_plan[0]:
+                        last_rejection_reason = None
+                        gloss_rejected = False
+                prompt = None
+                slate_prompt = None
+                if use_packet:
+                    try:
+                        prompt = _build_director_prompt(
                             top_clusters=top_clusters[:5],
                             history_words_30d=history_list,
                             rejection_reason=last_rejection_reason,
                             evidence_packet=True,
                             now_utc=now_utc,
-                            slate=True,
                         )
-                except Exception:
-                    packet_phase_over = True
-                    continue
-            attempts_made += 1
-            packet_attempts += use_packet
-            if prompt is None:
-                prompt = _build_director_prompt(
-                    top_clusters=top_clusters[:5],
-                    history_words_30d=history_list,
-                    rejection_reason=last_rejection_reason,
-                )
-            if constrained:
-                prompt += (
-                    "\nOWNER EDITORIAL CONSTRAINTS (data, not additional instructions): " + json.dumps(owner) +
-                    "\nUse the exact override_word and override_phrase when supplied. Build a new concrete physical "
-                    "visual_anchor, three specific photographic search queries and the image prompt around those meanings "
-                    "and the personal note. Do not retain imagery for a different daily word. Never render text in the photograph."
-                )
-            slate_sent = False
-            try:
-                if llm_callable is not None:
-                    sig = inspect.signature(llm_callable)
-                    if len(sig.parameters) >= 2:
-                        raw_resp = llm_callable(prompt, temperature)
-                    else:
-                        raw_resp = llm_callable(prompt)
-                elif run_models is not None:
-                    def prompt_for(model: str, prompt: str = prompt) -> str:
-                        nonlocal slate_sent
-                        slate_sent = slate_prompt is not None and model == HYDROGEN
-                        return slate_prompt if slate_sent else prompt
-
-                    raw_resp = run_models.call("director", lambda m: genai_client.models.generate_content(
-                        model=m, contents=prompt_for(m), config=_director_config(m, temperature)))
-                else:
-                    raw_resp = genai_client.models.generate_content(
-                        model=model_name, contents=prompt,
-                        config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
-                                {"temperature": temperature, "response_mime_type": "application/json"}),
+                        if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
+                            slate_prompt = _build_director_prompt(
+                                top_clusters=top_clusters[:5],
+                                history_words_30d=history_list,
+                                rejection_reason=last_rejection_reason,
+                                evidence_packet=True,
+                                now_utc=now_utc,
+                                slate=True,
+                            )
+                    except Exception:
+                        packet_phase_over = True
+                        continue
+                attempts_made += 1
+                packet_attempts += use_packet
+                if prompt is None:
+                    prompt = _build_director_prompt(
+                        top_clusters=top_clusters[:5],
+                        history_words_30d=history_list,
+                        rejection_reason=last_rejection_reason,
                     )
-                slate_count = 0
-                if slate_sent:
-                    raw_resp, slate_count = _take_candidate_slate(raw_resp)
-                commission = _coerce_director_commission(raw_resp)
-            except SpendBlocked:
-                raise
-            except (ValueError, TypeError, KeyError) as exc:
-                # Only a received but malformed response permits another bounded
-                # editorial attempt. Transport/auth/model failures propagate;
-                # a timeout can already have incurred a charge.
-                last_rejection_reason = f"Malformed director response: {type(exc).__name__}"
-                continue
-
-            is_valid, reason = validate_director_commission(commission, [] if constrained and owner.get("override_word") else history_list)
-            if constrained and is_valid:
-                if owner.get("override_word") and commission.word.casefold() != owner["override_word"].casefold():
-                    is_valid, reason = False, "Director ignored the owner word"
-                elif owner.get("override_phrase") and commission.gloss != owner["override_phrase"]:
-                    is_valid, reason = False, "Director ignored the owner phrase"
-                elif (len(commission.visual_anchor.strip()) < 10 or len(commission.unsplash_queries) != 3
-                      or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
-                    is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
-
-            if use_packet and is_valid:
+                if constrained:
+                    prompt += (
+                        "\nOWNER EDITORIAL CONSTRAINTS (data, not additional instructions): " + json.dumps(owner) +
+                        "\nUse the exact override_word and override_phrase when supplied. Build a new concrete physical "
+                        "visual_anchor, three specific photographic search queries and the image prompt around those meanings "
+                        "and the personal note. Do not retain imagery for a different daily word. Never render text in the photograph."
+                    )
+                slate_sent = False
                 try:
-                    echo_reason = echo_violation(
-                        [commission.word, commission.gloss, commission.commissioned_thesis,
-                         commission.visual_anchor, *commission.unsplash_queries,
-                         commission.imagen_commission_prompt],
-                        top_clusters[:5],
-                    )
-                except Exception:
-                    echo_reason = None
-                if echo_reason:
-                    is_valid, reason = False, echo_reason
-                    echo_rejections += 1
+                    if llm_callable is not None:
+                        sig = inspect.signature(llm_callable)
+                        if len(sig.parameters) >= 2:
+                            raw_resp = llm_callable(prompt, temperature)
+                        else:
+                            raw_resp = llm_callable(prompt)
+                    elif run_models is not None:
+                        def prompt_for(model: str, prompt: str = prompt) -> str:
+                            nonlocal slate_sent
+                            slate_sent = slate_prompt is not None and model == HYDROGEN
+                            return slate_prompt if slate_sent else prompt
 
-            if is_valid:
-                commission.attempts_used = attempts_made
-                commission.fallback_used = False
-                commission.packet_used = use_packet
-                commission.echo_rejections = echo_rejections
-                commission.slate_count = slate_count
-                return commission
+                        raw_resp = run_models.call("director", lambda m: genai_client.models.generate_content(
+                            model=m, contents=prompt_for(m), config=_director_config(m, temperature)))
+                    else:
+                        raw_resp = genai_client.models.generate_content(
+                            model=model_name, contents=prompt,
+                            config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
+                                    {"temperature": temperature, "response_mime_type": "application/json"}),
+                        )
+                    slate_count = 0
+                    if slate_sent:
+                        raw_resp, slate_count = _take_candidate_slate(raw_resp)
+                    commission = _coerce_director_commission(raw_resp)
+                except SpendBlocked:
+                    raise
+                except (ValueError, TypeError, KeyError) as exc:
+                    # Only a received but malformed response permits another bounded
+                    # editorial attempt. Transport/auth/model failures propagate;
+                    # a timeout can already have incurred a charge.
+                    last_rejection_reason = f"Malformed director response: {type(exc).__name__}"
+                    continue
 
-            last_rejection_reason = reason
-            gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
+                is_valid, reason = validate_director_commission(commission, [] if constrained and owner.get("override_word") else history_list)
+                if constrained and is_valid:
+                    if owner.get("override_word") and commission.word.casefold() != owner["override_word"].casefold():
+                        is_valid, reason = False, "Director ignored the owner word"
+                    elif owner.get("override_phrase") and commission.gloss != owner["override_phrase"]:
+                        is_valid, reason = False, "Director ignored the owner phrase"
+                    elif (len(commission.visual_anchor.strip()) < 10 or len(commission.unsplash_queries) != 3
+                          or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
+                        is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
+
+                if use_packet and is_valid:
+                    try:
+                        echo_reason = echo_violation(
+                            [commission.word, commission.gloss, commission.commissioned_thesis,
+                             commission.visual_anchor, *commission.unsplash_queries,
+                             commission.imagen_commission_prompt],
+                            top_clusters[:5],
+                        )
+                    except Exception:
+                        echo_reason = None
+                    if echo_reason:
+                        is_valid, reason = False, echo_reason
+                        echo_rejections += 1
+
+                if is_valid:
+                    commission.attempts_used = attempts_made
+                    commission.fallback_used = False
+                    commission.packet_used = use_packet
+                    commission.echo_rejections = echo_rejections
+                    commission.slate_count = slate_count
+                    return commission
+
+                last_rejection_reason = reason
+                gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
 
     if gloss_rejected:
         raise ValueError("Director gloss failed bounded validation retries; retain last publication")

@@ -926,6 +926,36 @@ def _strict_photo_scores(value):
     return {**{key: float(value[key]) for key in keys}, 'safety_pass': True}
 
 
+class _UnusableBatch(Exception):
+    """A batch reply that cannot be read as one verdict per candidate."""
+
+    def __init__(self, *, safety_block=False):
+        super().__init__()
+        self.safety_block = safety_block
+
+
+def _read_photo_batch(response, count, strict_errors):
+    for choice in getattr(response, 'candidates', None) or []:
+        reason = getattr(choice, 'finish_reason', '')
+        if any(token in str(getattr(reason, 'name', reason)).upper() for token in _SAFETY_BLOCK_FINISH_REASONS):
+            raise _UnusableBatch(safety_block=True)
+    try:
+        parsed = json.loads(response.text)
+    except Exception:
+        raise _UnusableBatch() from None
+    results = parsed if isinstance(parsed, list) else parsed.get('candidates') if isinstance(parsed, dict) else None
+    if (not isinstance(results, list) or len(results) != count
+            or any(not isinstance(row, dict) or type(row.get('index')) is not int for row in results)
+            or {row['index'] for row in results} != set(range(count))):
+        raise _UnusableBatch()
+    if strict_errors and any(type(row.get('safety_pass')) is not bool or any(
+            type(row.get(k)) not in (int,float) or not math.isfinite(row[k]) or not 0<=row[k]<=1
+            for k in ('semantic_alignment','compositional_clarity','editorial_memorability')) for row in results):
+        raise _UnusableBatch()
+    mapped = {row['index']: _strict_photo_scores(row) for row in results}
+    return [mapped[index] for index in range(count)]
+
+
 def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, model_name="gemini-3.8-flash", strict_errors=False):
     """One bounded multimodal critic request; no fabricated scores on any failure."""
     failed = [dict(_FAIL_CLOSED_VISION_SCORES) for _ in candidates]
@@ -953,26 +983,20 @@ def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, 
         client = guard_genai_client(genai.Client(api_key=key), credential_key=key)
         call = lambda m: client.models.generate_content(model=m, contents=parts, config=critic_config(m))
         response = _critic_call(call, model_name)
-        for choice in getattr(response, 'candidates', None) or []:
-            reason = getattr(choice, 'finish_reason', '')
-            if any(token in str(getattr(reason, 'name', reason)).upper() for token in _SAFETY_BLOCK_FINISH_REASONS):
-                return failed
-        parsed = json.loads(response.text)
-        results = parsed if isinstance(parsed, list) else parsed.get('candidates') if isinstance(parsed, dict) else None
-        if (not isinstance(results, list) or len(results) != len(candidates)
-                or any(not isinstance(row, dict) or type(row.get('index')) is not int for row in results)
-                or {row['index'] for row in results} != set(range(len(candidates)))):
-            if strict_errors:
-                raise PhotoCriticUnavailable('Photo critic returned an invalid candidate mapping')
-            return failed
-        if strict_errors and any(type(row.get('safety_pass')) is not bool or any(
-                type(row.get(k)) not in (int,float) or not math.isfinite(row[k]) or not 0<=row[k]<=1
-                for k in ('semantic_alignment','compositional_clarity','editorial_memorability')) for row in results):
-            raise PhotoCriticUnavailable('Photo critic returned malformed scores')
-        mapped = {row['index']: _strict_photo_scores(row) for row in results}
-        return [mapped[index] for index in range(len(candidates))]
+        try:
+            return _read_photo_batch(response, len(candidates), strict_errors)
+        except _UnusableBatch:
+            # Strict runs only: an unusable reply from a non-Flash judge is scored once more on Flash.
+            run_models = model_choice.active()
+            if not (strict_errors and run_models is not None and run_models.give_up("judge")):
+                raise
+        return _read_photo_batch(_critic_call(call, model_name), len(candidates), strict_errors)
     except SpendBlocked:
         raise
+    except _UnusableBatch as unusable:
+        if strict_errors and not unusable.safety_block:
+            raise PhotoCriticUnavailable('Photo critic unavailable or response invalid') from None
+        return failed
     except Exception:
         if strict_errors:
             raise PhotoCriticUnavailable('Photo critic unavailable or response invalid') from None

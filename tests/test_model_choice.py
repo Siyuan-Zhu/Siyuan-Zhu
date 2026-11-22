@@ -95,7 +95,8 @@ def test_flash_refusal_propagates_after_one_call():
     assert not rm.fallback_fired
 
 
-def test_other_exception_propagates():
+def test_other_exception_falls_back_once_then_propagates_from_flash():
+    # Task T3: any other failure on a non-Flash model hands the run to Flash once.
     rm = mc.resolve_run_models({}, {mc.DIRECTOR_ENV: mc.HYDROGEN})
     calls = []
 
@@ -105,7 +106,8 @@ def test_other_exception_propagates():
 
     with pytest.raises(ValueError):
         rm.call("director", fn)
-    assert calls == [mc.HYDROGEN]
+    assert calls == [mc.HYDROGEN, mc.FLASH]
+    assert rm.fallback_fired and rm.current("director") == mc.FLASH
 
 
 def test_active_is_none_outside_activate():

@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping, Optional, Tuple, TypeVar
 
-from .spend_guard import refused_before_dispatch
+from .spend_guard import SpendBlocked, refused_before_dispatch
 
 T = TypeVar("T")
 
@@ -39,16 +39,26 @@ class RunModels:
         return getattr(self, role)
 
     def call(self, role: str, fn: Callable[[str], T]) -> T:
+        """A non-Flash model that fails hands the run to Flash; a block after a provider call propagates."""
         model = self.current(role)
         try:
             return fn(model)
         except Exception as error:
-            if role == "embedding" or model == FLASH or not refused_before_dispatch(error):
+            if role == "embedding" or model == FLASH:
                 raise
+            if isinstance(error, SpendBlocked) and not refused_before_dispatch(error):
+                raise
+        self.give_up(role)
+        return fn(FLASH)
+
+    def give_up(self, role: str) -> bool:
+        """Move the run to Flash when the role is on another model; False when it already is."""
+        if role not in ("director", "judge") or self.current(role) == FLASH:
+            return False
         self.director = FLASH
         self.judge = FLASH
         self.fallback_fired = True
-        return fn(FLASH)
+        return True
 
 
 def _pick(raw: Optional[str], default: str, allowed: frozenset) -> Tuple[str, bool]:
