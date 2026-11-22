@@ -1001,19 +1001,29 @@ def gemini_usage_receipt(reservation_id, reservation, response, *, credential_fi
         raise SpendBlocked('Unpriced tool use or inconsistent Gemini usage')
     output = counts['candidatesTokenCount']+counts['thoughtsTokenCount']
     context = reservation['request_context']
-    if counts['promptTokenCount'] > context['admitted_input_tokens'] or output > context['max_output_tokens']:
+    # A hold records the rates it was charged at; a hold made before the band records none.
+    def rate(key):
+        return money(context.get(key, limits[key]))
+    over = counts['promptTokenCount'] - context['admitted_input_tokens']
+    # Hydrogen bills prompt tokens countTokens cannot see: such a reply settles while its billed cost stays inside the hold.
+    overage_settles = (over > 0 and operation == HYDROGEN_OPERATION and output <= context['max_output_tokens']
+        and (money(counts['promptTokenCount'])*rate('input_token_usd_per_million')
+             + money(output)*rate('output_token_usd_per_million'))/1000000 <= money(reservation['max_gross_usd']))
+    if (over > 0 and not overage_settles) or output > context['max_output_tokens']:
         raise SpendBlocked('Gemini usage exceeds admitted token shape')
     if not response.get('responseId') or any(item.get('modality') != 'TEXT' for item in usage.get('candidatesTokensDetails', [])):
         raise SpendBlocked('Typed text-only Gemini response identity required')
-    # A hold records the rates it was charged at; a hold made before the band records none.
-    input_rate = money(context.get('input_token_usd_per_million', limits['input_token_usd_per_million']))
-    output_rate = money(context.get('output_token_usd_per_million', limits['output_token_usd_per_million']))
-    amount = (money(context['admitted_input_tokens'])*input_rate + money(output)*output_rate)/1000000
-    return {'schema_version': 1, 'accounting_policy': 'provider_usage_v1', 'reservation_id': reservation_id,
+    input_rate, output_rate = rate('input_token_usd_per_million'), rate('output_token_usd_per_million')
+    # Booked at the admitted figure, or at the billed prompt tokens when they are above it.
+    amount = (money(max(counts['promptTokenCount'], context['admitted_input_tokens']))*input_rate + money(output)*output_rate)/1000000
+    receipt = {'schema_version': 1, 'accounting_policy': 'provider_usage_v1', 'reservation_id': reservation_id,
         'provider': 'gemini', 'operation': operation, 'credential_fingerprint': credential_fingerprint,
         'provider_request_id': response['responseId'], 'request_sha256': request_sha256, 'observed_at': observed_at,
         'accounted_gross_usd': str(amount), 'accounting_basis': 'conservative_response_usage',
         'evidence_sha256': digest({'response_id': response['responseId'], 'model': response['modelVersion'], 'usage': usage, 'request_context': context})}
+    if overage_settles:
+        receipt['prompt_tokens_over_admitted'] = over
+    return receipt
 
 
 EMBEDDING_COMPLETION_OPERATIONS = frozenset({'embed_content:gemini-embedding-001', 'embed_content:gemini-embedding-2'})
