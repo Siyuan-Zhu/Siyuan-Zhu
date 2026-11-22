@@ -22,9 +22,12 @@ def _round_down(value: float) -> float:
     return math.floor(value * 100 + 1e-9) / 100
 
 
-def _matched_mark(flash: Sequence[float], judge: Sequence[float], flash_mark: float) -> float:
+def _matched_mark(flash: Sequence[float], judge: Sequence[float], flash_mark: float) -> Optional[float]:
     passing = sum(score >= flash_mark for score in flash)
     ranked = sorted(judge, reverse=True)
+    if passing and ranked[passing - 1] <= 0.0:
+        # The judge scored fewer photos above zero than Flash passes: there is nothing to match.
+        return None
     mark = ranked[0] + 0.01 if passing == 0 else ranked[passing - 1]
     return _round_down(min(MARK_CEILING, max(MARK_FLOOR, mark)))
 
@@ -36,14 +39,16 @@ def matched_marks(
     """(meaning, composite) marks that pass as many photos under the judge as pass under Flash today.
 
     Each tuple is (meaning, composite) for the same photo in the same order. None when fewer than
-    MIN_PHOTOS pairs, or when the two lists do not pair up.
+    MIN_PHOTOS pairs, when the two lists do not pair up, or when on either axis Flash passes k photos but the
+    judge's k-th highest score is zero.
     """
     if len(flash_scores) != len(judge_scores) or len(flash_scores) < MIN_PHOTOS:
         return None
-    return tuple(
+    marks = tuple(
         _matched_mark([row[axis] for row in flash_scores], [row[axis] for row in judge_scores], DEFAULT_MARKS[axis])
         for axis in (0, 1)
     )
+    return None if None in marks else marks
 
 
 def build_document(model: str, marks: Tuple[float, float], counts: Mapping[str, int], date_iso: str) -> dict:

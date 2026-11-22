@@ -123,6 +123,21 @@ def test_matched_marks_clamp_at_the_ceiling_and_the_floor():
     assert jc.matched_marks(all_pass, low_judge) == (0.55, 0.55)
 
 
+def test_matched_marks_refuse_a_match_on_a_zero_judge_score():
+    # Flash passes four on meaning, but the judge scored only three photos above zero: no valid fourth mark.
+    flash = _pairs([0.90] * 4 + [0.30] * 5, [0.30] * 9)
+    judge = _pairs([0.95, 0.90, 0.85] + [0.0] * 6, [0.60] * 9)
+    assert jc.matched_marks(flash, judge) is None
+    # The same on the composite axis alone.
+    flash = _pairs([0.30] * 9, [0.90] * 2 + [0.30] * 7)
+    judge = _pairs([0.60] * 9, [0.80] + [0.0] * 8)
+    assert jc.matched_marks(flash, judge) is None
+    # A zero judge score below the k-th position does not matter.
+    flash = _pairs([0.90] * 2 + [0.30] * 7, [0.30] * 9)
+    judge = _pairs([0.95, 0.90] + [0.0] * 7, [0.60] * 9)
+    assert jc.matched_marks(flash, judge) == (0.85, 0.61)
+
+
 def test_matched_marks_need_nine_photos():
     assert jc.matched_marks(FLASH_12[:8], JUDGE_12[:8]) is None
     assert jc.matched_marks([], []) is None

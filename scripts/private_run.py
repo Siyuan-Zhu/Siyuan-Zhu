@@ -140,8 +140,12 @@ def _flash_scores(scored: List[Dict[str, Any]], commission: Any) -> List[Tuple[f
     thesis = str(getattr(commission, "commissioned_thesis", ""))
     scores = []
     for offset in range(0, len(scored), CRITIC_BATCH):
-        for verdict in vr._score_photo_batch(scored[offset:offset + CRITIC_BATCH], word=word, gloss=gloss,
-                                             thesis=thesis, model_name=FLASH, strict_errors=True):
+        verdicts = vr._score_photo_batch(scored[offset:offset + CRITIC_BATCH], word=word, gloss=gloss,
+                                         thesis=thesis, model_name=FLASH, strict_errors=True)
+        if all(verdict == vr._FAIL_CLOSED_VISION_SCORES for verdict in verdicts):
+            # A blocked or unanswered batch is not a measurement; it would read as "Flash passed none".
+            raise ValueError("Flash batch failed closed")
+        for verdict in verdicts:
             scores.append((float(verdict["semantic_alignment"]), float(vr.compute_composite_critic_score(
                 verdict["semantic_alignment"], verdict["compositional_clarity"], verdict["editorial_memorability"]))))
     return scores

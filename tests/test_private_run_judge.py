@@ -57,7 +57,7 @@ def _thumb(photo_id):
 
 
 def _world(monkeypatch, *, per_query=3, flash=FLASH_ROWS, hydrogen=HYDROGEN_ROWS, flash_raises=None,
-           refuse_hydrogen=False):
+           refuse_hydrogen=False, flash_blocked_batches=()):
     """Fake Unsplash and a fake critic for both models; each photo has its own thumbnail.
 
     Scores are dealt by the photo's position in the model's own sequence of batches. Returns the critic calls
@@ -90,8 +90,10 @@ def _world(monkeypatch, *, per_query=3, flash=FLASH_ROWS, hydrogen=HYDROGEN_ROWS
         if model == mc.HYDROGEN and refuse_hydrogen:
             raise _refusal()
         dealt = rows[model][done:done + len(images)]
+        batch = sum(call[0] == model for call in calls) - 1
+        blocked = model == mc.FLASH and batch in flash_blocked_batches
         return SimpleNamespace(text=json.dumps({"candidates": [dict(r, index=i) for i, r in enumerate(dealt)]}),
-                               candidates=[])
+                               candidates=[SimpleNamespace(finish_reason="SAFETY")] if blocked else [])
 
     monkeypatch.setattr("httpx.Client.get", get)
     monkeypatch.setattr("httpx.Client.post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no POST")))
@@ -279,3 +281,26 @@ def test_the_edition_run_never_measures(tmp_path, monkeypatch):
     assert rendered == [mc.HYDROGEN] and "judge_calibration" not in saved
     source = Path(adk_pipeline.__file__).read_text()
     assert "private_run" not in source and "measure_judges" not in source
+
+
+def test_no_marks_are_written_when_the_judge_scored_fewer_photos_than_flash_passes(monkeypatch):
+    # Hydrogen scores every photo zero while Flash passes four: there is no fourth Hydrogen score to match.
+    _world(monkeypatch, flash=[_row(0.90)] * 4 + [_row(0.30)] * 5, hydrogen=[_row(0.0)] * 9)
+    store = Store()
+    result, line = _measure(store)
+    assert line == ("[judge_calibration] photos=9 flash_pass_meaning=4 flash_pass_composite=4 "
+                    "meaning_min=0.70 composite_min=0.68 written=0")
+    assert store.saved == [] and result.exit_code == 0
+
+
+@pytest.mark.parametrize("per_query, blocked, photos", [(3, (0,), 9), (6, (1,), 18)],
+                         ids=["only-batch-blocked", "second-batch-blocked"])
+def test_no_marks_are_written_when_a_flash_batch_fails_closed(monkeypatch, per_query, blocked, photos):
+    calls = _world(monkeypatch, per_query=per_query, flash=FLASH_ROWS * 2, hydrogen=HYDROGEN_ROWS * 2,
+                   flash_blocked_batches=blocked)
+    store = Store()
+    result, line = _measure(store)
+    assert line == (f"[judge_calibration] photos={photos} flash_pass_meaning=0 flash_pass_composite=0 "
+                    "meaning_min=0.70 composite_min=0.68 written=0")
+    assert sum(call[0] == mc.FLASH for call in calls) == len(range(0, photos, 9))
+    assert store.saved == [] and result.exit_code == 0
