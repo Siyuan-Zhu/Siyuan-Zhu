@@ -628,3 +628,107 @@ def test_the_night_after_a_failed_switch_over_performs_a_normal_switch_over(tmp_
     assert fields["pass"] in ("0", "1") and fields["cut"] != "-1"
     state, _ = em.parse_calibration(night.load_calibration(em.CALIBRATION_DOCUMENT))
     assert state in (em.CAL_ACCEPTED, em.CAL_REJECTED)
+
+
+
+# ---- a failure in the cutoff or gate maths falls back instead of stopping the run ----
+
+
+def _boom(*args, **kwargs):
+    raise RuntimeError("synthetic maths failure")
+
+
+def _migrated_run():
+    return em.EmbeddingRun(mode="migrated", calibration_state=em.CAL_ACCEPTED, percentiles=(0.95, 0.9, 0.88, 0.99),
+                           used=em.EMBED_2, date_str=DATE, items=28)
+
+
+@pytest.mark.parametrize("target", ["percentile_ranks", "cutoffs_at", "gate_report"])
+def test_switch_over_maths_failure_returns_todays_001_clusters_and_writes_nothing(monkeypatch, target):
+    fresh = methodology.score_and_cluster_signals(_items(), now_utc=NOW)
+    monkeypatch.setattr(em, target, _boom)
+    run = _switch_over_run("pass")
+    store = RecordingStore()
+
+    out = em.cluster_for_run(_items(), run, store=store, now_utc=NOW)
+
+    assert _signature(out) == _signature(fresh)
+    assert store.calls == []
+    assert run.fallback and run.used == em.EMBED_001
+    assert (run.percentiles, run.cutoffs, run.gate) == (None, None, None)
+    assert (run.multi_source, run.largest_share) == em.cluster_shape(out)
+    fields = _fields(em.embedding_line(run))
+    assert (fields["used"], fields["switch_over"], fields["fallback"], fields["pass"], fields["cut"], fields["p"]) == (
+        "1", "1", "1", "-1", "-1", "-1")
+
+
+@pytest.mark.parametrize("target", ["cutoffs_at", "_usable_similarities"])
+def test_migrated_maths_failure_returns_fixed_cutoff_clusters_and_shows_the_fallback(monkeypatch, target):
+    fixed = methodology.score_and_cluster_signals(_items(), now_utc=NOW, cohesion_mode="offdiag")
+    monkeypatch.setattr(em, target, _boom)
+    run = _migrated_run()
+    store = RecordingStore()
+
+    out = em.cluster_for_run(_items(), run, store=store, now_utc=NOW, cohesion_mode="offdiag")
+
+    assert out and store.calls == []
+    assert _signature(out) == _signature(fixed)
+    assert run.fallback and run.cutoffs is None and run.gate is None
+    assert run.percentiles == (0.95, 0.9, 0.88, 0.99)
+    fields = _fields(em.embedding_line(run))
+    assert (fields["fallback"], fields["cut"], fields["switch_over"]) == ("1", "-1", "0")
+
+
+def test_migrated_failure_after_cutoffs_are_set_leaves_no_half_set_state(monkeypatch):
+    real = em.score_and_cluster_signals
+    calls = []
+
+    def score(rows, **kw):
+        calls.append(dict(kw))
+        if "cutoffs" in kw:
+            raise RuntimeError("synthetic maths failure")
+        return real(rows, **kw)
+
+    monkeypatch.setattr(em, "score_and_cluster_signals", score)
+    run = _migrated_run()
+    out = em.cluster_for_run(_items(), run, store=RecordingStore(), now_utc=NOW)
+    assert out and run.fallback and run.cutoffs is None and run.gate is None
+    assert "cutoffs" in calls[0] and calls[-1] == {"now_utc": NOW}
+
+
+def test_switch_over_failure_in_the_embedding2_clustering_leaves_no_half_set_state(monkeypatch):
+    real = em.score_and_cluster_signals
+
+    def score(rows, **kw):
+        if "cutoffs" in kw:
+            raise RuntimeError("synthetic maths failure")
+        return real(rows, **kw)
+
+    monkeypatch.setattr(em, "score_and_cluster_signals", score)
+    run = _switch_over_run("pass")
+    store = RecordingStore()
+    out = em.cluster_for_run(_items(), run, store=store, now_utc=NOW)
+    assert _signature(out) == _signature(methodology.score_and_cluster_signals(_items(), now_utc=NOW))
+    assert store.calls == [] and run.fallback
+    assert (run.percentiles, run.cutoffs, run.gate) == (None, None, None)
+
+
+@pytest.mark.parametrize("make_run", [lambda: _switch_over_run("pass"), _migrated_run], ids=["switch_over", "migrated"])
+def test_spend_block_in_the_maths_still_propagates(monkeypatch, make_run):
+    def blocked(*args, **kwargs):
+        raise SpendBlocked("synthetic block")
+
+    monkeypatch.setattr(em, "cutoffs_at", blocked)
+    run = make_run()
+    store = RecordingStore()
+    with pytest.raises(SpendBlocked):
+        em.cluster_for_run(_items(), run, store=store, now_utc=NOW)
+    assert store.calls == [] and not run.fallback
+
+
+def test_variable_unset_never_reaches_the_maths(tmp_path, monkeypatch, capsys):
+    for target in ("percentile_ranks", "cutoffs_at", "gate_report", "cluster_for_run"):
+        monkeypatch.setattr(em, target, _boom)
+    seen = _staged(tmp_path, monkeypatch, model=None)
+    assert seen["embedding_run"] is None
+    assert _embedding_lines(capsys.readouterr().out) == []

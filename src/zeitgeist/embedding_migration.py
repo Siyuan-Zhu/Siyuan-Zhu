@@ -303,8 +303,20 @@ def cluster_for_run(
     now_utc: Any,
     **score_kwargs: Any,
 ) -> List[ScoredCluster]:
-    """Cluster with the model the run settled on; on a switch-over night, gate and record the result."""
-    clusters = _clusters_for_run(items, run, store, now_utc, score_kwargs)
+    """Cluster with the model the run settled on; on a switch-over night, gate and record the result.
+
+    A failure in the cutoff or gate maths never stops the run: it falls back to today's fixed
+    cutoffs, writes nothing and clears what it had set. A SpendBlocked still propagates.
+    """
+    before = (run.percentiles, run.cutoffs, run.gate)
+    try:
+        clusters = _clusters_for_run(items, run, store, now_utc, score_kwargs)
+    except spend_guard.SpendBlocked:
+        raise
+    except Exception:
+        run.percentiles, run.cutoffs, run.gate = before
+        run.fallback = True
+        clusters = score_and_cluster_signals(items, now_utc=now_utc, **score_kwargs)
     run.multi_source, run.largest_share = cluster_shape(clusters)
     return clusters
 
