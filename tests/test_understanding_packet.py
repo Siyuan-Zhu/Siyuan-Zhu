@@ -202,3 +202,29 @@ def test_public_keywords_handle_parts_never_raises():
     assert u.public_keywords([None, 5, ""], cl) is not None
     assert u.public_keywords(["river studio"], object()) == ["river studio"]
     assert u.public_keywords([], cl) == []
+
+
+def _studio_clusters():
+    it = mk("Title here", source_id="o2_ig_river.studio_7")
+    cl = mc([it, mk("plain")])
+    cl.cluster_keywords = ["river studio", "open models"]
+    return [cl]
+
+
+def test_render_keywords_hide_handle_parts():
+    out = u.render_evidence_packet(_studio_clusters(), now_utc=NOW)
+    assert "river studio" not in out
+    assert "keywords=['open models']" in out
+
+
+def test_echo_handle_part_run_rejected():
+    cl = _studio_clusters()
+    assert u.echo_violation(["River Studio hosts the night"], cl) == "Names a source account"
+    assert u.echo_violation(["the studio river is calm"], cl) == "Names a source account"
+    assert u.echo_violation(["a river runs past the studio"], cl) is None
+    assert u.echo_violation(["river alone is fine"], cl) is None
+
+
+def test_echo_handle_part_plain_short_handle_unchanged():
+    cl = [mc([mk("t", extra={"mentioned_handles": [WORD]}), mk("plain")])]
+    assert u.echo_violation(["river studio hosts the night"], cl) is None
