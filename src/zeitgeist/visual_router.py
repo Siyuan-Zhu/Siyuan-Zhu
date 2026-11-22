@@ -1359,6 +1359,7 @@ def _generate_live_imagen3_bytes(prompt: str, api_key: Optional[str] = None) -> 
             except SpendBlocked as exc:
                 if not refused_before_dispatch(exc):
                     raise
+                logger.info("Second-choice generator %s refused before dispatch; skipping.", model_name)
                 continue
             except Exception:
                 continue
@@ -1380,6 +1381,7 @@ def _generate_live_imagen3_bytes(prompt: str, api_key: Optional[str] = None) -> 
     except SpendBlocked as exc:
         if not refused_before_dispatch(exc):
             raise
+        logger.info("Second-choice generator %s refused before dispatch; skipping.", "imagen-3.0-generate-002")
         return None
     except Exception:
         return None

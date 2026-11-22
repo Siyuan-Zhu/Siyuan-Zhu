@@ -1,5 +1,6 @@
 """An unavailable second-choice image generator cannot stop an edition; synthetic data only."""
 import io
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -72,11 +73,22 @@ def test_every_model_refused_before_dispatch_returns_none(live):
 
 
 def test_every_model_refused_before_dispatch_lets_the_edition_fall_back(live, tmp_path):
-    live({name: refused() for name in ALL_MODELS})
+    models = live({name: refused() for name in ALL_MODELS})
     pulse = vr.select_and_render_pulse_assets(
         commission={'word': 'Counterpoise', 'gloss': 'A steady balance.'},
         medium_history_30d=['PHOTOGRAPHY'] * 4, repo_root=tmp_path, date_str='2026-10-29', candidates=[])
     assert pulse.visual_medium == 'BESPOKE_SVG'
+    assert models.calls == list(ALL_MODELS)
+
+
+def test_each_skipped_refusal_logs_only_the_public_model_name(live, caplog):
+    live({name: refused() for name in ALL_MODELS})
+    prompt = 'Synthetic marker prompt zq7 harbour'
+    with caplog.at_level(logging.INFO, logger=vr.logger.name):
+        assert vr._generate_live_imagen3_bytes(prompt) is None
+    lines = [record.getMessage() for record in caplog.records]
+    assert lines == [f'Second-choice generator {name} refused before dispatch; skipping.' for name in ALL_MODELS]
+    assert 'zq7' not in caplog.text and 'harbour' not in caplog.text
 
 
 @pytest.mark.parametrize('failing_model', ALL_MODELS)
