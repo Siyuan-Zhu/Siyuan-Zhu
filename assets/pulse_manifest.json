@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-21",
-  "word": "Fabulation",
-  "gloss": "Mythmaking woven through modern real-life drama.",
-  "archetype": "LITERARY_JOURNAL",
+  "date": "2026-11-22",
+  "word": "Apocrypha",
+  "gloss": "Dubious revelation outpacing rigorous proof.",
+  "archetype": "POETIC_CINEMA",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "020a1a23b59fb748db3703d1ce35aee8941e1b19febe5bbbc079e7cec88ce82f",
-    "assets/daily_pulse_dark.webp": "94d3817bc27a519da7a18579b1b5182bf6ec8d4b43440467382f5a6907d118ee",
-    "assets/daily_pulse.svg": "baf5e5eaecf4d31e41cbac64895a8665fbecee11c85a71e0c5584feef54a0375",
-    "assets/pulse/2026-11-21.webp": "cb2e2e010928a0532f43a816c73002d29ddc9ed32bdffca1f05705092412c5b4"
+    "assets/daily_pulse_light.webp": "e32f070fea81fc27e3a38ff47704046872db591471cc6228fe6e5dec42067f35",
+    "assets/daily_pulse_dark.webp": "e32f070fea81fc27e3a38ff47704046872db591471cc6228fe6e5dec42067f35",
+    "assets/daily_pulse.svg": "cdc57e501c4e8969e9df5ff4eabcb6f4d7662dcd299ace5157ac0b264233ae31",
+    "assets/pulse/2026-11-22.webp": "dd8845ba1e674f609f46028f56e63b2448826d11bddae2fece762c84a0eca3de"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "kbd1oAf-9Ms",
-    "source_url": "https://unsplash.com/photos/kbd1oAf-9Ms",
-    "camera_make": "FUJIFILM",
-    "camera_model": "X-T4",
+    "asset_id": "eQ2Z9ay9Wws",
+    "source_url": "https://unsplash.com/photos/eQ2Z9ay9Wws",
+    "camera_make": "Canon",
+    "camera_model": "Canon EOS 5D Mark III",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "94a474e2ecbb7173b0ed"
+  "publication_id": "e03a08a2d4ec224d03ea"
 }

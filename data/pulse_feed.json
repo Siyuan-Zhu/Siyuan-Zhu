@@ -2,6 +2,88 @@
   "entries": [
     {
       "24h_shift": 0.24,
+      "artwork_artist": "Mick Haupt",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Apocrypha",
+      "artwork_url": "https://unsplash.com/photos/eQ2Z9ay9Wws",
+      "cluster_keywords": [
+        "riemann hypothesis",
+        "hypothesis",
+        "riemann",
+        "claude",
+        "levent alp"
+      ],
+      "commissioned_thesis": "A defining tension of the current moment lies in the collision between breathless, AI-assisted claims of epochal discovery and the austere discipline of formal verification. When rushed announcements purport to settle foundational questions in number theory\u2014such as the Riemann hypothesis\u2014they operate less like settled canon and more like modern apocrypha: seductive, hastily circulated manuscripts whose authority dissolves the instant seasoned rigor is brought to bear. The pulse of the day is not mere skepticism, but a sharpened discernment separating computational eloquence from enduring truth.",
+      "critic_scores": {
+        "semantic_alignment": 0.9,
+        "composite": 0.894
+      },
+      "date": "2026-11-22",
+      "dominant_category": "AI & Distributed Systems",
+      "dominant_signal_type": "HYBRID",
+      "fallback_webp_path": "assets/pulse/2026-11-22.webp",
+      "flux_model": null,
+      "gloss": "Dubious revelation outpacing rigorous proof.",
+      "headline": "Apocrypha \u2014 Dubious revelation outpacing rigorous proof.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/eQ2Z9ay9Wws",
+      "macro_contribution_pct": 38.0,
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_contribution_pct": 62.0,
+      "orbit_sources_matched": [],
+      "orbit_weight_ratio": 0.62,
+      "publication_id": "e03a08a2d4ec224d03ea",
+      "published_at": "2026-11-22T12:50:56.094140Z",
+      "quote": "Dubious revelation outpacing rigorous proof.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "A defining tension of the current moment lies in the collision between breathless, AI-assisted claims of epochal discovery and the austere discipline of formal verification. When rushed announcements purport to settle foundational questions in number theory\u2014such as the Riemann hypothesis\u2014they operate less like settled canon and more like modern apocrypha: seductive, hastily circulated manuscripts whose authority dissolves the instant seasoned rigor is brought to bear. The pulse of the day is not",
+      "top_macro_themes": [
+        "riemann hypothesis",
+        "hypothesis",
+        "riemann",
+        "claude",
+        "levent alp"
+      ],
+      "top_orbit_themes": [
+        "riemann hypothesis",
+        "hypothesis",
+        "riemann",
+        "claude",
+        "levent alp"
+      ],
+      "unsplash_photographer": "Mick Haupt",
+      "unsplash_profile_url": "https://unsplash.com/@rocinante_11",
+      "updated_at": "2026-11-22T12:50:56.094140Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Apocrypha",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "eQ2Z9ay9Wws",
+        "source_url": "https://unsplash.com/photos/eQ2Z9ay9Wws",
+        "camera_make": "Canon",
+        "camera_model": "Canon EOS 5D Mark III",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
+      "24h_shift": 0.24,
       "artwork_artist": "Jakob Owens",
       "artwork_source": "Unsplash",
       "artwork_title": "Fabulation",
@@ -1716,6 +1798,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-21T08:19:20.519154Z",
+  "updated_at": "2026-11-22T12:50:56.094140Z",
   "version": "2.0"
 }
