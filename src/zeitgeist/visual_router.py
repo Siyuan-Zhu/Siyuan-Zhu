@@ -938,6 +938,13 @@ class _SafetyBlockedBatch(list):
     """The fail-closed scores of a batch the judge safety-blocked; no other model is asked about it."""
 
 
+def _remember_safety_blocked(rows, scores, safety_blocked_ids):
+    """Add the ids of a safety-blocked batch to the run's set; later phases exclude them."""
+    if safety_blocked_ids is not None and isinstance(scores, _SafetyBlockedBatch):
+        safety_blocked_ids.update(photo_id for photo_id in (
+            str(row.get('id') or row.get('photo_id') or '') for row in rows) if photo_id)
+
+
 def _read_photo_batch(response, count, strict_errors):
     choices = getattr(response, 'candidates', None) or []
     if not choices and getattr(getattr(response, 'prompt_feedback', None), 'block_reason', None):
@@ -1071,7 +1078,8 @@ def fetch_curated_library_candidates(word='', *, excluded_photo_ids=()):
 
 
 def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=6, word='', gloss='', thesis='',
-        gemini_api_key=None, excluded_photo_ids=(), judge_model="gemini-3.8-flash", strict_errors=False):
+        gemini_api_key=None, excluded_photo_ids=(), judge_model="gemini-3.8-flash", strict_errors=False,
+        safety_blocked_ids=None):
     """Fetch up to 18 unique thumbnails; judge in bounded batches of nine."""
     import httpx
     key = (access_key or os.environ.get('UNSPLASH_ACCESS_KEY', '')).strip()
@@ -1120,12 +1128,12 @@ def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=6, wor
         with ThreadPoolExecutor(max_workers=9) as pool:
             candidates = [candidate for candidate in pool.map(thumbnail, list(unique.values())[:18]) if candidate]
     scores = _score_in_batches(candidates, word=word, gloss=gloss, thesis=thesis, gemini_api_key=gemini_api_key,
-        model_name=judge_model, strict_errors=strict_errors)
+        model_name=judge_model, strict_errors=strict_errors, safety_blocked_ids=safety_blocked_ids)
     return [dict(candidate, **score, _vision_verified=True) for candidate, score in zip(candidates, scores)]
 
 
 def _score_in_batches(candidates, *, word, gloss, thesis, gemini_api_key=None, model_name="gemini-3.8-flash",
-        strict_errors=False):
+        strict_errors=False, safety_blocked_ids=None):
     """Score a photo stage in batches of nine, all by one judge.
 
     When the judge hands over to Flash part-way, each batch an earlier judge scored is scored once more on
@@ -1143,6 +1151,8 @@ def _score_in_batches(candidates, *, word, gloss, thesis, gemini_api_key=None, m
             if judge != model_choice.FLASH and not isinstance(scores[number], _SafetyBlockedBatch):
                 scores[number] = _score_photo_batch(batches[number], word=word, gloss=gloss, thesis=thesis,
                     gemini_api_key=gemini_api_key, model_name=model_choice.FLASH, strict_errors=strict_errors)
+    for batch, batch_scores in zip(batches, scores):
+        _remember_safety_blocked(batch, batch_scores, safety_blocked_ids)
     return [score for batch_scores in scores for score in batch_scores]
 
 
@@ -1492,8 +1502,13 @@ def select_and_render_pulse_assets(
     offline_demo: bool = False,
     scored_candidates_out: Optional[List[Dict[str, Any]]] = None,
     pass_marks: PassMarks = DEFAULT_MARKS,
+    safety_blocked_ids: Optional[set] = None,
 ) -> PublishedPulse:
-    """Run Multimodal Visual Critic Funnel, enforce 80/20 medium budget, and render 3:2 curatorial + 16:9 WebP + SVG."""
+    """Run Multimodal Visual Critic Funnel, enforce 80/20 medium budget, and render 3:2 curatorial + 16:9 WebP + SVG.
+
+    safety_blocked_ids is the run's set of photos in safety-blocked batches: they are excluded like feed
+    history, and this phase adds the photos of any batch it sees blocked.
+    """
     import os
     from src.zeitgeist.curatorial_compositor import (
         compute_quietest_quadrant,
@@ -1533,7 +1548,7 @@ def select_and_render_pulse_assets(
         history = json.loads(history_path.read_text()).get('entries', []) if history_path.exists() else []
     else:
         history = photo_history_30d
-    excluded_ids = _photo_history_ids(history)
+    excluded_ids = _photo_history_ids(history) | set(safety_blocked_ids or ())
     from .media_provenance import publication_media_history
     eligible_history = (publication_media_history(history, replacing_date=resolved_date) if history
         else medium_history_30d if not isinstance(medium_history_30d, int) else ())
@@ -1564,6 +1579,7 @@ def select_and_render_pulse_assets(
                 excluded_photo_ids=excluded_ids,
                 judge_model=judge_model,
                 strict_errors=strict_photo_errors,
+                safety_blocked_ids=safety_blocked_ids,
             )
         if not effective_candidates and live_unsplash_enabled:
             effective_candidates = fetch_curated_library_candidates(word=word, excluded_photo_ids=excluded_ids)
@@ -1573,6 +1589,7 @@ def select_and_render_pulse_assets(
         unreviewed = [row for row in rows if not row.get('_vision_verified') and (
             row.get('_requires_critic') or require_semantic_rescore or 'semantic_alignment' not in row)]
         judgments = _score_photo_batch(unreviewed, word=word, gloss=gloss, thesis=thesis, model_name=judge_model, strict_errors=strict_photo_errors) if unreviewed else []
+        _remember_safety_blocked(unreviewed, judgments, safety_blocked_ids)
         for row, verdict in zip(unreviewed, judgments):
             row.update(verdict)
             row['_vision_verified'] = True

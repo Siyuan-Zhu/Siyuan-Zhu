@@ -5,9 +5,9 @@ It reads the ingestion cache and the 30-day feed history, commissions one editio
 exactly as the edition would (the Stage 0 packet only under the same switch), and
 scores photos for it. It publishes nothing: no commit,
 no README, no artifact. Its one state write is the judge calibration: when Hydrogen judged
-the photos, Flash scores them again and Hydrogen's matched pass marks are stored. The photo
-stage renders into a temporary directory that is removed at once. Only numbers and public
-model names are printed.
+the photos and blocked no batch for safety, Flash scores them again and Hydrogen's matched
+pass marks are stored. The photo stage renders into a temporary directory that is removed
+at once. Only numbers and public model names are printed.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -53,6 +53,8 @@ class PrivateRun:
     commission: Any = None
     # Every photo the critic scored in this run, with its thumbnail bytes and scores.
     scored_candidates: List[Dict[str, Any]] = field(default_factory=list)
+    # The photos of every batch the judge safety-blocked in this run.
+    safety_blocked_ids: Set[str] = field(default_factory=set)
 
 
 def _history_words(entries: List[Any], date_iso: str) -> List[str]:
@@ -116,7 +118,7 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
                             commission=commission, repo_root=Path(scratch), date_str=date_iso,
                             requested_medium="photo", photo_history_30d=entries,
                             judge_model=run_models.current("judge"), strict_photo_errors=True,
-                            scored_candidates_out=scored,
+                            scored_candidates_out=scored, safety_blocked_ids=result.safety_blocked_ids,
                         )
                         photo_ok = True
                     except vr.PhotoSelectionUnavailable:
@@ -163,7 +165,8 @@ def measure_judges(store: Any, result: PrivateRun, run_models: RunModels, date_i
     marks: Tuple[float, float] = jc.DEFAULT_MARKS
     written = 0
     try:
-        if len(scored) >= jc.MIN_PHOTOS:
+        # A safety-blocked batch is never shown to another model, so a blocked run is not measured.
+        if len(scored) >= jc.MIN_PHOTOS and not result.safety_blocked_ids:
             # Flash answers on its own run models, so nothing here can move the run's judge.
             with activate(RunModels(FLASH, FLASH, run_models.embedding)):
                 flash = _flash_scores(scored, result.commission)

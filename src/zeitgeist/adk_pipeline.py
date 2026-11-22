@@ -931,6 +931,8 @@ class ZeitgeistADKOrchestrator:
         pass_marks = (judge_calibration.DEFAULT_MARKS if judge_document is None
                       else lambda: judge_calibration.marks_for(run_models.current("judge"), judge_document))
         exception_candidates = []
+        # Photos of a batch the judge safety-blocked stay out of every later photo phase of this run.
+        safety_blocked_ids = set()
         def render_commission(current, *, photo_only=None):
             nonlocal exception_candidates
             try:
@@ -955,6 +957,7 @@ class ZeitgeistADKOrchestrator:
                     strict_photo_errors=genai_client is not None,
                     offline_demo=offline_demo is True,
                     pass_marks=pass_marks,
+                    safety_blocked_ids=safety_blocked_ids,
                 )
             except PhotoSelectionUnavailable as exc:
                 # Only candidates scored against this exact commission survive to

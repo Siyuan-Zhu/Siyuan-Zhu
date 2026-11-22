@@ -138,3 +138,120 @@ def test_a_later_hand_over_does_not_ask_flash_about_a_safety_blocked_batch(monke
     assert calls == [(mc.HYDROGEN, BATCH_1), (mc.HYDROGEN, BATCH_2), (mc.FLASH, BATCH_2)]
     assert scores[:9] == [FAIL_CLOSED] * 9 and scores[9]["safety_pass"] is True
     assert rm.fallback_fired
+
+
+# ---- Task F3: a safety-blocked photo stays out for the whole run ----
+
+from src.zeitgeist import adk_pipeline as pipeline  # noqa: E402
+from tests.test_model_choice_pipeline import Stop, _live  # noqa: E402
+from tests.test_model_failover import _photo, _unsplash  # noqa: E402
+from tests.test_understanding_pipeline import _reply  # noqa: E402
+
+# The Director's three queries of five photos each: candidates 0-8, then 9-14.
+PHASE_BATCH_1, PHASE_BATCH_2 = list(range(9)), list(range(9, 15))
+
+
+class _Picked(Exception):
+    pass
+
+
+def _numbered_unsplash(monkeypatch):
+    """The fake Unsplash with candidate numbers fixed in query order, whichever search thread answers first."""
+    numbers = _unsplash(monkeypatch)
+    for q, query in enumerate(json.loads(_reply())["unsplash_queries"]):
+        numbers.update({f"{query}{i}": q * 5 + i for i in range(5)})
+    return numbers
+
+
+def _two_phase_run(tmp_path, monkeypatch, reply, *, judge=mc.HYDROGEN, between=lambda: None):
+    """The live pipeline whose recovery renders the same commission twice: the first search, then a requery
+    that finds the same photos. Returns (critic calls, outcome per phase, blocked set the renderer got per phase)."""
+    real_render = pipeline.select_and_render_pulse_assets
+    blocked_seen, calls, outcomes = [], [], []
+
+    def spy(**kwargs):
+        blocked_seen.append(kwargs.get("safety_blocked_ids"))
+        return real_render(**kwargs)
+
+    def picked(candidate, **kwargs):
+        raise _Picked(candidate["id"])
+
+    def recover(commission, *, render, **kw):
+        # The Director has answered; from here the fake critic answers every generate call.
+        calls.append(_judge(monkeypatch, reply))
+        for phase in range(2):
+            if phase:
+                between()
+            try:
+                render(commission, photo_only=True)
+                outcomes.append("rendered")
+            except vr.PhotoSelectionUnavailable:
+                outcomes.append(None)
+            except _Picked as chosen:
+                outcomes.append(str(chosen))
+        raise Stop()
+
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets", spy)
+    monkeypatch.setattr(vr, "_download_winning_unsplash_photo", picked)
+    _live(tmp_path, monkeypatch, [_reply()], judge=judge, recover=recover)
+    return calls[0], outcomes, blocked_seen
+
+
+def test_a_photo_blocked_before_a_hand_over_is_not_sent_to_flash_by_the_requery(monkeypatch, tmp_path):
+    numbers = _numbered_unsplash(monkeypatch)
+
+    def reply(model, batch):
+        if model == mc.HYDROGEN and batch == PHASE_BATCH_1:
+            return _finished(types.FinishReason.SAFETY, batch, {})
+        if model == mc.HYDROGEN:
+            return RuntimeError("synthetic transport failure")
+        return _good(batch, {0: _scores(0.95)})  # Flash would pass candidate 0
+
+    calls, outcomes, blocked = _two_phase_run(tmp_path, monkeypatch, reply)
+    assert calls == [(mc.HYDROGEN, PHASE_BATCH_1), (mc.HYDROGEN, PHASE_BATCH_2), (mc.FLASH, PHASE_BATCH_2),
+                     (mc.FLASH, PHASE_BATCH_2)]
+    assert outcomes == [None, None]
+    assert blocked[1] == {photo for photo, k in numbers.items() if k in PHASE_BATCH_1}
+
+
+CURATED_IDS = ["curatedA", "curatedB", "curatedC"]
+
+
+def _curated_rows():
+    return [{"id": pid, "photo_id": pid, "raw_url": f"https://images.unsplash.com/{pid}_raw",
+             "thumb_bytes": _grey(k), "photographer_name": "Synthetic Photographer",
+             "photographer_url": "https://unsplash.com/@synthetic", "unsplash_url": f"https://unsplash.com/photos/{pid}",
+             "download_location": "", "_requires_critic": True, "_source_detail": _photo(pid)}
+            for k, pid in enumerate(CURATED_IDS)]
+
+
+HAND_OVERS = {
+    "hydrogen": (mc.HYDROGEN, lambda: None),
+    "hydrogen-then-flash": (mc.HYDROGEN, lambda: mc.active().give_up("judge")),
+    "flash": (None, lambda: None),
+}
+
+
+@pytest.mark.parametrize("judge, between", list(HAND_OVERS.values()), ids=list(HAND_OVERS))
+def test_blocked_curated_candidates_are_not_scored_again_in_a_later_phase(monkeypatch, tmp_path, judge, between):
+    monkeypatch.delenv("UNSPLASH_ACCESS_KEY", raising=False)
+    monkeypatch.setenv("ZEITGEIST_LIVE_UNSPLASH", "1")
+    monkeypatch.setattr(vr, "fetch_curated_library_candidates", lambda word="", **kw: _curated_rows())
+    answered = []
+
+    def reply(model, batch):
+        answered.append(model)
+        if len(answered) == 1:
+            return _finished(types.FinishReason.SAFETY, batch, {})
+        return _good(batch, {0: _scores(0.95)})  # any later judge would pass candidate 0
+
+    calls, outcomes, blocked = _two_phase_run(tmp_path, monkeypatch, reply, judge=judge, between=between)
+    assert calls == [(judge or mc.FLASH, [0, 1, 2])]
+    assert outcomes == [None, None] and blocked[1] == set(CURATED_IDS)
+
+
+def test_a_run_with_no_block_keeps_the_blocked_set_empty_and_the_calls_unchanged(monkeypatch, tmp_path):
+    _numbered_unsplash(monkeypatch)
+    calls, outcomes, blocked = _two_phase_run(tmp_path, monkeypatch, lambda model, batch: _good(batch, {}))
+    assert calls == [(mc.HYDROGEN, PHASE_BATCH_1), (mc.HYDROGEN, PHASE_BATCH_2)] * 2
+    assert outcomes == [None, None] and blocked == [set(), set()]
