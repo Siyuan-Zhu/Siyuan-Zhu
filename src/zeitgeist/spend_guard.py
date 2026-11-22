@@ -28,6 +28,10 @@ HYDROGEN_OPERATION = "generate_content:" + HYDROGEN_MODEL
 HYDROGEN_OUTPUT_TOKENS = (4000, 6000, 8000, 10000, 15000)
 HYDROGEN_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
 HYDROGEN_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
+EMBEDDING_2_MODEL = "gemini-embedding-2"
+EMBEDDING_2_OPERATION = "embed_content:" + EMBEDDING_2_MODEL
+EMBEDDING_2_DIMENSIONS = 768
+EMBEDDING_2_MAX_COUNTED_TOKENS_PER_TEXT = 2040
 
 
 def sampling_controls_supported(model: str) -> bool:
@@ -64,6 +68,7 @@ class SpendBlocked(RuntimeError):
         "Unverified Gemini 4 Hydrogen pricing or model policy": "unverified-hydrogen-policy",
         "Gemini 4 Hydrogen pricing expires before bounded request completion": "pricing-validity-bound",
         "Gemini 4 Hydrogen sampling controls are not supported": "unsupported-sampling-controls",
+        "Unverified Gemini Embedding 2 pricing or model policy": "unverified-embedding2-policy",
         "Allowance period cannot be reset before verified expiry": "allowance-period-cannot-be-reset-before-verified-expiry",
         "Billing policy approval expired or exceeds current 24h gate": "billing-policy-approval-expired-or-exceeds-current-24h-gate",
         "Billing reconciliation required": "billing-reconciliation-required",
@@ -119,6 +124,7 @@ class SpendBlocked(RuntimeError):
         "Verified single-image generation pricing required": "verified-single-image-generation-pricing-required",
         "Zero-cost request requires verified free tier and remaining quota": "zero-cost-request-requires-verified-free-tier-and-remaining-quota",
         "gemini-embedding-001 allows at most 2040 counted tokens per text; no paid call made": "embedding-text-token-bound",
+        "gemini-embedding-2 allows at most 2040 counted tokens per text; no paid call made": "embedding-text-token-bound",
         "A positive balance requires an explicit verified credit kind": "a-positive-balance-requires-an-explicit-verified-credit-kind",
         "Bounded Gemini request policy required": "bounded-gemini-request-policy-required",
         "CLI cutoff must exactly match reviewed metadata cutoff": "cli-cutoff-must-exactly-match-reviewed-metadata-cutoff",
@@ -801,6 +807,16 @@ class BudgetGuard:
         if not self.now() + timedelta(seconds=duration) < expires <= announced:
             raise SpendBlocked("Gemini 4 Hydrogen pricing expires before bounded request completion")
 
+    def _validate_embedding2_policy(self, limits):
+        """Exact embedding-2 text tariff and 768-dimension shape, never inferred credits."""
+        tokens = limits.get("max_input_tokens")
+        dimensions = limits.get("output_dimensionality")
+        if (money(limits.get("input_token_usd_per_million")) != Decimal("0.20")
+                or money(limits.get("output_token_usd_per_million")) != Decimal("0")
+                or type(dimensions) is not int or dimensions != EMBEDDING_2_DIMENSIONS
+                or type(tokens) is not int or not 1 <= tokens <= 204800):
+            raise SpendBlocked("Unverified Gemini Embedding 2 pricing or model policy")
+
     def bounded_genai_request(self, operation, kwargs):
         """Admit only the SDK request shapes whose costs were verified."""
         method, model = operation.split(":", 1)
@@ -816,6 +832,8 @@ class BudgetGuard:
                 self._validate_gemini38_policy(limits, duration)
             elif model == HYDROGEN_MODEL:
                 self._validate_hydrogen_policy(limits, duration, account)
+            elif model == EMBEDDING_2_MODEL:
+                self._validate_embedding2_policy(limits)
             return copy.deepcopy(limits), duration
         limits, duration = self.ledger.mutate(read)
         config = kwargs.get("config") or {}
@@ -831,6 +849,10 @@ class BudgetGuard:
         }.get(method, set())
         if set(config) - allowed:
             raise SpendBlocked("Unpriced SDK configuration option")
+        if operation == EMBEDDING_2_OPERATION:
+            dimensions = config.get("output_dimensionality")
+            if type(dimensions) is not int or dimensions != EMBEDDING_2_DIMENSIONS:
+                raise SpendBlocked("Unverified Gemini Embedding 2 pricing or model policy")
         # No system instructions, tools, automatic function calling, file URIs
         # or caller-provided transports can bypass the verified request shape.
         import json
@@ -951,6 +973,10 @@ class BudgetGuard:
                 if not isinstance(limits, dict):
                     raise SpendBlocked('Verified model pricing and request limits required')
                 self._validate_hydrogen_policy(limits, int(account.get('max_request_duration_seconds', 300)), account)
+            elif operation == EMBEDDING_2_OPERATION:
+                if not isinstance(limits, dict):
+                    raise SpendBlocked('Verified model pricing and request limits required')
+                self._validate_embedding2_policy(limits)
             return (copy.deepcopy(limits), required, account['verification_reference'], copy.deepcopy(account))
         limits, required, reference, account = self.ledger.mutate(policy)
         if not required:
@@ -993,6 +1019,8 @@ class BudgetGuard:
                 # Keep eight tokens of its 2048-token window for model framing.
                 if model == 'gemini-embedding-001' and item_tokens > EMBEDDING_001_MAX_COUNTED_TOKENS_PER_TEXT:
                     raise SpendBlocked('gemini-embedding-001 allows at most 2040 counted tokens per text; no paid call made')
+                if model == EMBEDDING_2_MODEL and item_tokens > EMBEDDING_2_MAX_COUNTED_TOKENS_PER_TEXT:
+                    raise SpendBlocked('gemini-embedding-2 allows at most 2040 counted tokens per text; no paid call made')
                 total += item_tokens
             output = 0
         else:
