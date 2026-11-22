@@ -53,7 +53,11 @@ def usage(prompt, image=None, total=20):
 class FakeModels:
     def __init__(self, usages, version="synthetic-hydrogen-version", fail_at=None,
                  text=SECRET, finish_reason=types.FinishReason.STOP, embed_values=None,
-                 embed_fail=False, embed_tokens=7.0):
+                 embed_fail=False, embed_tokens=7.0, counted=1990, count_fail=False):
+        self.counted = counted
+        self.count_fail = count_fail
+        self.count_calls = []
+        self.responses = []
         self.embed_values = [[0.25] * 768, [0.5] * 768] if embed_values is None else embed_values
         self.embed_fail = embed_fail
         self.embed_tokens = embed_tokens
@@ -76,7 +80,15 @@ class FakeModels:
             candidates=[types.Candidate(
                 finish_reason=self.finish_reason,
                 content=types.Content(parts=[types.Part(text=self.text)], role="model"))])
+        self.responses.append(response)
         return response
+
+    def count_tokens(self, **kw):
+        self.count_calls.append(kw)
+        if self.count_fail:
+            raise RuntimeError("key=" + KEY)
+        value = self.counted(kw["contents"]) if callable(self.counted) else self.counted
+        return types.CountTokensResponse(total_tokens=value)
 
     def embed_content(self, **kw):
         self.embed_calls.append(kw)
@@ -117,8 +129,9 @@ def test_report_has_only_versions_and_counts(capsys):
     report = probe.run_probe(KEY, http_client=FakeHttp(), genai_client=FakeGenai(default_models()))
     assert set(report) == {"listed", "missing", "text", "image"}
     assert set(report["text"]) == {"model_version", "prompt_token_count", "candidates_token_count",
-                                   "thoughts_token_count", "total_token_count", "seconds"}
-    assert set(report["image"]) == set(report["text"]) | {"image_prompt_token_count"}
+                                   "thoughts_token_count", "total_token_count", "seconds",
+                                   "counted_tokens", "usage_metadata"}
+    assert set(report["image"]) == set(report["text"]) - {"counted_tokens"} | {"image_prompt_token_count"}
     code, out, *_ = run_main(capsys=capsys)
     assert code == 0
     for banned in (KEY, SECRET, "masked", "fingerprint"):
@@ -128,7 +141,7 @@ def test_report_has_only_versions_and_counts(capsys):
 
 def test_two_calls_second_has_384px_image(capsys):
     _, _, models, _, made = run_main(capsys=capsys)
-    assert len(models.calls) == 7 and made == [KEY]  # two A8 calls, four thinking-fit calls, one critic call
+    assert len(models.calls) == 8 and made == [KEY]  # two A8 calls, four thinking-fit calls, one critic call, cap_check
     for call in models.calls[:2]:
         assert call["model"] == "gemini-4-hydrogen"
         assert call["config"] == {"max_output_tokens": 16,
@@ -253,11 +266,13 @@ def run_fit(capsys, **kw):
 
 
 FIT_PLAN = (("high", 15000), ("high", 15000), ("high", 15000), ("medium", 15000))
+THINK_RECORD = {"promptTokenCount": 2000, "candidatesTokenCount": 300, "thoughtsTokenCount": 1500,
+                "totalTokenCount": 3800}
 
 
 def test_thinking_fit_calls_three_high_then_one_medium_at_15000(capsys):
     code, lines, models = run_fit(capsys, text='{"a": 1}')
-    assert code == 0 and len(models.calls) == 7
+    assert code == 0 and len(models.calls) == 8
     for call, (level, tokens) in zip(models.calls[2:], FIT_PLAN):
         assert call["model"] == "gemini-4-hydrogen"
         assert call["config"]["max_output_tokens"] == tokens
@@ -269,16 +284,17 @@ def test_thinking_fit_calls_three_high_then_one_medium_at_15000(capsys):
 def test_thinking_fit_line_format(capsys, monkeypatch):
     fixed_clock(monkeypatch, 1.5)
     code, lines, _ = run_fit(capsys, text='{"a": 1}')
-    assert len(lines) == 8
+    assert len(lines) == 9
     assert json.loads(lines[1]) == {
         "thinking_level": "high", "max_output_tokens": 15000, "finish_reason": "STOP",
         "prompt_tokens": 2000, "candidates_tokens": 300, "thoughts_tokens": 1500,
-        "total_output": 1800, "json_ok": 1, "seconds": 1.5}
+        "total_output": 1800, "json_ok": 1, "counted_tokens": 1990,
+        "usage_metadata": THINK_RECORD, "seconds": 1.5}
     assert [(json.loads(l)["thinking_level"], json.loads(l)["max_output_tokens"])
             for l in lines[1:5]] == list(FIT_PLAN)
-    assert json.loads(lines[6]) == {"max_total_output_high": 1800, "max_total_output_medium": 1800,
+    assert json.loads(lines[7]) == {"max_total_output_high": 1800, "max_total_output_medium": 1800,
                                     "max_seconds_high": 1.5, "critic_total_output": 1800,
-                                    "critic_seconds": 1.5}
+                                    "critic_seconds": 1.5, "max_prompt_minus_counted": 10}
 
 
 def test_summary_takes_the_max_per_level_and_null_when_none(capsys):
@@ -289,7 +305,7 @@ def test_summary_takes_the_max_per_level_and_null_when_none(capsys):
     run_main(models=FakeModels(usages, text='{"a": 1}'), capsys=capsys)
     lines = run_main.full.splitlines()
     assert [json.loads(l)["total_output"] for l in lines[1:5]] == [300, 1200, 110, 30]
-    summary = json.loads(lines[6])
+    summary = json.loads(lines[7])
     assert {k: summary[k] for k in ("max_total_output_high", "max_total_output_medium",
                                     "critic_total_output")} == {
         "max_total_output_high": 1200, "max_total_output_medium": 30, "critic_total_output": 30}
@@ -298,7 +314,7 @@ def test_summary_takes_the_max_per_level_and_null_when_none(capsys):
     run_main(models=FakeModels([usage(12), usage(1112, image=1100), bad], text="{}"), capsys=capsys)
     lines = run_main.full.splitlines()
     assert json.loads(lines[1])["total_output"] is None
-    summary = json.loads(lines[6])
+    summary = json.loads(lines[7])
     assert {k: summary[k] for k in ("max_total_output_high", "max_total_output_medium",
                                     "critic_total_output")} == {
         "max_total_output_high": None, "max_total_output_medium": None, "critic_total_output": None}
@@ -316,7 +332,7 @@ def test_json_ok_rules(capsys):
 
 def test_full_output_never_leaks_key_or_secret(capsys):
     code, lines, _ = run_fit(capsys, text=KEY + SECRET)
-    assert code == 0 and len(lines) == 8
+    assert code == 0 and len(lines) == 9
     for banned in (KEY, SECRET):
         assert banned not in run_main.full
     for row in lines[1:]:
@@ -444,7 +460,7 @@ def test_critic_fit_call_carries_nine_images_and_the_engine_prompt(capsys, monke
     from src.zeitgeist import visual_router as vr
     fixed_clock(monkeypatch, 1.5)
     code, lines, models = run_fit(capsys, text='{"candidates": []}')
-    assert code == 0 and len(models.calls) == 7
+    assert code == 0 and len(models.calls) == 8
     call = models.calls[6]
     assert call["model"] == HYDROGEN
     assert call["config"] == {**vr.critic_config(HYDROGEN), "max_output_tokens": 15000,
@@ -455,7 +471,8 @@ def test_critic_fit_call_carries_nine_images_and_the_engine_prompt(capsys, monke
     assert json.loads(lines[5]) == {
         "call": "critic", "images": 9, "thinking_level": "high", "max_output_tokens": 15000,
         "finish_reason": "STOP", "prompt_tokens": 2000, "candidates_tokens": 300,
-        "thoughts_tokens": 1500, "total_output": 1800, "json_ok": 1, "seconds": 1.5}
+        "thoughts_tokens": 1500, "total_output": 1800, "json_ok": 1, "counted_tokens": 1990,
+        "counted_text_tokens": 1990, "usage_metadata": THINK_RECORD, "seconds": 1.5}
 
 
 def test_critic_failure_prints_the_summary_with_null_critic_fields_then_stops(capsys, monkeypatch):
@@ -466,7 +483,7 @@ def test_critic_failure_prints_the_summary_with_null_critic_fields_then_stops(ca
     assert code == 1 and len(models.calls) == 7 and models.embed_calls == [] and len(lines) == 7
     assert json.loads(lines[5]) == {"max_total_output_high": 1800, "max_total_output_medium": 1800,
                                     "max_seconds_high": 1.5, "critic_total_output": None,
-                                    "critic_seconds": None}
+                                    "critic_seconds": None, "max_prompt_minus_counted": 10}
     assert json.loads(lines[-1]) == {"status": "failed", "phase": "critic", "error_type": "RuntimeError"}
     assert KEY not in run_main.full and SECRET not in run_main.full
 
@@ -486,7 +503,7 @@ def test_embedding_step_line(capsys, monkeypatch):
     from src.zeitgeist import collectors
     fixed_clock(monkeypatch, 1.5)
     code, lines, models = run_fit(capsys, text='{"a": 1}')
-    assert code == 0 and len(lines) == 8
+    assert code == 0 and len(lines) == 9
     assert models.embed_calls == [{
         "model": "gemini-embedding-2",
         "contents": collectors.embedding_request_contents(probe.EMBED_TEXTS, "gemini-embedding-2"),
@@ -494,7 +511,7 @@ def test_embedding_step_line(capsys, monkeypatch):
     assert [c.parts[0].text for c in models.embed_calls[0]["contents"]] == [
         "task: clustering | query: " + text for text in probe.EMBED_TEXTS]
     assert len(probe.EMBED_TEXTS) == 2
-    assert json.loads(lines[7]) == {"call": "embedding", "model": "gemini-embedding-2", "texts": 2, "vectors": 2,
+    assert json.loads(lines[8]) == {"call": "embedding", "model": "gemini-embedding-2", "texts": 2, "vectors": 2,
                                     "dimension": 768, "finite": 1, "billed_tokens": 14, "seconds": 1.5}
 
 
@@ -519,7 +536,7 @@ def test_embedding_line_reports_shape_and_finiteness(capsys, values, tokens, exp
 def test_no_embedding_call_when_embedding_2_unlisted(capsys):
     code, _, models, *_ = run_main(http=FakeHttp(models=("gemini-4-hydrogen",)), capsys=capsys)
     lines = run_main.full.splitlines()
-    assert code == 0 and len(models.calls) == 7 and models.embed_calls == [] and len(lines) == 7
+    assert code == 0 and len(models.calls) == 8 and models.embed_calls == [] and len(lines) == 8
     assert "max_seconds_high" in json.loads(lines[-1])
     assert '"embedding"' not in run_main.full
     _, _, models, *_ = run_main(http=FakeHttp(models=("gemini-embedding-2",)), capsys=capsys)
@@ -530,9 +547,9 @@ def test_embedding_failure_is_type_only_after_the_summary(capsys):
     models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], text="{}", embed_fail=True)
     code, _, models, *_ = run_main(models=models, capsys=capsys)
     lines = run_main.full.splitlines()
-    assert code == 1 and len(models.embed_calls) == 1 and len(lines) == 8
-    assert "critic_total_output" in json.loads(lines[6])
-    assert json.loads(lines[7]) == {"status": "failed", "phase": "embedding", "error_type": "RuntimeError"}
+    assert code == 1 and len(models.embed_calls) == 1 and len(lines) == 9
+    assert "critic_total_output" in json.loads(lines[7])
+    assert json.loads(lines[8]) == {"status": "failed", "phase": "embedding", "error_type": "RuntimeError"}
     assert KEY not in run_main.full and SECRET not in run_main.full
 
 
@@ -541,11 +558,11 @@ def test_every_paid_call_line_has_seconds(capsys, monkeypatch):
     _, lines, _ = run_fit(capsys, text="{}")
     first = json.loads(lines[0])
     assert first["text"]["seconds"] == first["image"]["seconds"] == 2.3
-    assert [json.loads(line)["seconds"] for line in lines[1:6] + lines[7:8]] == [2.3] * 6
-    summary = json.loads(lines[6])
+    assert [json.loads(line)["seconds"] for line in lines[1:7] + lines[8:9]] == [2.3] * 7
+    summary = json.loads(lines[7])
     assert summary["max_seconds_high"] == summary["critic_seconds"] == 2.3
     _, lines, _ = run_fit(capsys, text="{}")  # the real clock
-    for line in lines[1:6]:
+    for line in lines[1:7]:
         seconds = json.loads(line)["seconds"]
         assert isinstance(seconds, float) and seconds >= 0 and round(seconds, 1) == seconds
 
@@ -565,14 +582,14 @@ def test_leak_scan_over_all_printed_output(capsys):
     models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], text=KEY + SECRET)
     code, _, models, *_ = run_main(models=models, capsys=capsys)
     full = run_main.full
-    assert code == 0 and len(full.splitlines()) == 8
+    assert code == 0 and len(full.splitlines()) == 9
     synthetic = [KEY, SECRET, probe.CRITIC_WORD, probe.CRITIC_GLOSS, probe.CRITIC_THESIS,
                  *probe.EMBED_TEXTS, *probe.FIT_HISTORY]
     for cluster in probe.fit_clusters():
         synthetic += [item["title"] for item in cluster.items]
     for banned in synthetic:
         assert banned not in full, banned
-    public = {"ok", "STOP", "high", "medium", "critic", "embedding", "generateContent",
+    public = {"ok", "STOP", "high", "medium", "critic", "cap_check", "embedding", "generateContent", "IMAGE", "TEXT",
               "gemini-4-hydrogen", "gemini-embedding-2", "synthetic-hydrogen-version"}
     for line in full.splitlines():
         assert set(_strings(json.loads(line))) <= public, line
@@ -582,3 +599,110 @@ def test_docstring_states_the_cap_rule():
     doc = " ".join(probe.__doc__.split())
     assert "4000/6000/8000/10000/15000" in doc
     assert "at least 1.5 times the LARGER of max_total_output_high and critic_total_output" in doc
+
+
+# ---- Task D1: counted tokens beside billed tokens, the reply's usage record, the cap check ----
+
+def run_counted(capsys, **kw):
+    models = FakeModels([usage(12), usage(1112, image=1100), THINK_USAGE], text='{"a": 1}', **kw)
+    code, _, models, *_ = run_main(models=models, capsys=capsys)
+    return code, [json.loads(line) for line in run_main.full.splitlines()], models
+
+
+def test_count_tokens_gets_the_same_model_and_contents_object(capsys):
+    code, rows, models = run_counted(capsys)
+    assert code == 0 and len(models.calls) == 8
+    assert all(set(c) == {"model", "contents"} and c["model"] == HYDROGEN for c in models.count_calls)
+    counted = [c["contents"] for c in models.count_calls]
+    generated = [c["contents"] for c in models.calls]
+    # text call, four Director calls, critic (full then text-only), cap_check; never the image call
+    assert len(counted) == 8
+    assert counted[0] is generated[0]
+    assert all(a is b for a, b in zip(counted[1:5], generated[2:6]))
+    assert counted[5] is generated[6]
+    assert counted[7] is generated[7]
+    assert not any(c is generated[1] for c in counted)
+
+
+def test_critic_text_only_count_replaces_every_image_with_an_empty_text_part(capsys):
+    code, rows, models = run_counted(
+        capsys, counted=lambda contents: 300 if isinstance(contents, list) and {"text": ""} in contents else 1990)
+    critic_parts = models.calls[6]["contents"]
+    text_only = models.count_calls[6]["contents"]
+    assert len(text_only) == len(critic_parts) == 19
+    for ours, sent in zip(text_only, critic_parts):
+        assert ours == (sent if isinstance(sent, str) else {"text": ""})
+    assert sum(part == {"text": ""} for part in text_only) == 9
+    critic = rows[5]
+    assert critic["call"] == "critic"
+    assert critic["counted_tokens"] == 1990 and critic["counted_text_tokens"] == 300
+
+
+def test_counted_tokens_print_beside_billed_prompt_tokens(capsys):
+    code, rows, _ = run_counted(capsys, counted=1990)
+    assert code == 0
+    assert rows[0]["text"]["counted_tokens"] == 1990 and rows[0]["text"]["prompt_token_count"] == 12
+    assert "counted_tokens" not in rows[0]["image"]
+    for row in rows[1:7]:
+        assert row["counted_tokens"] == 1990 and row["prompt_tokens"] == 2000
+
+
+def test_summary_gives_the_largest_billed_minus_counted(capsys):
+    # Billed 2000 above counted 1990 on the Director-sized calls; the text call is 12 - 1990.
+    code, rows, _ = run_counted(capsys, counted=1990)
+    assert rows[7]["max_prompt_minus_counted"] == 10
+    code, rows, _ = run_counted(capsys, counted=lambda contents: 5 if contents == probe.PROBE_TEXT else 2500)
+    assert rows[7]["max_prompt_minus_counted"] == 7  # only the text call has billed above counted
+    code, rows, _ = run_counted(capsys, counted=2600)
+    assert rows[7]["max_prompt_minus_counted"] == -600  # the largest gap may be negative
+
+
+def test_count_tokens_failure_prints_null_and_the_probe_continues(capsys):
+    code, rows, models = run_counted(capsys, count_fail=True)
+    assert code == 0 and len(rows) == 9 and len(models.calls) == 8 and len(models.embed_calls) == 1
+    assert rows[0]["text"]["counted_tokens"] is None
+    assert all(row["counted_tokens"] is None for row in rows[1:7])
+    assert rows[5]["counted_text_tokens"] is None
+    assert rows[7]["max_prompt_minus_counted"] is None
+    assert KEY not in run_main.full and "RuntimeError" not in run_main.full
+
+
+def test_cap_check_line(capsys, monkeypatch):
+    fixed_clock(monkeypatch, 1.5)
+    code, rows, models = run_counted(capsys, finish_reason=types.FinishReason.MAX_TOKENS)
+    assert code == 0 and len(models.calls) == 8 and len(rows) == 9
+    call = models.calls[7]
+    assert call["model"] == HYDROGEN and call["contents"] == probe.director_fit_prompt()
+    assert call["config"] == {"max_output_tokens": 1024, "response_mime_type": "application/json",
+                              "thinking_config": {"thinking_level": "high"}}
+    assert rows[6] == {"call": "cap_check", "max_output_tokens": 1024, "candidates_tokens": 300,
+                       "thoughts_tokens": 1500, "total_output": 1800, "finish_reason": "MAX_TOKENS",
+                       "prompt_tokens": 2000, "counted_tokens": 1990, "usage_metadata": THINK_RECORD,
+                       "seconds": 1.5}
+    assert "max_total_output_high" in rows[7] and rows[8]["call"] == "embedding"
+
+
+def test_cap_check_failure_prints_the_summary_then_the_type_only_failed_line(capsys):
+    code, rows, models = run_counted(capsys, fail_at=8)
+    assert code == 1 and len(models.calls) == 8 and models.embed_calls == [] and len(rows) == 8
+    assert rows[5]["call"] == "critic"
+    assert rows[6]["critic_total_output"] == 1800 and rows[6]["max_prompt_minus_counted"] == 10
+    assert rows[7] == {"status": "failed", "phase": "cap_check", "error_type": "RuntimeError"}
+    assert KEY not in run_main.full and SECRET not in run_main.full
+
+
+def test_every_generate_line_carries_the_replys_usage_record(capsys):
+    from src.zeitgeist.automatic_guard import request_digest
+    code, rows, models = run_counted(capsys)
+    records = [rows[0]["text"]["usage_metadata"], rows[0]["image"]["usage_metadata"]]
+    records += [row["usage_metadata"] for row in rows[1:7]]
+    assert len(records) == len(models.responses) == 8
+    for printed, response in zip(records, models.responses):
+        stored = response.model_dump(by_alias=True, exclude_none=True).get("usageMetadata")
+        assert printed == stored
+        assert request_digest(printed) == request_digest(stored)  # the guard's evidence hash matches
+    assert rows[0]["image"]["usage_metadata"] == {
+        "promptTokenCount": 1112, "candidatesTokenCount": 3, "thoughtsTokenCount": 2,
+        "totalTokenCount": 20, "promptTokensDetails": [{"modality": "IMAGE", "tokenCount": 1100},
+                                                       {"modality": "TEXT", "tokenCount": 12}]}
+    assert "usage_metadata" not in rows[8]

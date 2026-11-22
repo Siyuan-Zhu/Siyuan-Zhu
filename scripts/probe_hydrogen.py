@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual Hydrogen probe: list models, then make up to eight paid calls.
+"""Manual Hydrogen probe: list models, then make up to nine paid calls.
 
 Prints model versions, token counts and timings only. It never prints the key, response
 text, or any credential identity. Each call is one SDK attempt, and nothing paid runs for a
@@ -11,15 +11,23 @@ model that is not listed. The calls, in order:
   medium);
 - one critic call: a synthetic batch of nine 384-pixel images in the engine's batch critic
   request shape, at thinking level high with max_output_tokens 15000;
+- one cap_check call: the Director prompt at thinking level high with max_output_tokens 1024,
+  to show whether thoughts are bounded by the output cap (a reply cut off by the cap is the
+  expected result, not a probe failure);
 - one gemini-embedding-2 call, only if that model is listed: two short synthetic texts in the
   engine's clustering form at 768 dimensions (the embedder's own request contents); the probe
   exits 1 after the embedding line when its vector count differs from its text count.
 
 Each call prints one numbers-only line with seconds=<elapsed, one decimal> (total_output =
-candidates + thoughts tokens). A summary line after the critic call gives
-max_total_output_high, max_total_output_medium, max_seconds_high, critic_total_output and
-critic_seconds; the embedding line follows it. When the critic call fails, the summary is still
-printed (critic fields null) before the failed line.
+candidates + thoughts tokens). Every generate line carries usage_metadata, the reply's own
+usageMetadata record. The text call, the Director-sized calls and the critic call also print
+counted_tokens: the free countTokens figure for the same model and contents (null when it
+fails); the critic line adds counted_text_tokens, the count with every image part replaced by an
+empty text part (the guard's own second count). A summary line after the cap_check call gives
+max_total_output_high, max_total_output_medium, max_seconds_high, critic_total_output,
+critic_seconds and max_prompt_minus_counted (the largest billed prompt tokens minus counted
+tokens); the embedding line follows it. When the critic or cap_check call fails, the summary is
+still printed (critic fields null if the critic failed) before the failed line.
 
 Coordinator rule for choosing the Hydrogen output cap (not enforced by code): take the smallest
 cap from 4000/6000/8000/10000/15000 that is at least 1.5 times the LARGER of
@@ -68,6 +76,7 @@ COUNT_FIELDS = (
 
 
 FIT_OUTPUT_TOKENS = 15000
+CAP_CHECK_OUTPUT_TOKENS = 1024
 FIT_PLAN = (("high", FIT_OUTPUT_TOKENS),) * 3 + (("medium", FIT_OUTPUT_TOKENS),)
 FINISH_PATTERN = re.compile(r"[A-Z_]{1,32}")
 FIT_TOPICS = (
@@ -148,6 +157,33 @@ def critic_fit_parts():
     return parts
 
 
+def counted_tokens(genai_client, contents):
+    """countTokens (a free metadata endpoint) for the same model and contents; null on any failure."""
+    try:
+        return safe_count(genai_client.models.count_tokens(model=HYDROGEN, contents=contents).total_tokens)
+    except Exception:
+        return None
+
+
+def text_only_parts(parts):
+    """The guard's second count: every image part replaced by an empty text part."""
+    return [part if isinstance(part, str) else {"text": ""} for part in parts]
+
+
+def usage_record(response):
+    """The reply's own usageMetadata record, as the guard stores and hashes it."""
+    try:
+        return response.model_dump(by_alias=True, exclude_none=True).get("usageMetadata")
+    except Exception:
+        return None
+
+
+def max_prompt_minus_counted(measured):
+    gaps = [row["prompt_tokens"] - row["counted_tokens"] for row in measured
+            if row.get("prompt_tokens") is not None and row.get("counted_tokens") is not None]
+    return max(gaps) if gaps else None
+
+
 def _timed(call):
     start = _clock()
     result = call()
@@ -208,13 +244,15 @@ def run_thinking_fit(genai_client):
             "thinking_config": {"thinking_level": level},
         }
         try:
+            counted = counted_tokens(genai_client, prompt)
             response, seconds = _timed(lambda: genai_client.models.generate_content(
                 model=HYDROGEN, contents=prompt, config=config
             ))
             row = fit_row(level, max_output_tokens, response)
         except Exception as error:
             raise ProbeFailure(f"thinking_{level}_{index}", type(error).__name__) from None
-        yield {**row, "seconds": seconds}
+        yield {**row, "counted_tokens": counted, "usage_metadata": usage_record(response),
+               "seconds": seconds}
 
 
 def run_critic_fit(genai_client):
@@ -227,13 +265,40 @@ def run_critic_fit(genai_client):
     }
     try:
         parts = critic_fit_parts()
+        counted = counted_tokens(genai_client, parts)
+        counted_text = counted_tokens(genai_client, text_only_parts(parts))
         response, seconds = _timed(lambda: genai_client.models.generate_content(
             model=HYDROGEN, contents=parts, config=config
         ))
         row = fit_row("high", FIT_OUTPUT_TOKENS, response)
     except Exception as error:
         raise ProbeFailure("critic", type(error).__name__) from None
-    return {"call": "critic", "images": CRITIC_IMAGES, **row, "seconds": seconds}
+    return {"call": "critic", "images": CRITIC_IMAGES, **row, "counted_tokens": counted,
+            "counted_text_tokens": counted_text, "usage_metadata": usage_record(response),
+            "seconds": seconds}
+
+
+def run_cap_check(genai_client):
+    """One Director-sized call at thinking high with a 1024-token cap: are thoughts bounded by it?"""
+    config = {
+        "max_output_tokens": CAP_CHECK_OUTPUT_TOKENS,
+        "response_mime_type": "application/json",
+        "thinking_config": {"thinking_level": "high"},
+    }
+    try:
+        prompt = director_fit_prompt()
+        counted = counted_tokens(genai_client, prompt)
+        response, seconds = _timed(lambda: genai_client.models.generate_content(
+            model=HYDROGEN, contents=prompt, config=config
+        ))
+        row = fit_row("high", CAP_CHECK_OUTPUT_TOKENS, response)
+    except Exception as error:
+        raise ProbeFailure("cap_check", type(error).__name__) from None
+    return {"call": "cap_check", "max_output_tokens": CAP_CHECK_OUTPUT_TOKENS,
+            "candidates_tokens": row["candidates_tokens"], "thoughts_tokens": row["thoughts_tokens"],
+            "total_output": row["total_output"], "finish_reason": row["finish_reason"],
+            "prompt_tokens": row["prompt_tokens"], "counted_tokens": counted,
+            "usage_metadata": usage_record(response), "seconds": seconds}
 
 
 def _billed_tokens(response):
@@ -363,10 +428,12 @@ def run_probe(key: str, *, http_client, genai_client) -> dict:
     if HYDROGEN in report["missing"]:
         return report
     try:
+        counted = counted_tokens(genai_client, PROBE_TEXT)
         response, seconds = _timed(lambda: genai_client.models.generate_content(
             model=HYDROGEN, contents=PROBE_TEXT, config=CALL_CONFIG
         ))
         report["text"], _ = summarize(response)
+        report["text"].update(counted_tokens=counted, usage_metadata=usage_record(response))
         report["text"]["seconds"] = seconds
     except Exception as error:
         raise ProbeFailure("text", type(error).__name__) from None
@@ -377,6 +444,7 @@ def run_probe(key: str, *, http_client, genai_client) -> dict:
         ))
         report["image"], usage = summarize(response)
         report["image"]["image_prompt_token_count"] = image_detail_count(usage)
+        report["image"]["usage_metadata"] = usage_record(response)
         report["image"]["seconds"] = seconds
     except Exception as error:
         raise ProbeFailure("image", type(error).__name__) from None
@@ -448,14 +516,22 @@ def main(argv=None, *, env=None, http_factory=None, genai_factory=None) -> int:
         high_seconds = [r["seconds"] for r in rows if r["thinking_level"] == "high"]
         summary.update(max_seconds_high=max(high_seconds) if high_seconds else None,
                        critic_total_output=None, critic_seconds=None)
+        measured = [{"prompt_tokens": report["text"]["prompt_token_count"],
+                     "counted_tokens": report["text"]["counted_tokens"]}] + rows
         try:
             critic = run_critic_fit(genai_client)
+            print(json.dumps(critic))
+            measured.append(critic)
+            summary.update(critic_total_output=critic["total_output"], critic_seconds=critic["seconds"])
+            cap_check = run_cap_check(genai_client)
+            print(json.dumps(cap_check))
+            measured.append(cap_check)
         except ProbeFailure:
-            # The Director measurements still reach the coordinator; the critic fields stay null.
-            print(json.dumps(summary))
+            # The measurements so far still reach the coordinator; the critic fields stay null
+            # when the critic call failed.
+            print(json.dumps({**summary, "max_prompt_minus_counted": max_prompt_minus_counted(measured)}))
             raise
-        print(json.dumps(critic))
-        summary.update(critic_total_output=critic["total_output"], critic_seconds=critic["seconds"])
+        summary["max_prompt_minus_counted"] = max_prompt_minus_counted(measured)
         print(json.dumps(summary))
         if EMBEDDING_2 not in report["missing"]:
             embedding = run_embedding(genai_client)
