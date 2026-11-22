@@ -67,6 +67,7 @@ from .visual_router import (
 
 from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_controls_supported
 from . import embedding_migration
+from . import judge_calibration
 from .embedding_migration import EmbeddingRun
 from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
@@ -918,6 +919,12 @@ class ZeitgeistADKOrchestrator:
             curated_candidates = fetch_curated_library_candidates(word=commission.word)
 
         from .visual_router import PhotoSelectionUnavailable
+        # The stored calibration is read only when Hydrogen judges a live run; its marks are matched at the
+        # gate against the judge in force then, so a fallback to Flash mid-run applies Flash's marks.
+        judge_document = (judge_calibration.load_document(store)
+                          if genai_client is not None and run_models.current("judge") == HYDROGEN else None)
+        pass_marks = (judge_calibration.DEFAULT_MARKS if judge_document is None
+                      else lambda: judge_calibration.marks_for(run_models.current("judge"), judge_document))
         exception_candidates = []
         def render_commission(current, *, photo_only=None):
             nonlocal exception_candidates
@@ -942,6 +949,7 @@ class ZeitgeistADKOrchestrator:
                                  str(config.get("budget_guardrails", {}).get("multimodal_judge_model", "gemini-3.8-flash"))),
                     strict_photo_errors=genai_client is not None,
                     offline_demo=offline_demo is True,
+                    pass_marks=pass_marks,
                 )
             except PhotoSelectionUnavailable as exc:
                 # Only candidates scored against this exact commission survive to
