@@ -51,7 +51,7 @@ jobs:
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN || secrets.APIFY_API_TOKEN }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN || secrets.APIFY_TOKEN }}
-          SPEND_POLICY_SHA256: "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
+          SPEND_POLICY_SHA256: "6657e657bd261d5a76ffd939d16f0dc1b817e847bfa50a3ce1f39881d102cc96"
           STATE_STORE_BACKEND: ${{ vars.STATE_STORE_BACKEND || 'json' }}
           FIRESTORE_COLLECTION_PREFIX: ${{ vars.FIRESTORE_COLLECTION_PREFIX || '' }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || secrets.GOOGLE_CLOUD_PROJECT || secrets.FIRESTORE_PROJECT_ID || 'git-readme-features' }}
