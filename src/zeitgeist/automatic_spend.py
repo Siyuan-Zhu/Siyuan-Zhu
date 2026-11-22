@@ -14,7 +14,7 @@ import math
 import re
 from urllib.parse import urlparse
 
-from .spend_guard import BudgetGuard, SpendBlocked, money
+from .spend_guard import EMBEDDING_2_OPERATION, HYDROGEN_OPERATION, BudgetGuard, SpendBlocked, money
 
 STATIC = ('account_id', 'plan_id', 'credential_fingerprint', 'credit_kind',
           'operation_caps_usd', 'request_limits', 'max_request_duration_seconds')
@@ -291,6 +291,24 @@ def gemini_rates_within_approval(account, pinned, price, now):
     return gemini_rate_excess(account, pinned, price, now) is not None
 
 
+# The two new models' operations. When the policy budgets one and it is not listed by
+# ListModels, not published, or published above its approved rate, a refresh disables
+# that operation (refused before any call) instead of blocking everything.
+OPTIONAL_OPERATIONS = frozenset({HYDROGEN_OPERATION, EMBEDDING_2_OPERATION})
+
+
+def gemini_metadata_verified(fresh, operations):
+    """True when the Gemini metadata read is verified, or misses only models that serve
+    budgeted optional operations alone (those operations are then disabled)."""
+    if fresh.get('status') == 'metadata_verified':
+        return True
+    models = lambda optional: {op.split(':', 1)[1] for op in operations if (op in OPTIONAL_OPERATIONS) == optional}
+    missing = fresh.get('missing_models')
+    return (fresh.get('status') == 'incomplete' and isinstance(missing, list) and bool(missing)
+            and all(isinstance(model, str) for model in missing)
+            and set(missing) <= models(True) - models(False))
+
+
 def gemini_rate_excess(account, pinned, price, now):
     """In-band excess of Gemini's published current rates over the approved rates, or None to block.
 
@@ -300,7 +318,21 @@ def gemini_rate_excess(account, pinned, price, now):
     approved rate (but within the band), sorted; it is empty when none is. Fields
     prefixed future_ are never read.
     """
-    excess = []
+    review = gemini_rate_review(account, pinned, price, now)
+    if review is None or review[1]:
+        return None
+    return review[0]
+
+
+def gemini_rate_review(account, pinned, price, now):
+    """(excess, disabled) for Gemini's published current rates, or None to block.
+
+    As gemini_rate_excess, except that an optional operation that is missing from
+    the contract, or whose published rates do not fit its approved rates exactly
+    (any rate above approval, in band or not), does not block: it is returned in
+    the sorted disabled list and contributes no excess.
+    """
+    excess, disabled = [], []
     try:
         contract = price.get('contract')
         if (not isinstance(contract, dict) or price.get('sha256') != digest(contract) or
@@ -313,39 +345,53 @@ def gemini_rate_excess(account, pinned, price, now):
             return None
         published = contract['operations']
         limits = account.get('request_limits', {})
-        for operation in set(limits) | set(account.get('operation_caps_usd', {})):
-            observed = published.get(operation)
-            if not isinstance(observed, dict):
+        for operation in sorted(set(limits) | set(account.get('operation_caps_usd', {}))):
+            entries = _gemini_operation_excess(operation, published.get(operation), limits.get(operation, {}))
+            if operation in OPTIONAL_OPERATIONS and entries != []:
+                disabled.append(operation)
+            elif entries is None:
                 return None
-            approved = limits.get(operation, {})
-            input_only = observed.get('billing_basis') == 'input_tokens'
-            # Every budgeted operation needs an approved rate to be compared against.
-            if 'input_token_usd_per_million' not in approved:
-                return None
-            if 'output_token_usd_per_million' not in approved and not input_only:
-                return None
-            if input_only and Decimal(str(approved.get('output_token_usd_per_million', '0'))) != 0:
-                return None
-            for key in ('input_token_usd_per_million', 'output_token_usd_per_million'):
-                rate = observed.get(key)
-                # Input-only operations (embeddings) publish no output rate: that is zero.
-                if rate is None and key == 'output_token_usd_per_million' and input_only:
-                    rate = '0'
-                if key in approved:
-                    rate, ceiling = Decimal(str(rate)), Decimal(str(approved[key]))
-                    if not rate.is_finite() or not ceiling.is_finite() or not within_price_band('gemini', rate, ceiling):
-                        return None
-                    if rate > ceiling:
-                        excess.append({'operation': operation, 'rate': key,
-                                       'approved': format(ceiling.normalize(), 'f'),
-                                       'observed': format(rate.normalize(), 'f')})
-            if approved.get('pricing_valid_until') is not None and not (
-                    observed.get('published_rate_schedule') == 'current_only'
-                    and 'published_current_rate_through_date' not in observed):
-                through = date.fromisoformat(observed['published_current_rate_through_date'])
-                if through < _time(approved['pricing_valid_until']).date():
+            else:
+                excess.extend(entries)
+        return sorted(excess, key=lambda item: (item['operation'], item['rate'])), disabled
+    except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError, SpendBlocked):
+        return None
+
+
+def _gemini_operation_excess(operation, observed, approved):
+    """One operation's in-band rates above approval, or None when its published rates do not fit."""
+    excess = []
+    try:
+        if not isinstance(observed, dict):
+            return None
+        input_only = observed.get('billing_basis') == 'input_tokens'
+        # Every budgeted operation needs an approved rate to be compared against.
+        if 'input_token_usd_per_million' not in approved:
+            return None
+        if 'output_token_usd_per_million' not in approved and not input_only:
+            return None
+        if input_only and Decimal(str(approved.get('output_token_usd_per_million', '0'))) != 0:
+            return None
+        for key in ('input_token_usd_per_million', 'output_token_usd_per_million'):
+            rate = observed.get(key)
+            # Input-only operations (embeddings) publish no output rate: that is zero.
+            if rate is None and key == 'output_token_usd_per_million' and input_only:
+                rate = '0'
+            if key in approved:
+                rate, ceiling = Decimal(str(rate)), Decimal(str(approved[key]))
+                if not rate.is_finite() or not ceiling.is_finite() or not within_price_band('gemini', rate, ceiling):
                     return None
-        return sorted(excess, key=lambda item: (item['operation'], item['rate']))
+                if rate > ceiling:
+                    excess.append({'operation': operation, 'rate': key,
+                                   'approved': format(ceiling.normalize(), 'f'),
+                                   'observed': format(rate.normalize(), 'f')})
+        if approved.get('pricing_valid_until') is not None and not (
+                observed.get('published_rate_schedule') == 'current_only'
+                and 'published_current_rate_through_date' not in observed):
+            through = date.fromisoformat(observed['published_current_rate_through_date'])
+            if through < _time(approved['pricing_valid_until']).date():
+                return None
+        return excess
     except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError, SpendBlocked):
         return None
 
@@ -686,7 +732,10 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
         if any(account.get(key) != pinned['account'][key] for key in pinned_keys(provider)):
             raise SpendBlocked('Pinned provider identity, tariff or request policy changed')
         fresh = observation.get(provider, {})
-        if fresh.get('status') != 'metadata_verified':
+        disabled = set()
+        verified = (gemini_metadata_verified(fresh, account['operation_caps_usd']) if provider == 'gemini'
+                    else fresh.get('status') == 'metadata_verified')
+        if not verified:
             raise SpendBlocked('Provider metadata or credential binding failed')
         if fresh.get('credential_fingerprint') != account['credential_fingerprint']:
             _rebind_credential(candidate, provider, account, pinned, fresh, observation['observed_at'])
@@ -694,10 +743,13 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
             price = observation.get('price_snapshots', {}).get(provider, {})
             if price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
                 # A provider edits its pricing page without changing rates: compare the rates in effect.
-                checker = {'gemini': gemini_rate_excess, 'bfl': bfl_rate_excess}.get(provider)
+                checker = {'gemini': gemini_rate_review, 'bfl': bfl_rate_excess}.get(provider)
                 excess = checker(account, pinned, price, now) if checker else None
                 if excess is None:
                     raise SpendBlocked('Primary price snapshot changed, stale or missing')
+                if provider == 'gemini':
+                    excess, rate_disabled = excess
+                    disabled.update(rate_disabled)
                 account['price_observed_sha256'] = price['sha256']
                 account['price_observed_at'] = price['observed_at']
                 if excess:
@@ -720,7 +772,14 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
                 method, model = op.split(':', 1)
                 required_method = {'generate_content': 'generateContent', 'embed_content': 'embedContent'}.get(method)
                 if not required_method or required_method not in methods.get(model, []):
-                    raise SpendBlocked('Required exact Gemini model/method unavailable')
+                    if op not in OPTIONAL_OPERATIONS:
+                        raise SpendBlocked('Required exact Gemini model/method unavailable')
+                    disabled.add(op)
+            # Private refresh evidence: operations refused before any call until a later refresh.
+            if disabled:
+                account['disabled_operations'] = sorted(disabled)
+            else:
+                account.pop('disabled_operations', None)
             observed_credit = money(0)
         elif provider == 'bfl':
             observed_credit = money(fresh.get('balance_credits')) * money(pinned['credit_unit_usd'])

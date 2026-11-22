@@ -64,11 +64,11 @@ def test_successor_refreshes_on_the_hash_path():
     assert HYDROGEN_OPERATION in account['operation_caps_usd']
 
 
-def test_successor_requires_hydrogen_listed():
+def test_successor_without_hydrogen_listed_disables_only_hydrogen():
     ledger0, _, p1 = policies()
     ledger1 = successor_ledger(ledger0, p1, auto.digest(p1))
-    with pytest.raises(SpendBlocked, match='Required exact Gemini model/method unavailable'):
-        refreshed(ledger1, p1, observation(p1, hydrogen_listed=False))
+    account = refreshed(ledger1, p1, observation(p1, hydrogen_listed=False))['providers']['gemini']
+    assert account['disabled_operations'] == [HYDROGEN_OPERATION]
     # The installed policy does not budget Hydrogen, so it does not need it listed.
     ledger0_, p0, _ = policies()
     refreshed(ledger0_, p0, observation(p0, hydrogen_listed=False))
@@ -127,7 +127,7 @@ def test_hydrogen_call_admitted_under_successor_only():
     assert len(calls) == 1
 
 
-def test_embedding_2_successor_refresh_requires_embedding_2_listed_with_embed_content():
+def test_embedding_2_successor_refresh_disables_embedding_2_unless_listed_with_embed_content():
     ledger0, _, p1 = policies(include_embedding_2=True)
     assert CONTRACT['operations'][EMBEDDING_2_OPERATION]['input_token_usd_per_million'] == '0.2'
     ledger1 = successor_ledger(ledger0, p1, auto.digest(p1))
@@ -135,8 +135,8 @@ def test_embedding_2_successor_refresh_requires_embedding_2_listed_with_embed_co
     assert account['operation_caps_usd'][EMBEDDING_2_OPERATION] == '0.04096'
     assert 'price_observed_sha256' not in account and 'price_band_audit' not in account
     for methods in (None, [], ['generateContent']):
-        with pytest.raises(SpendBlocked, match='Required exact Gemini model/method unavailable'):
-            refreshed(ledger1, p1, observation(p1, embedding_2_methods=methods))
+        account = refreshed(ledger1, p1, observation(p1, embedding_2_methods=methods))['providers']['gemini']
+        assert account['disabled_operations'] == [EMBEDDING_2_OPERATION]
     # The Hydrogen-only successor does not budget embedding-2, so it does not need it listed.
     ledger0_, _, hydrogen_only = policies()
     refreshed(successor_ledger(ledger0_, hydrogen_only, auto.digest(hydrogen_only)), hydrogen_only,

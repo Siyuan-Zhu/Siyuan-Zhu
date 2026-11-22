@@ -322,6 +322,18 @@ GENAI_RATE_KEYS = ("input_token_usd_per_million", "output_token_usd_per_million"
                    "approved_input_token_usd_per_million", "approved_output_token_usd_per_million")
 
 
+# Reuses each model's public reason: a disabled operation is not verified for this refresh.
+_DISABLED_REASONS = {HYDROGEN_OPERATION: "Unverified Gemini 4 Hydrogen pricing or model policy",
+                     EMBEDDING_2_OPERATION: "Unverified Gemini Embedding 2 pricing or model policy"}
+
+
+def refuse_disabled_operation(account, operation):
+    """Raise for an operation the last refresh disabled (account["disabled_operations"])."""
+    disabled = account.get("disabled_operations", [])
+    if not isinstance(disabled, list) or operation in disabled:
+        raise SpendBlocked(_DISABLED_REASONS.get(operation, "Verified model pricing and request limits required"))
+
+
 def genai_rates(account, operation):
     """The four Gemini token rates of a new hold, as strings: charged, then approved."""
     from .automatic_spend import approved_rate, charged_rate
@@ -824,6 +836,7 @@ class BudgetGuard:
             raise SpendBlocked("Unpriced SDK request option")
         def read(doc):
             account = self._validate(doc, "gemini")
+            refuse_disabled_operation(account, operation)
             limits = account.get("request_limits", {}).get(operation)
             if not isinstance(limits, dict) or not limits.get("pricing_reference"):
                 raise SpendBlocked("Verified model pricing and request limits required")

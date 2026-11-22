@@ -94,10 +94,13 @@ def observe_provider_metadata(policy, env: Mapping[str, str], now):
     # transient anonymous pricing read. Reuse the refresh validator's exact gate.
     # A re-bindable provider's token is bound to the ledger by prepare_refresh, after
     # its account identity is verified; the policy keeps only its first fingerprint.
-    from .automatic_spend import REBINDABLE_CREDENTIALS
+    from .automatic_spend import REBINDABLE_CREDENTIALS, gemini_metadata_verified
     for name, pinned in policy["providers"].items():
         fresh = report.get(name, {})
-        if (fresh.get("status") != "metadata_verified" or (name not in REBINDABLE_CREDENTIALS and
+        # A missing model that serves only an optional operation disables it in the refresh.
+        verified = (gemini_metadata_verified(fresh, pinned["account"]["operation_caps_usd"]) if name == "gemini"
+                    else fresh.get("status") == "metadata_verified")
+        if (not verified or (name not in REBINDABLE_CREDENTIALS and
                 fresh.get("credential_fingerprint") != pinned["account"]["credential_fingerprint"])):
             raise SpendBlocked("Provider metadata or credential binding failed")
     report["price_snapshots"] = {}
