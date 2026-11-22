@@ -122,3 +122,26 @@ def test_line_format_is_exact():
         "[model_choice] director=gemini-4-hydrogen judge=gemini-3.8-flash "
         "embedding=gemini-embedding-2 fallback=1 unrecognized=0 slate=12"
     )
+
+
+def test_environ_none_reads_os_environ(monkeypatch):
+    monkeypatch.setenv(mc.DIRECTOR_ENV, mc.HYDROGEN)
+    monkeypatch.delenv(mc.JUDGE_ENV, raising=False)
+    monkeypatch.delenv(mc.EMBEDDING_ENV, raising=False)
+    rm = mc.resolve_run_models({})
+    assert (rm.director, rm.judge, rm.embedding) == (mc.HYDROGEN, mc.FLASH, mc.EMBED_001)
+    assert mc.resolve_run_models({}, {}).director == mc.FLASH
+
+
+def test_embed2_refusal_propagates_after_one_call():
+    rm = mc.resolve_run_models({}, {mc.EMBEDDING_ENV: mc.EMBED_2})
+    calls = []
+
+    def fn(model):
+        calls.append(model)
+        raise refused()
+
+    with pytest.raises(SpendBlocked):
+        rm.call("embedding", fn)
+    assert calls == [mc.EMBED_2]
+    assert not rm.fallback_fired

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import os
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Mapping, Optional, TypeVar
+from typing import Any, Callable, Iterator, Mapping, Optional, Tuple, TypeVar
 
 from .spend_guard import refused_before_dispatch
 
@@ -50,7 +51,7 @@ class RunModels:
         return fn(FLASH)
 
 
-def _pick(raw: Optional[str], default: str, allowed: frozenset) -> tuple:
+def _pick(raw: Optional[str], default: str, allowed: frozenset) -> Tuple[str, bool]:
     value = (raw or "").strip()
     if not value:
         return default, False
@@ -66,14 +67,14 @@ def _config_text_model(config: Mapping[str, Any], key: str) -> str:
 
 
 def resolve_run_models(config: Mapping[str, Any], environ: Optional[Mapping[str, str]] = None) -> RunModels:
-    environ = environ or {}
+    environ = os.environ if environ is None else environ
     director, bad_d = _pick(environ.get(DIRECTOR_ENV), _config_text_model(config, "primary_text_model"), _TEXT_MODELS)
     judge, bad_j = _pick(environ.get(JUDGE_ENV), _config_text_model(config, "multimodal_judge_model"), _TEXT_MODELS)
     embedding, bad_e = _pick(environ.get(EMBEDDING_ENV), EMBED_001, _EMBEDDING_MODELS)
     return RunModels(director, judge, embedding, unrecognized=bad_d or bad_j or bad_e)
 
 
-_ACTIVE: contextvars.ContextVar = contextvars.ContextVar("zeitgeist_run_models", default=None)
+_ACTIVE: "contextvars.ContextVar[Optional[RunModels]]" = contextvars.ContextVar("zeitgeist_run_models", default=None)
 
 
 @contextlib.contextmanager
