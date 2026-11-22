@@ -19,7 +19,8 @@ from src.zeitgeist.methodology import CachedItem
 from src.zeitgeist.spend_guard import SpendBlocked
 
 ECHO_TEXT = "alpha bravo charlie delta echo foxtrot"
-PACKET_INTRO = "Select the topical cluster best supported by the evidence below"
+PACKET_INTRO = "Select the topical cluster most telling of the day's climate and commission a single 1-2 word"
+STYLE_LINE = "Prefer a subtle, evocative editorial word grounded in the signals, rather than a blunt literal news or financial-action label."
 PRIVATE_LINE = (
     "The evidence lines are private working material. Never quote them, and never name a "
     "social account or a private person that appears in them."
@@ -92,11 +93,11 @@ def _scripted(replies):
 
 
 def _is_packet(prompt):
-    return PACKET_INTRO in prompt and "sample_titles" not in prompt
+    return PACKET_INTRO in prompt
 
 
 def _is_legacy(prompt):
-    return "sample_titles" in prompt and PACKET_INTRO not in prompt
+    return "most compelling" in prompt and PACKET_INTRO not in prompt
 
 
 HISTORY = ["Entropy", "Tessellation"]
@@ -120,8 +121,10 @@ def test_packet_prompt_shape():
     )
     assert PACKET_INTRO in prompt
     assert PRIVATE_LINE in prompt
-    assert "most compelling" not in prompt
-    assert "sample_titles" not in prompt
+    assert STYLE_LINE in prompt
+    assert "most compelling" not in prompt and "best supported" not in prompt
+    assert "sample_titles=['Loom study'" in prompt
+    assert "facts:" not in prompt and "evidence:" not in prompt
     assert "Loom study" in prompt
     assert "Forbidden 30-day history words: [Entropy, Tessellation]" in prompt
 
@@ -157,6 +160,22 @@ def test_two_echoes_fall_back_to_legacy_prompt():
     assert _is_packet(prompts[0]) and _is_packet(prompts[1]) and _is_legacy(prompts[2])
     assert commission.word == "Selvedge" and commission.fallback_used is False
     assert commission.packet_used is False and commission.echo_rejections == 2
+
+
+def test_legacy_attempt_has_no_banner_for_packet_rejections():
+    for bad in (_echo_reply(), _reply(word="Selvedge", commissioned_thesis="See cluster 7 for more.")):
+        llm, prompts = _scripted([bad, bad, _reply()])
+        commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm, evidence_packet=True)
+        assert len(prompts) == 3 and _is_legacy(prompts[2])
+        assert "PREVIOUS ATTEMPT REJECTED" not in prompts[2]
+        assert "PREVIOUS ATTEMPT REJECTED" in prompts[1]
+
+
+def test_legacy_banner_kept_for_todays_reasons():
+    bad = _reply(word="Entropy")
+    llm, prompts = _scripted([bad, bad, _reply()])
+    commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm, evidence_packet=True)
+    assert _is_legacy(prompts[2]) and "PREVIOUS ATTEMPT REJECTED" in prompts[2]
 
 
 def test_zero_retries_is_legacy_and_ungated():
@@ -277,6 +296,39 @@ class _FakeStore:
         if name in ("load_orbit_roster", "save_orbit_roster"):
             return getattr(self._roster, name)
         return getattr(self._inner, name)
+
+
+def _spy_keywords(monkeypatch):
+    got = {"public": [], "render": []}
+    real_public = pipeline.public_keywords
+    real_render = pipeline.select_and_render_pulse_assets
+
+    def public(kws, cluster):
+        out = real_public(kws, cluster)
+        got["public"].append((list(kws), out))
+        return ["PUBLIC_MARK"]
+
+    def render(*a, **kw):
+        got["render"].append(kw.get("cluster_keywords"))
+        return real_render(*a, **kw)
+
+    monkeypatch.setattr(pipeline, "public_keywords", public)
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets", render)
+    return got
+
+
+def test_pipeline_public_keywords_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    got = _spy_keywords(monkeypatch)
+    _run_offline(tmp_path, monkeypatch)
+    assert got["public"] and got["render"] and got["render"][0] == ["PUBLIC_MARK"]
+
+
+def test_pipeline_public_keywords_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    got = _spy_keywords(monkeypatch)
+    _run_offline(tmp_path, monkeypatch)
+    assert got["public"] == [] and got["render"] and got["render"][0] != ["PUBLIC_MARK"]
 
 
 def test_pipeline_switch_on(tmp_path, monkeypatch, capsys):

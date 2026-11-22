@@ -1,4 +1,4 @@
-"""Understanding v1 helpers: evidence packet, handle blanking, echo check.
+"""Understanding v1 helpers: typical-titles packet, handle blanking, echo check.
 
 Pure functions only: no I/O, no logging. The only environment read is in
 `understanding_v1_enabled`.
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime, timedelta
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -17,7 +16,6 @@ from .methodology import (
     _extract_unit_embedding_f32,
     _get_item_field,
     _is_personal_orbit_item,
-    _parse_utc_datetime,
     legacy_top_cluster,
 )
 
@@ -25,7 +23,6 @@ SWITCH_ENV = "ZEITGEIST_UNDERSTANDING_V1"
 
 MAX_CLUSTERS = 5
 TITLE_CHARS = 120
-SUMMARY_CHARS = 240
 ECHO_NGRAM = 5
 LONG_HANDLE_LETTERS = 12
 
@@ -33,6 +30,7 @@ _OWNER_HANDLE_RE = re.compile(r"o[1-4]_ig_([a-z0-9._]{2,30})")
 _URL_RE = re.compile(r"https?://\S+")
 _TOKEN_RE = re.compile(r"[a-z0-9']+")
 _PLAIN_LETTERS_RE = re.compile(r"[a-z]+")
+_CLUSTER_ID_RE = re.compile(r"\bcluster[ _#-]?\d+\b", re.IGNORECASE)
 
 
 def understanding_v1_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
@@ -98,8 +96,8 @@ def _vectors(items: Sequence[Any]) -> np.ndarray:
     return np.vstack(rows)
 
 
-def representative_items(items: Sequence[Any], k: int = 6) -> List[Any]:
-    """Medoid first, then greedy max-min diversity; all items in original order when n <= k."""
+def typical_items(items: Sequence[Any], k: int = 4) -> List[Any]:
+    """The k most central items (highest mean cosine to the others); all in order when n <= k."""
     items = list(items)
     n = len(items)
     if k <= 0 or n == 0:
@@ -110,17 +108,12 @@ def representative_items(items: Sequence[Any], k: int = 6) -> List[Any]:
         vecs = _vectors(items)
         sim = vecs @ vecs.T
         mean_sim = (sim.sum(axis=1) - np.diag(sim)) / float(n - 1)
-        chosen = [int(np.argmax(mean_sim))]
-        while len(chosen) < k:
-            best_idx, best_val = -1, None
-            for i in range(n):
-                if i in chosen:
-                    continue
-                worst = float(max(sim[i, c] for c in chosen))
-                if best_val is None or worst < best_val - 1e-9:
-                    best_idx, best_val = i, worst
-            chosen.append(best_idx)
-        return [items[i] for i in chosen]
+        zero = np.linalg.norm(vecs, axis=1) == 0
+        order = sorted(
+            range(n),
+            key=lambda i: (bool(zero[i]), -round(float(mean_sim[i]), 9), i),
+        )
+        return [items[i] for i in order[:k]]
     except Exception:
         return items[:k]
 
@@ -135,69 +128,38 @@ def _cut(text: str, limit: int) -> str:
     return text[:limit].rstrip()
 
 
-def _evidence_line(item: Any) -> str:
-    handles = item_handles(item)
-    title = _cut(_clean(_get_item_field(item, "title", ""), handles), TITLE_CHARS)
-    summary = _cut(_clean(_get_item_field(item, "summary", ""), handles), SUMMARY_CHARS)
-    if summary and title and summary.lower().startswith(title.lower()):
-        return summary
-    if title and summary:
-        return f"{title} | {summary}"
-    return title or summary
-
-
-def _render_cluster(cluster: Any, now_utc: Optional[datetime]) -> str:
+def _render_cluster(cluster: Any) -> str:
     items = list(getattr(cluster, "items", None) or [])
     keywords = list(getattr(cluster, "cluster_keywords", None) or [])
-    lines = [
-        "- Cluster {cid}: commission_score={cs:.2f}, velocity={v:.2f}, orbit_resonance={o:.2f}, keywords={kw}".format(
-            cid=getattr(cluster, "cluster_id", ""),
-            cs=float(getattr(cluster, "commission_score", 0.0) or 0.0),
-            v=float(getattr(cluster, "velocity", 0.0) or 0.0),
-            o=float(getattr(cluster, "orbit_resonance", 0.0) or 0.0),
-            kw=keywords,
-        )
-    ]
-    times = [_parse_utc_datetime(_get_item_field(i, "published_at")) for i in items]
-    ref = now_utc if now_utc is not None else (max(times) if times else None)
-    last_24 = last_72 = older = 0
-    for t in times:
-        age = (ref - t) if ref is not None else timedelta(0)
-        if age <= timedelta(hours=24):
-            last_24 += 1
-        elif age <= timedelta(hours=72):
-            last_72 += 1
-        else:
-            older += 1
-    sources = getattr(cluster, "unique_sources_count", None)
-    if sources is None:
-        sources = len(getattr(cluster, "unique_sources", ()) or ())
-    lines.append(
-        f"  facts: items={len(items)}, sources={int(sources)}, last_24h={last_24}, last_72h={last_72}, older={older}"
+    titles: List[str] = []
+    for it in typical_items(items):
+        title = _cut(_clean(_get_item_field(it, "title", ""), item_handles(it)), TITLE_CHARS)
+        if title:
+            titles.append(title)
+    return (
+        "- Cluster {cid}: commission_score={cs:.2f}, velocity={v:.2f}, orbit_resonance={o:.2f}, "
+        "keywords={kw}, sample_titles={titles}"
+    ).format(
+        cid=getattr(cluster, "cluster_id", ""),
+        cs=float(getattr(cluster, "commission_score", 0.0) or 0.0),
+        v=float(getattr(cluster, "velocity", 0.0) or 0.0),
+        o=float(getattr(cluster, "orbit_resonance", 0.0) or 0.0),
+        kw=keywords,
+        titles=titles,
     )
-    lines.append("  evidence:")
-    n = 0
-    for it in representative_items(items):
-        text = _evidence_line(it)
-        if not text:
-            continue
-        n += 1
-        lines.append(f"    {n}. {text}")
-    return "\n".join(lines)
 
 
 def render_evidence_packet(clusters: Sequence[Any], now_utc: Any = None) -> str:
     clusters = list(clusters or [])[:MAX_CLUSTERS]
     if not clusters:
         return "- No clusters provided"
-    now = _parse_utc_datetime(now_utc) if now_utc is not None else None
-    blocks: List[str] = []
+    lines: List[str] = []
     for c in clusters:
         try:
-            blocks.append(_render_cluster(c, now))
+            lines.append(_render_cluster(c))
         except Exception:
-            blocks.append(f"- Cluster {getattr(c, 'cluster_id', '')}: unavailable")
-    return "\n".join(blocks)
+            lines.append(f"- Cluster {getattr(c, 'cluster_id', '')}: unavailable")
+    return "\n".join(lines)
 
 
 def _ngrams(tokens: Sequence[str], n: int) -> set:
@@ -228,9 +190,34 @@ def echo_violation(fields: Sequence[str], clusters: Sequence[Any]) -> Optional[s
             for h in risky:
                 if _handle_pattern(h).search(text):
                     return "Names a source account"
+        for text in texts:
+            if _CLUSTER_ID_RE.search(text):
+                return "Names an internal cluster id"
     except Exception:
         return None
     return None
+
+
+def public_keywords(keywords: Sequence[str], cluster: Any) -> List[str]:
+    """Keywords safe to publish: drops any that is, or (for risky handles) contains, an item handle."""
+    try:
+        handles: List[str] = []
+        for it in getattr(cluster, "items", None) or []:
+            handles.extend(item_handles(it))
+        handles = list(dict.fromkeys(h for h in handles if h))
+        risky = [
+            h for h in handles
+            if _PLAIN_LETTERS_RE.fullmatch(h) is None or len(h) >= LONG_HANDLE_LETTERS
+        ]
+        kept: List[str] = []
+        for kw in keywords:
+            low = str(kw).strip().lower()
+            if low in handles or any(_handle_pattern(h).search(low) for h in risky):
+                continue
+            kept.append(kw)
+        return kept
+    except Exception:
+        return list(keywords)
 
 
 def ranking_stats(clusters: Sequence[Any]) -> Tuple[int, int]:

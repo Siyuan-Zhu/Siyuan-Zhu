@@ -62,51 +62,62 @@ def _vec(i, dim=8):
     return v
 
 
-def test_representatives_small_keeps_order():
-    items = [mk(f"t{i}", vec=_vec(i)) for i in range(4)]
-    assert u.representative_items(items) == items
+def _vec2(*xs):
+    return np.array(xs, dtype=np.float32) / np.linalg.norm(xs)
 
 
-def test_representatives_medoid_then_diverse():
-    items = [mk(f"t{i}", hours=i, vec=_vec(0)) for i in range(5)]
-    items += [mk(f"u{i}", hours=i, vec=_vec(i + 1)) for i in range(5)]
-    reps = u.representative_items(items, k=6)
-    assert len(reps) == 6
-    assert reps[0] is items[0]
-    assert reps[1].title.startswith("u")
+def _seven():
+    # items 0-2 are outliers, 3-6 sit near the centre; centrality: 4 > 6 > 3 > 5
+    vs = [(0, 1, 0), (0, 0, 1), (-1, 0, 0.2), (1, 0.2, 0.1), (1, 0.4, 0.4), (1, 0.1, 0.1), (1, 0.3, 0.2)]
+    return [mk(f"t{i}", hours=i, vec=_vec2(*v)) for i, v in enumerate(vs)]
 
 
-def test_representatives_zero_and_missing_vectors():
-    items = [mk(f"t{i}", vec=np.zeros(8, dtype=np.float32)) for i in range(7)]
+def test_typical_most_central_in_order():
+    items = _seven()
+    got = u.typical_items(items)
+    assert [x.title for x in got] == ["t4", "t6", "t3", "t5"]
+
+
+def test_typical_small_keeps_order():
+    items = [mk(f"t{i}", vec=_vec(i)) for i in range(3)]
+    assert u.typical_items(items) == items
+    assert u.typical_items([]) == []
+
+
+def test_typical_zero_and_missing_vectors():
+    items = [mk(f"t{i}", vec=np.zeros(8, dtype=np.float32)) for i in range(6)]
     items += [mk("none")]
-    assert len(u.representative_items(items, k=6)) == 6
+    assert len(u.typical_items(items)) == 4
+    mixed = [mk("z", vec=np.zeros(8, dtype=np.float32))] + [mk(f"v{i}", vec=_vec(0)) for i in range(5)]
+    assert "z" not in [x.title for x in u.typical_items(mixed)]
 
 
-def test_render_exact_block():
-    items = [
-        mk("First title", "First summary text", hours=2),
-        mk("Second title", "", hours=30),
-        mk("", "", hours=100),
-    ]
+def test_render_exact_line():
+    items = [mk("First title", "First summary text", hours=2), mk("Second title", "", hours=30)]
     out = u.render_evidence_packet([mc(items)], now_utc=NOW)
     assert out == (
-        "- Cluster cluster_0: commission_score=1.23, velocity=1.10, orbit_resonance=1.50, keywords=['alpha', 'beta']\n"
-        "  facts: items=3, sources=2, last_24h=1, last_72h=1, older=1\n"
-        "  evidence:\n"
-        "    1. First title | First summary text\n"
-        "    2. Second title"
+        "- Cluster cluster_0: commission_score=1.23, velocity=1.10, orbit_resonance=1.50, "
+        "keywords=['alpha', 'beta'], sample_titles=['First title', 'Second title']"
     )
+
+
+def test_render_uses_typical_four_not_first_four():
+    items = _seven()
+    out = u.render_evidence_packet([mc(items)])
+    assert "sample_titles=['t4', 't6', 't3', 't5']" in out
+    assert "t0" not in out.split("sample_titles=")[1]
+    assert "facts:" not in out and "evidence:" not in out
 
 
 def test_render_cleaning_and_limits():
     items = [
         mk("T" * 200, "S" * 400),
-        mk("Hello", "Hello world see https://x.test/a?b=1 thanks river.studio_7", source_id="o2_ig_river.studio_7"),
+        mk("Hello see https://x.test/a?b=1 thanks river.studio_7", source_id="o2_ig_river.studio_7"),
     ]
     out = u.render_evidence_packet([mc(items)], now_utc=NOW)
     assert "T" * 121 not in out and "T" * 120 in out
-    assert "S" * 241 not in out
-    assert "Hello world see thanks someone" in out
+    assert "S" * 20 not in out
+    assert "Hello see thanks someone" in out
     assert "river.studio_7" not in out and "https" not in out and "o2_ig" not in out
 
 
@@ -116,8 +127,9 @@ def test_render_edge_cases():
     clusters = [mc([], cid=f"c{i}") for i in range(7)]
     out = u.render_evidence_packet(clusters)
     assert out.count("- Cluster ") == 5 and out.index("c0") < out.index("c4")
+    assert len(out.splitlines()) == 5
     out = u.render_evidence_packet([mc([mk(EMOJI, CJK)])])
-    assert "evidence:" in out
+    assert "sample_titles=" in out and "evidence:" not in out
 
 
 def _orbit_cluster():
@@ -134,6 +146,25 @@ def test_echo_violation():
     assert u.echo_violation(["thanks River.Studio_7"], cl) == "Names a source account"
     assert u.echo_violation([EMOJI, "", CJK], cl) is None
     assert u.echo_violation([], []) is None
+
+
+def test_echo_cluster_id():
+    cl = _orbit_cluster()
+    for text in ("Cluster 78 reflects on the divine", "see cluster_3", "Cluster#4", "cluster-9 here"):
+        assert u.echo_violation([text], cl) == "Names an internal cluster id"
+    assert u.echo_violation(["a cluster of stars"], cl) is None
+    assert u.echo_violation(["clusters 5 times"], cl) is None
+
+
+def test_public_keywords():
+    it = mk("t", source_id="o2_ig_river.studio_7", extra={"mentioned_handles": ["longlettershandle", "quill"]})
+    cl = mc([it, mk("plain")])
+    assert u.public_keywords(["river.studio_7", "Quill", "loom", "wow longlettershandle", "quilling"], cl) == [
+        "loom", "quilling",
+    ]
+    assert u.public_keywords(["a", "b"], mc([mk("x")])) == ["a", "b"]
+    assert u.public_keywords(["a"], object()) == ["a"]
+    assert u.public_keywords(["a"], None) == ["a"]
 
 
 def test_echo_ordinary_word_handle_ok():

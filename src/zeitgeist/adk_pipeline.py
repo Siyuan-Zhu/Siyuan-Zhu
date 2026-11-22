@@ -38,6 +38,7 @@ from .collectors import (
 )
 from .understanding import (
     echo_violation,
+    public_keywords,
     ranking_stats,
     render_evidence_packet,
     understanding_v1_enabled,
@@ -779,6 +780,11 @@ class ZeitgeistADKOrchestrator:
         vel_score = float(top_cluster.velocity) if top_cluster is not None else 2.50
         is_breakout = bool(getattr(top_cluster, "breakout_surge", False)) if top_cluster is not None else False
         c_keywords = list(top_cluster.cluster_keywords) if top_cluster is not None else [commission.word]
+        if understanding_v1 and top_cluster is not None:
+            try:
+                c_keywords = public_keywords(c_keywords, top_cluster)
+            except Exception:
+                pass
         c_sil = float(top_cluster.silhouette_score) if top_cluster is not None else 0.75
 
         # Stage 4: Multimodal Visual Critic Funnel & Dual-Resolution WebP/SVG Renderer
@@ -1278,6 +1284,11 @@ def _build_director_prompt(
     )
 
 
+_PACKET_ONLY_REASONS = frozenset(
+    {"Echoes source text", "Names a source account", "Names an internal cluster id"}
+)
+
+
 def _build_packet_director_prompt(
     top_clusters: Sequence[Any],
     history_words_30d: Sequence[str],
@@ -1295,7 +1306,7 @@ def _build_packet_director_prompt(
         )
     return (
         "You are the Editorial Director for the Daily Zeitgeist & Personal Orbit Pulse.\n"
-        "Select the topical cluster best supported by the evidence below and commission a single 1-2 word "
+        "Select the topical cluster most telling of the day's climate and commission a single 1-2 word "
         "English or established European loanword (Latin script ONLY) that captures its thesis.\n"
         "Prefer a subtle, evocative editorial word grounded in the signals, rather than a blunt literal news or financial-action label.\n"
         "The gloss MUST be a single line of at most 50 characters (including spaces and punctuation) "
@@ -1409,6 +1420,7 @@ def commission_daily_zeitgeist(
     if llm_callable is not None or genai_client is not None:
         for attempt_idx in range(total_attempts):
             use_packet = evidence_packet and not constrained and attempt_idx < total_attempts - 1
+            use_packet_attempted = bool(evidence_packet and not constrained)
             prompt = None
             if use_packet:
                 try:
@@ -1422,10 +1434,13 @@ def commission_daily_zeitgeist(
                 except Exception:
                     use_packet = False
             if prompt is None:
+                legacy_reason = last_rejection_reason
+                if use_packet_attempted and legacy_reason in _PACKET_ONLY_REASONS:
+                    legacy_reason = None
                 prompt = _build_director_prompt(
                     top_clusters=top_clusters[:5],
                     history_words_30d=history_list,
-                    rejection_reason=last_rejection_reason,
+                    rejection_reason=legacy_reason,
                 )
             if constrained:
                 prompt += (
