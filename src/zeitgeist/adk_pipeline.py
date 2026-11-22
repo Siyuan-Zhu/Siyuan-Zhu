@@ -1293,11 +1293,6 @@ def _build_director_prompt(
     )
 
 
-_PACKET_ONLY_REASONS = frozenset(
-    {"Echoes source text", "Names a source account", "Names an internal cluster id"}
-)
-
-
 def _build_packet_director_prompt(
     top_clusters: Sequence[Any],
     history_words_30d: Sequence[str],
@@ -1429,8 +1424,8 @@ def commission_daily_zeitgeist(
     packet_attempts = 0
 
     if llm_callable is not None or genai_client is not None:
-        packet_attempts = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
-        phase_plan = [True] * packet_attempts + [False] * total_attempts
+        planned_packet = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
+        phase_plan = [True] * planned_packet + [False] * total_attempts
         attempts_made = 0
         packet_attempts = 0
         in_legacy_phase = False

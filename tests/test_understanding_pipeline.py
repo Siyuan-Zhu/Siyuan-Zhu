@@ -263,6 +263,20 @@ def test_packet_build_failure_uses_legacy_prompt_and_skips_echo(monkeypatch):
     assert commission.packet_used is False and commission.echo_rejections == 0
 
 
+def test_packet_build_failure_spends_only_legacy_attempts(monkeypatch):
+    def explode(*a, **k):
+        raise RuntimeError("packet failure")
+
+    monkeypatch.setattr(pipeline, "render_evidence_packet", explode)
+    bad = _reply(word="Entropy")
+    llm, prompts = _scripted([bad, bad, bad, bad, bad])
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm, evidence_packet=True)
+    assert len(prompts) == 3 and commission.fallback_used is True
+    assert all(_is_legacy(p) for p in prompts)
+    assert commission.attempts_used == len(prompts)
+    assert "PREVIOUS ATTEMPT REJECTED" not in prompts[0]
+
+
 def test_echo_check_failure_never_raises(monkeypatch):
     def explode(*a, **k):
         raise RuntimeError("echo failure")
