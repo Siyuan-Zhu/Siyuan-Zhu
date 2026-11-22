@@ -923,8 +923,9 @@ class ZeitgeistADKOrchestrator:
             curated_candidates = fetch_curated_library_candidates(word=commission.word)
 
         from .visual_router import PhotoSelectionUnavailable
-        # The stored calibration is read only when Hydrogen judges a live run; its marks are matched at the
-        # gate against the judge in force then, so a fallback to Flash mid-run applies Flash's marks.
+        # The stored calibration is read only when Hydrogen judges a live run. At the gate the marks are those
+        # of the judge in force, which produced every score of the stage: after a hand-over to Flash the
+        # stage's earlier batches are scored again on Flash, so Flash's marks never meet Hydrogen's scores.
         judge_document = (judge_calibration.load_document(store)
                           if genai_client is not None and run_models.current("judge") == HYDROGEN else None)
         pass_marks = (judge_calibration.DEFAULT_MARKS if judge_document is None

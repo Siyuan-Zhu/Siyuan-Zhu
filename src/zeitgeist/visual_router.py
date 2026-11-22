@@ -328,7 +328,7 @@ from typing import Any, Callable, Dict, Iterable, Sequence, Union
 from .judge_calibration import DEFAULT_MARKS
 
 # The photo gate's (meaning, composite) pass marks, or a function the gate calls for them once the
-# candidates are scored, so a judge fallback during scoring applies the marks of the judge in force.
+# candidates are scored, so the marks are those of the judge that produced the final scores.
 PassMarks = Union[Tuple[float, float], Callable[[], Tuple[float, float]]]
 
 logger = logging.getLogger(__name__)
@@ -1111,11 +1111,31 @@ def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=6, wor
                 return None
         with ThreadPoolExecutor(max_workers=9) as pool:
             candidates = [candidate for candidate in pool.map(thumbnail, list(unique.values())[:18]) if candidate]
-    scores = []
-    for offset in range(0, len(candidates), 9):
-        scores.extend(_score_photo_batch(candidates[offset:offset + 9], word=word, gloss=gloss,
-            thesis=thesis, gemini_api_key=gemini_api_key, model_name=judge_model, strict_errors=strict_errors))
+    scores = _score_in_batches(candidates, word=word, gloss=gloss, thesis=thesis, gemini_api_key=gemini_api_key,
+        model_name=judge_model, strict_errors=strict_errors)
     return [dict(candidate, **score, _vision_verified=True) for candidate, score in zip(candidates, scores)]
+
+
+def _score_in_batches(candidates, *, word, gloss, thesis, gemini_api_key=None, model_name="gemini-3.8-flash",
+        strict_errors=False):
+    """Score a photo stage in batches of nine, all by one judge.
+
+    When the judge hands over to Flash part-way, each batch an earlier judge scored is scored once more on
+    Flash, so one model's scores meet that model's marks at the gate.
+    """
+    run_models = model_choice.active()
+    batches = [candidates[offset:offset + 9] for offset in range(0, len(candidates), 9)]
+    scores, judged_by = [], []
+    for batch in batches:
+        scores.append(_score_photo_batch(batch, word=word, gloss=gloss, thesis=thesis,
+            gemini_api_key=gemini_api_key, model_name=model_name, strict_errors=strict_errors))
+        judged_by.append(run_models.current("judge") if run_models is not None else None)
+    if run_models is not None and run_models.current("judge") == model_choice.FLASH:
+        for number, judge in enumerate(judged_by):
+            if judge != model_choice.FLASH:
+                scores[number] = _score_photo_batch(batches[number], word=word, gloss=gloss, thesis=thesis,
+                    gemini_api_key=gemini_api_key, model_name=model_choice.FLASH, strict_errors=strict_errors)
+    return [score for batch_scores in scores for score in batch_scores]
 
 
 def _download_winning_unsplash_photo(candidate, *, access_key=None):

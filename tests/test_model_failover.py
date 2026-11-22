@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
+from src.zeitgeist import judge_calibration
 from src.zeitgeist import model_choice as mc
 from src.zeitgeist import visual_router as vr
 from src.zeitgeist.adk_pipeline import commission_daily_zeitgeist
@@ -306,3 +309,241 @@ def test_unmarked_spend_block_from_hydrogen_judge_propagates_without_flash_call(
     with mc.activate(rm), pytest.raises(SpendBlocked):
         _two_batch()
     assert [c["model"] for c in calls] == [mc.HYDROGEN] and not rm.fallback_fired
+
+
+# ---- Photo stage: after a hand-over to Flash, Flash judges every batch (Task T6) ----
+
+
+_GREY_STEP = 9
+
+
+def _grey(k):
+    """A synthetic thumbnail whose grey level names candidate k, so the fake judge can tell batches apart."""
+    stream = BytesIO()
+    Image.new("RGB", (48, 32), (_GREY_STEP * k,) * 3).save(stream, format="JPEG")
+    return stream.getvalue()
+
+
+def _candidate_numbers(contents):
+    numbers = []
+    for part in contents:
+        data = getattr(getattr(part, "inline_data", None), "data", None)
+        if data:
+            with Image.open(BytesIO(data)) as image:
+                numbers.append(round(image.convert("L").getpixel((0, 0)) / _GREY_STEP))
+    return numbers
+
+
+def _scores(meaning, other=None):
+    other = meaning if other is None else other
+    return {"semantic_alignment": meaning, "compositional_clarity": other, "editorial_memorability": other,
+            "safety_pass": True}
+
+
+def _stage_judge(monkeypatch, scores, broken=lambda model, numbers: None):
+    """A fake critic: scores(model, k) per candidate; broken(model, numbers) may fail a whole batch."""
+    calls = []
+
+    def generate(*, model, contents, config):
+        numbers = _candidate_numbers(contents)
+        calls.append((model, numbers))
+        trouble = broken(model, numbers)
+        if isinstance(trouble, BaseException):
+            raise trouble
+        if trouble is not None:
+            return SimpleNamespace(text=trouble, candidates=[])
+        rows = [dict(scores(model, k), index=i) for i, k in enumerate(numbers)]
+        return SimpleNamespace(text=json.dumps({"candidates": rows}), candidates=[])
+
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setattr("google.genai.Client", lambda **kw: SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr(vr, "guard_genai_client", lambda client, **kw: client)
+    return calls
+
+
+def _photo(photo_id):
+    return {"id": photo_id, "urls": {"small": f"https://images.unsplash.com/{photo_id}_small",
+                                     "raw": f"https://images.unsplash.com/{photo_id}_raw"},
+            "links": {"html": f"https://unsplash.com/photos/{photo_id}",
+                      "download_location": f"https://api.unsplash.com/photos/{photo_id}/download"},
+            "user": {"name": "Synthetic Photographer", "links": {"html": "https://unsplash.com/@synthetic"}},
+            "exif": {"make": "Synthetic Camera", "model": "Fixture"}}
+
+
+def _unsplash(monkeypatch, per_query=5):
+    """Two synthetic queries of per_query photos each: candidate k is photo q{k}, thumbnail grey k."""
+    numbers = {}
+
+    def get(client, url, *, params=None, **kwargs):
+        if url.endswith("/search/photos"):
+            query = params["query"]
+            items = [_photo(f"{query}{i}") for i in range(per_query)]
+            for item in items:
+                numbers.setdefault(item["id"], len(numbers))
+            return SimpleNamespace(status_code=200, json=lambda: {"results": items})
+        photo_id = url.rsplit("/", 1)[-1].removesuffix("_small")
+        return SimpleNamespace(status_code=200, content=_grey(numbers[photo_id]))
+
+    monkeypatch.setattr("httpx.Client.get", get)
+    monkeypatch.setenv("ZEITGEIST_LIVE_UNSPLASH", "1")
+    monkeypatch.setenv("UNSPLASH_ACCESS_KEY", "synthetic-unsplash-key")
+    return numbers
+
+
+class _Chosen(Exception):
+    pass
+
+
+def _photo_stage(monkeypatch, tmp_path, rm, document):
+    """One live photo stage on two batches (9 + 1) with the pipeline's marks; returns (chosen, rows, marks)."""
+    _unsplash(monkeypatch)
+    seen_marks = []
+
+    def pass_marks():
+        seen_marks.append(judge_calibration.marks_for(rm.current("judge"), document))
+        return seen_marks[-1]
+
+    def chosen(candidate, **kwargs):
+        raise _Chosen(candidate["id"])
+
+    monkeypatch.setattr(vr, "_download_winning_unsplash_photo", chosen)
+    rows = []
+    with mc.activate(rm):
+        try:
+            vr.select_and_render_pulse_assets({"word": "ANCHOR", "gloss": "Rooted craft", "commissioned_thesis": "Stability",
+                                               "unsplash_queries": ["a", "b"]},
+                                              repo_root=tmp_path, date_str="2026-11-21", requested_medium="photo",
+                                              photo_history_30d=[], judge_model=rm.current("judge"),
+                                              strict_photo_errors=True, scored_candidates_out=rows, pass_marks=pass_marks)
+        except _Chosen as picked:
+            return str(picked), rows, seen_marks
+        except vr.PhotoSelectionUnavailable:
+            return None, rows, seen_marks
+    raise AssertionError("the stage neither chose nor rejected")
+
+
+def _calibration(marks):
+    return judge_calibration.build_document(mc.HYDROGEN, marks, {"photos": 18, "flash_pass_meaning": 4,
+                                                                "flash_pass_composite": 4}, "2026-11-20")
+
+
+def _flash_table(model, k):
+    # Candidate 0: Flash meaning 0.66 (below 0.70) with a high composite; candidate 1: Flash meaning 0.75 and
+    # composite 0.685 (at least 0.68). The rest fail under any mark here.
+    return {0: _scores(0.66, 0.95), 1: _scores(0.75, 0.62)}.get(k, _scores(0.2))
+
+
+BATCH_1, BATCH_2 = list(range(9)), [9]
+
+HYDROGEN_SAID = {
+    # Hydrogen marks above Flash's: Hydrogen loved candidate 0 and hated candidate 1.
+    "hydrogen-marks-above": ((0.80, 0.78), {0: _scores(0.90), 1: _scores(0.10)}),
+    # Hydrogen marks below Flash's: candidate 0 would pass at Hydrogen's marks on Flash's own score.
+    "hydrogen-marks-below": ((0.60, 0.58), {0: _scores(0.62), 1: _scores(0.10)}),
+}
+
+BATCH_2_FAILURES = {
+    "bad-json": lambda: '{"candidates": [',
+    "transport": lambda: RuntimeError("synthetic transport failure"),
+    "refused-before-dispatch": lambda: _refusal(pre=True),
+}
+
+
+def _hydrogen_fails_batch_2(failure):
+    return lambda model, numbers: failure() if model == mc.HYDROGEN and numbers == BATCH_2 else None
+
+
+def _two_tables(hydrogen_scores):
+    return lambda model, k: _flash_table(model, k) if model == mc.FLASH else hydrogen_scores.get(k, _scores(0.2))
+
+
+@pytest.mark.parametrize("failure", list(BATCH_2_FAILURES.values()), ids=list(BATCH_2_FAILURES))
+@pytest.mark.parametrize("marks, hydrogen_scores", list(HYDROGEN_SAID.values()), ids=list(HYDROGEN_SAID))
+def test_after_a_hand_over_flash_scores_and_marks_apply_to_the_whole_stage(monkeypatch, tmp_path, marks,
+                                                                           hydrogen_scores, failure):
+    calls = _stage_judge(monkeypatch, _two_tables(hydrogen_scores), _hydrogen_fails_batch_2(failure))
+    rm = _hydrogen()
+    chosen, rows, seen_marks = _photo_stage(monkeypatch, tmp_path, rm, _calibration(marks))
+    assert calls == [(mc.HYDROGEN, BATCH_1), (mc.HYDROGEN, BATCH_2), (mc.FLASH, BATCH_2), (mc.FLASH, BATCH_1)]
+    assert [row["semantic_alignment"] for row in rows] == [_flash_table(mc.FLASH, k)["semantic_alignment"]
+                                                           for k in range(10)]
+    assert seen_marks == [(0.70, 0.68)]
+    # Candidate 0 (Flash meaning 0.66) fails and candidate 1 (Flash 0.75) passes, whatever Hydrogen said.
+    assert chosen == "a1"
+    assert rm.fallback_fired and rm.current("judge") == mc.FLASH
+
+
+def test_a_stage_judged_wholly_by_hydrogen_is_not_scored_again(monkeypatch, tmp_path):
+    calls = _stage_judge(monkeypatch, _two_tables({0: _scores(0.85), 1: _scores(0.10)}))
+    rm = _hydrogen()
+    chosen, rows, seen_marks = _photo_stage(monkeypatch, tmp_path, rm, _calibration((0.80, 0.78)))
+    assert calls == [(mc.HYDROGEN, BATCH_1), (mc.HYDROGEN, BATCH_2)]
+    assert seen_marks == [(0.80, 0.78)] and chosen == "a0" and not rm.fallback_fired
+
+
+def _batches(count, **kwargs):
+    candidates = [{"thumb_bytes": _grey(k)} for k in range(count)]
+    return vr._score_in_batches(candidates, word="ANCHOR", gloss="Rooted craft", thesis="Stability",
+                                model_name=mc.HYDROGEN, strict_errors=True, **kwargs)
+
+
+def test_three_batches_with_the_failure_on_the_third_rescore_the_first_two_once_each(monkeypatch):
+    third = list(range(18, 27))
+    calls = _stage_judge(monkeypatch, _two_tables({}),
+                         lambda model, numbers: '{"candidates": [' if model == mc.HYDROGEN and numbers == third else None)
+    rm = _hydrogen()
+    with mc.activate(rm):
+        scores = _batches(27)
+    assert calls == [(mc.HYDROGEN, list(range(9))), (mc.HYDROGEN, list(range(9, 18))), (mc.HYDROGEN, third),
+                     (mc.FLASH, third), (mc.FLASH, list(range(9))), (mc.FLASH, list(range(9, 18)))]
+    assert [s["semantic_alignment"] for s in scores] == [_flash_table(mc.FLASH, k)["semantic_alignment"]
+                                                         for k in range(27)]
+
+
+def test_a_flash_rescore_of_an_earlier_batch_that_fails_applies_todays_strict_behaviour(monkeypatch):
+    def broken(model, numbers):
+        if model == mc.HYDROGEN and numbers == BATCH_2:
+            return '{"candidates": ['
+        if model == mc.FLASH and numbers == BATCH_1:
+            return '{"candidates": ['
+        return None
+
+    calls = _stage_judge(monkeypatch, _two_tables({}), broken)
+    with mc.activate(_hydrogen()), pytest.raises(vr.PhotoCriticUnavailable):
+        _batches(10)
+    assert calls == [(mc.HYDROGEN, BATCH_1), (mc.HYDROGEN, BATCH_2), (mc.FLASH, BATCH_2), (mc.FLASH, BATCH_1)]
+
+
+def test_a_spend_block_after_the_call_on_batch_2_still_propagates(monkeypatch):
+    calls = _stage_judge(monkeypatch, _two_tables({}),
+                         lambda model, numbers: _refusal(pre=False) if model == mc.HYDROGEN and numbers == BATCH_2 else None)
+    rm = _hydrogen()
+    with mc.activate(rm), pytest.raises(SpendBlocked):
+        _batches(10)
+    assert calls == [(mc.HYDROGEN, BATCH_1), (mc.HYDROGEN, BATCH_2)] and not rm.fallback_fired
+
+
+# sha256 of the calls and rows of a two-batch Flash photo stage, taken before Task T6.
+FLASH_STAGE_SHA256 = "82918acc58bb5dc3e9e573f6b0475f094df89dbd940b710ab9fd35b74dc78d9f"
+
+
+@pytest.mark.parametrize("active", [False, True], ids=["no-run", "variables-unset"])
+def test_variables_unset_photo_stage_calls_and_rows_are_byte_identical(monkeypatch, active):
+    calls = _stage_judge(monkeypatch, _two_tables({}))
+    _unsplash(monkeypatch)
+    rm = mc.resolve_run_models({}, {})
+
+    def stage():
+        return vr._fetch_live_unsplash_candidates(["a", "b"], access_key="synthetic-unsplash-key", word="ANCHOR",
+                                                  gloss="Rooted craft", thesis="Stability", strict_errors=True)
+
+    if active:
+        with mc.activate(rm):
+            rows = stage()
+    else:
+        rows = stage()
+    blob = json.dumps({"calls": calls, "rows": rows}, sort_keys=True, default=str)
+    assert calls == [(mc.FLASH, BATCH_1), (mc.FLASH, BATCH_2)]
+    assert hashlib.sha256(blob.encode()).hexdigest() == FLASH_STAGE_SHA256
+    assert not rm.fallback_fired
