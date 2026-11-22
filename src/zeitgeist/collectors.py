@@ -20,13 +20,15 @@ import xml.etree.ElementTree as ET
 import httpx
 import numpy as np
 
-from .spend_guard import SpendBlocked
+from .spend_guard import EMBEDDING_2_MODEL, SpendBlocked
 
 logger = logging.getLogger(__name__)
 
 MAX_ITEMS_PER_SOURCE_PER_DAY: int = 3
 MAX_ACTIVE_SCOUTS: int = 15
 EMBEDDING_MODEL: str = "gemini-embedding-001"
+EMBEDDING_2_TASK_PREFIX: str = "task: clustering | query: "
+LIVE_EMBEDDING_MODELS: frozenset[str] = frozenset({EMBEDDING_MODEL, EMBEDDING_2_MODEL})
 EMBEDDING_DIM: int = 768
 EMBEDDING_BATCH_SIZE: int = 100
 FEED_CACHE_TTL_SECONDS: int = 345600
@@ -1731,6 +1733,10 @@ def _live_cached_embedding(entry: Any, model: str) -> bytes | None:
     return packed
 
 
+def _request_text(text: str, model: str) -> str:
+    return EMBEDDING_2_TASK_PREFIX + text if model == EMBEDDING_2_MODEL else text
+
+
 def embed_missing_items(
     items: list[dict[str, Any]],
     existing_cache: dict[str, dict[str, Any]] | None = None,
@@ -1744,7 +1750,7 @@ def embed_missing_items(
     """Embed deltas; live mode admits only verified vectors from the approved model."""
     if not items:
         return []
-    if require_live and model != EMBEDDING_MODEL:
+    if require_live and model not in LIVE_EMBEDDING_MODELS:
         raise IngestionUnavailable("Live embedding model differs from the approved semantic space",
             public_diagnostics={'code':'embedding-model-mismatch'})
 
@@ -1800,7 +1806,7 @@ def embed_missing_items(
             try:
                 response = active_client.models.embed_content(
                     model=model,
-                    contents=batch_text_slice,
+                    contents=[_request_text(text, model) for text in batch_text_slice],
                     config={"output_dimensionality": EMBEDDING_DIM},
                 )
                 raw_embeddings = getattr(response, "embeddings", None) or []
@@ -1832,7 +1838,7 @@ def embed_missing_items(
                     try:
                         single_resp = active_client.models.embed_content(
                             model=model,
-                            contents=[single_text],
+                            contents=[_request_text(single_text, model)],
                             config={"output_dimensionality": EMBEDDING_DIM},
                         )
                         single_embs = getattr(single_resp, "embeddings", None) or []

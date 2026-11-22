@@ -645,12 +645,15 @@ def _extract_unit_embedding_f32(item: Any, default_dim: int = 768) -> np.ndarray
     return np.zeros(default_dim, dtype=np.float32)
 
 
+NEAR_DUPLICATE_THRESHOLD: float = 0.85
+
+
 def farthest_point_diversity_sample(
     items: Sequence[Any],
     k: int = 4,
-    near_duplicate_threshold: float = 0.85,
+    near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
 ) -> List[Any]:
-    """Collapse near-duplicates (>= 0.85) to newest item, then select k maximally distant items."""
+    """Collapse near-duplicates (>= near_duplicate_threshold) to newest item, then select k maximally distant items."""
     if not items or k <= 0:
         return []
 
@@ -662,7 +665,7 @@ def farthest_point_diversity_sample(
     sorted_items = [pair[1] for pair in indexed_items]
     vecs = [_extract_unit_embedding_f32(it) for it in sorted_items]
 
-    # Step 1: Collapse near-duplicates with cosine similarity >= 0.85 to an already-kept newer item
+    # Step 1: Collapse near-duplicates (cosine similarity >= near_duplicate_threshold) to an already-kept newer item
     dedup_items: List[Any] = []
     dedup_vecs: List[np.ndarray] = []
     for item, vec in zip(sorted_items, vecs):
@@ -706,6 +709,7 @@ def load_asymmetric_window(
     max_orbit_items: int = 220,
     max_macro_items: int = 180,
     macro_per_source_k: int = 4,
+    near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
 ) -> List[Any]:
     """Build stratified active window (14d Orbit, 4d Macro) with sub-linear source damping weights."""
     if not cache_items:
@@ -755,6 +759,7 @@ def load_asymmetric_window(
         sampled_for_feed = farthest_point_diversity_sample(
             macro_by_source[source_id],
             k=macro_per_source_k,
+            near_duplicate_threshold=near_duplicate_threshold,
         )
         for item in sampled_for_feed:
             pub_raw = _get_item_field(item, "published_at")
@@ -811,6 +816,16 @@ DEFAULT_COSINE_DISTANCE_THRESHOLD: float = 0.68
 DEFAULT_MIN_CLUSTER_SIZE: int = 2
 
 
+def _validated_cutoffs(cutoffs: Sequence[float]) -> Tuple[float, ...]:
+    """Return the step-down cutoffs as floats; raise ValueError when empty or not all finite."""
+    values = tuple(float(c) for c in cutoffs)
+    if not values:
+        raise ValueError("cutoffs must not be empty")
+    if not all(math.isfinite(c) for c in values):
+        raise ValueError("cutoffs must be finite")
+    return values
+
+
 @dataclass
 class ScoredCluster:
     """Scored topical cluster with c-TF-IDF keywords, silhouette, and disjoint surge metrics."""
@@ -829,6 +844,8 @@ class ScoredCluster:
     unique_sources_count: int
     commission_score: float
     threshold_used: float = 0.78
+    legacy_s_intra: float = 0.0
+    legacy_commission_score: float = 0.0
 
     @property
     def keywords(self) -> List[str]:
@@ -1006,12 +1023,50 @@ def _compute_silhouette_scores(
     return cluster_silhouettes
 
 
+COHESION_MODES: Tuple[str, ...] = ("legacy", "offdiag")
+
+
+def _cohesion(sub_sim: np.ndarray, mode: str) -> float:
+    """Mean intra-cluster similarity: 'legacy' includes the diagonal, 'offdiag' excludes it."""
+    if mode not in COHESION_MODES:
+        raise ValueError(f"unknown cohesion_mode: {mode!r}")
+    n = int(sub_sim.shape[0])
+    total = float(np.sum(sub_sim))
+    if mode == "legacy":
+        return total / float(n ** 2)
+    if n <= 1:
+        return 0.0
+    return max(0.0, (total - float(np.trace(sub_sim))) / float(n * (n - 1)))
+
+
+def legacy_top_cluster(clusters: Sequence[ScoredCluster]) -> Optional[ScoredCluster]:
+    """Top cluster under the legacy score, regardless of the cohesion mode that ranked the list."""
+    if not clusters:
+        return None
+    return min(
+        clusters,
+        key=lambda c: (
+            -c.legacy_commission_score,
+            -c.w_recent,
+            -c.legacy_s_intra,
+            -c.unique_sources_count,
+            c.cluster_id,
+        ),
+    )
+
+
 def cluster_and_score(
     items: Sequence[Any],
     now_utc: Optional[datetime | str] = None,
     anchored_hashes_14d: Optional[Iterable[str]] = None,
+    *,
+    cohesion_mode: str = "legacy",
+    cutoffs: Sequence[float] = DYNAMIC_CLUSTER_THRESHOLDS,
 ) -> List[ScoredCluster]:
     """Cluster items via pure-numpy average linkage and rank by Disjoint Surge Velocity & Orbit Resonance."""
+    if cohesion_mode not in COHESION_MODES:
+        raise ValueError(f"unknown cohesion_mode: {cohesion_mode!r}")
+    cutoffs = _validated_cutoffs(cutoffs)
     if not items:
         return []
 
@@ -1059,11 +1114,11 @@ def cluster_and_score(
     e_hat = np.stack(vecs, axis=0).astype(np.float32)
     sim_matrix = np.clip(e_hat @ e_hat.T, -1.0, 1.0)
 
-    # Dynamic Similarity Thresholding: step down tau in [0.78, 0.72, 0.68] until >= 2 multi-source clusters emerge
+    # Dynamic Similarity Thresholding: step down tau through cutoffs until >= 2 multi-source clusters emerge
     chosen_clusters_idx: List[List[int]] = []
-    chosen_tau = DYNAMIC_CLUSTER_THRESHOLDS[0]
+    chosen_tau = cutoffs[0]
 
-    for tau in DYNAMIC_CLUSTER_THRESHOLDS:
+    for tau in cutoffs:
         candidate_clusters = _average_linkage_cluster_at_threshold(sim_matrix, tau)
         multi_source_count = 0
         for c_indices in candidate_clusters:
@@ -1158,13 +1213,14 @@ def cluster_and_score(
 
         idx_arr = np.asarray(c_indices, dtype=np.int64)
         sub_sim = sim_matrix[np.ix_(idx_arr, idx_arr)]
-        s_intra = float(np.sum(sub_sim)) / float(len(c_indices) ** 2)
+        legacy_s_intra = _cohesion(sub_sim, "legacy")
+        s_intra = _cohesion(sub_sim, cohesion_mode)
 
         unique_sources_sorted = tuple(sorted(all_sources))
         unique_count = len(unique_sources_sorted)
-        commission_score = (
-            velocity * m_orbit * s_intra * math.log(1.0 + float(unique_count))
-        )
+        _log_sources = math.log(1.0 + float(unique_count))
+        commission_score = velocity * m_orbit * s_intra * _log_sources
+        legacy_commission_score = velocity * m_orbit * legacy_s_intra * _log_sources
 
         scored_clusters.append(
             ScoredCluster(
@@ -1182,6 +1238,8 @@ def cluster_and_score(
                 unique_sources_count=unique_count,
                 commission_score=float(commission_score),
                 threshold_used=float(chosen_tau),
+                legacy_s_intra=float(legacy_s_intra),
+                legacy_commission_score=float(legacy_commission_score),
             )
         )
 
@@ -1202,17 +1260,24 @@ def score_and_cluster_signals(
     *,
     now_utc: Optional[datetime | str] = None,
     anchored_hashes_14d: Optional[Iterable[str]] = None,
+    cohesion_mode: str = "legacy",
+    cutoffs: Sequence[float] = DYNAMIC_CLUSTER_THRESHOLDS,
+    near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
 ) -> List[ScoredCluster]:
     """Run Stage 1-2 stratified windowing (14d Orbit / 4d Macro) followed by average-linkage clustering."""
+    cutoffs = _validated_cutoffs(cutoffs)
     window_items = load_asymmetric_window(
         cache_items=cache_items,
         anchored_hashes_14d=anchored_hashes_14d,
         now_utc=now_utc,
+        near_duplicate_threshold=near_duplicate_threshold,
     )
     return cluster_and_score(
         items=window_items,
         now_utc=now_utc,
         anchored_hashes_14d=anchored_hashes_14d,
+        cohesion_mode=cohesion_mode,
+        cutoffs=cutoffs,
     )
 
 

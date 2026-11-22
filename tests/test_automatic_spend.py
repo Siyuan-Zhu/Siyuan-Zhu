@@ -354,6 +354,40 @@ def test_successful_embedding_completion_accounts_full_bound_without_invented_to
         observed_at=NOW.isoformat(),request_sha256='f'*64)
 
 
+def test_embedding_2_completion_books_full_counted_bound():
+    ledger,policy,obs=fixtures()
+    operation='embed_content:gemini-embedding-2'
+    for account in (ledger['providers']['gemini'],policy['providers']['gemini']['account']):
+        account['operation_caps_usd'][operation]='.04096'
+        account['request_limits'][operation]={}
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    record=hold('gemini','.000012',credential_fingerprint='a'*16,request_sha256='f'*64,
+        request_context={'embedding_input_count':2,'counted_input_tokens':60})
+    record['operation']=operation
+    response={'embeddings':[{'values':[.1,.2]},{'values':[.3,.4]}]}
+    receipt=auto.gemini_embedding_receipt('embedding-2',record,response,credential_fingerprint='a'*16,
+        observed_at=NOW.isoformat(),request_sha256='f'*64)
+    assert auto.money(receipt['accounted_gross_usd'])==auto.money('.000012')
+    assert receipt['operation']==operation
+    assert receipt['request_id_kind']=='local_response_digest'
+    record['provider_request_id']=receipt['provider_request_id'];ledger['reservations']['embedding-2']=record
+    after=auto.admit_usage_receipt(ledger,policy,receipt,expected_policy_sha=auto.digest(policy),now=NOW)
+    assert auto.cash_exposure(after)==auto.money('.000012')
+    assert after['reservations']['embedding-2']['status']=='settled'
+    assert record['status']=='reserved'
+    with pytest.raises(SpendBlocked): auto.gemini_embedding_receipt('embedding-2',record,
+        {'embeddings':[{'values':[float('nan')]}]},credential_fingerprint='a'*16,
+        observed_at=NOW.isoformat(),request_sha256='f'*64)
+
+
+def test_unknown_embedding_operation_still_refused():
+    record=hold('gemini','.000012',request_context={'embedding_input_count':1,'counted_input_tokens':10})
+    record['operation']='embed_content:gemini-embedding-3'
+    with pytest.raises(SpendBlocked, match='Embedding completion'):
+        auto.gemini_embedding_receipt('embedding-3',record,{'embeddings':[{'values':[.1]}]},
+            credential_fingerprint='a'*16,observed_at=NOW.isoformat(),request_sha256='f'*64)
+
+
 def test_repeated_same_usage_evidence_can_be_observed_later_without_reaccounting():
     ledger,policy,response,receipt=request_fixture()
     first=auto.admit_usage_receipt(ledger,policy,receipt,expected_policy_sha=auto.digest(policy),now=NOW)
@@ -562,6 +596,35 @@ def test_rate_through_date_before_validity_blocks():
     with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
     observe_contract(obs,contract_for(through='2026-12-31'))
     refresh(ledger,policy,obs)
+
+
+def test_current_only_rate_has_no_through_date_to_compare():
+    ledger,policy,obs=fixtures()
+    ledger['providers']['gemini']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    policy['providers']['gemini']['account']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    contract=contract_for(published_rate_schedule='current_only')
+    del contract['operations'][OP]['published_current_rate_through_date']
+    observe_contract(obs,contract)
+    refresh(ledger,policy,obs)
+    assert auto.gemini_rate_excess(ledger['providers']['gemini'],policy['providers']['gemini'],obs['price_snapshots']['gemini'],NOW)==[]
+    higher=contract_for(rates=('0.31','2.50'),published_rate_schedule='current_only')
+    del higher['operations'][OP]['published_current_rate_through_date']
+    observe_contract(obs,higher)
+    excess=auto.gemini_rate_excess(ledger['providers']['gemini'],policy['providers']['gemini'],obs['price_snapshots']['gemini'],NOW)
+    assert [(e['rate'],e['observed']) for e in excess]==[('input_token_usd_per_million','0.31')]
+
+
+def test_missing_through_date_without_marker_still_blocks():
+    ledger,policy,obs=fixtures()
+    ledger['providers']['gemini']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    policy['providers']['gemini']['account']['request_limits'][OP]['pricing_valid_until']='2026-12-31T00:00:00Z'
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    contract=contract_for()
+    del contract['operations'][OP]['published_current_rate_through_date']
+    observe_contract(obs,contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+    assert auto.gemini_rate_excess(ledger['providers']['gemini'],policy['providers']['gemini'],obs['price_snapshots']['gemini'],NOW) is None
 
 
 def test_contract_digest_mismatch_blocks():

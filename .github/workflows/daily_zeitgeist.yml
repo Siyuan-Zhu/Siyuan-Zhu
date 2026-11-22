@@ -72,6 +72,7 @@ jobs:
           ZEITGEIST_LIVE_LLM: "1"
           ZEITGEIST_LIVE_COLLECT: "1"
           ZEITGEIST_LIVE_UNSPLASH: "1"
+          ZEITGEIST_UNDERSTANDING_V1: ${{ vars.ZEITGEIST_UNDERSTANDING_V1 || '0' }}
           # Owner-approved quality exception expires after this edition; safety remains mandatory.
           ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-06"
           TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
@@ -188,6 +189,10 @@ jobs:
           ZEITGEIST_LIVE_LLM: "1"
           ZEITGEIST_LIVE_COLLECT: "1"
           ZEITGEIST_LIVE_UNSPLASH: "1"
+          ZEITGEIST_DIRECTOR_MODEL: ${{ vars.ZEITGEIST_DIRECTOR_MODEL || '' }}
+          ZEITGEIST_JUDGE_MODEL: ${{ vars.ZEITGEIST_JUDGE_MODEL || '' }}
+          ZEITGEIST_EMBEDDING_MODEL: ${{ vars.ZEITGEIST_EMBEDDING_MODEL || '' }}
+          ZEITGEIST_UNDERSTANDING_V1: ${{ vars.ZEITGEIST_UNDERSTANDING_V1 || '0' }}
           # Owner-approved quality exception expires after this edition; safety remains mandatory.
           ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-06"
           TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}

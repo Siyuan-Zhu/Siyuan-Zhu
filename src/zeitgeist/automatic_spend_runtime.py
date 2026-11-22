@@ -60,7 +60,7 @@ class PrivateFirestoreStore:
         )
 
     def read(self, document_id):
-        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103|apify_build_repair_20261106|price_repair_20261113)", document_id):
+        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103|apify_build_repair_20261106|price_repair_20261113|spend_successor_20261122|spend_rollback_20261122)", document_id):
             raise SpendBlocked("Unapproved private spend document")
         return self.client.collection("spend_control").document(document_id).get()
 
@@ -94,10 +94,13 @@ def observe_provider_metadata(policy, env: Mapping[str, str], now):
     # transient anonymous pricing read. Reuse the refresh validator's exact gate.
     # A re-bindable provider's token is bound to the ledger by prepare_refresh, after
     # its account identity is verified; the policy keeps only its first fingerprint.
-    from .automatic_spend import REBINDABLE_CREDENTIALS
+    from .automatic_spend import REBINDABLE_CREDENTIALS, gemini_metadata_verified
     for name, pinned in policy["providers"].items():
         fresh = report.get(name, {})
-        if (fresh.get("status") != "metadata_verified" or (name not in REBINDABLE_CREDENTIALS and
+        # A missing model that serves only an optional operation disables it in the refresh.
+        verified = (gemini_metadata_verified(fresh, pinned["account"]["operation_caps_usd"]) if name == "gemini"
+                    else fresh.get("status") == "metadata_verified")
+        if (not verified or (name not in REBINDABLE_CREDENTIALS and
                 fresh.get("credential_fingerprint") != pinned["account"]["credential_fingerprint"])):
             raise SpendBlocked("Provider metadata or credential binding failed")
     report["price_snapshots"] = {}
@@ -186,7 +189,10 @@ def _reconcile_pending(store, intent_id, intent_snapshot, *, apply):
 
 
 # Reviewed one-time policy successors, in the order they were applied.
-POLICY_REPAIR_RECEIPTS = ("price_repair_20261103", "apify_build_repair_20261106", "price_repair_20261113")
+SUCCESSOR_RECEIPT_ID = "spend_successor_20261122"
+ROLLBACK_RECEIPT_ID = "spend_rollback_20261122"
+POLICY_REPAIR_RECEIPTS = ("price_repair_20261103", "apify_build_repair_20261106", "price_repair_20261113",
+                          SUCCESSOR_RECEIPT_ID, ROLLBACK_RECEIPT_ID)
 
 
 def _successor_policy(store, policy_sha, month):

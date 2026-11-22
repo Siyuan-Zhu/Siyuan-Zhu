@@ -36,6 +36,13 @@ from .collectors import (
     fetch_macro_scout_signals,
     sanitize_orbit_roster_state,
 )
+from .understanding import (
+    echo_violation,
+    public_keywords,
+    ranking_stats,
+    render_evidence_packet,
+    understanding_v1_enabled,
+)
 from .methodology import (
     CachedItem,
     FeedDocument,
@@ -44,6 +51,7 @@ from .methodology import (
     analyze_seven_bucket_orbit,
     cluster_and_score,
     default_curated_corpus,
+    legacy_top_cluster,
     load_asymmetric_window,
     load_orbit_config,
     score_and_cluster_signals,
@@ -57,7 +65,11 @@ from .visual_router import (
     select_and_render_pulse_assets,
 )
 
-from .spend_guard import SpendBlocked
+from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_controls_supported
+from . import embedding_migration
+from . import judge_calibration
+from .embedding_migration import EmbeddingRun
+from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
 
 logger = logging.getLogger(__name__)
@@ -91,6 +103,8 @@ def _row_to_cached_item(row: Any, idx: int, ref_dt_str: str) -> Optional[CachedI
     if not raw_hash:
         raw_hash = compute_url_hash(url_val if url_val else f"cache_{idx}")
     weight_val = row.get("orbit_weight", row.get("weight"))
+    handles = row.get("mentioned_handles")
+    extra = {"mentioned_handles": list(handles)} if isinstance(handles, (list, tuple)) and handles else {}
     return CachedItem(
         url_hash=raw_hash,
         source_id=str(row.get("source_id") or f"source_{idx}"),
@@ -103,7 +117,87 @@ def _row_to_cached_item(row: Any, idx: int, ref_dt_str: str) -> Optional[CachedI
         published_at=str(row.get("published_at") or ref_dt_str),
         embedding_f16=emb_b64 if isinstance(emb_b64, (str, bytes)) else None,
         weight=float(weight_val) if weight_val is not None else None,
+        extra=extra,
     )
+
+
+def _print_understanding_line(
+    scored_clusters: Sequence[Any],
+    commission: "DirectorCommission",
+    original: Optional["DirectorCommission"] = None,
+) -> None:
+    """One diagnostic line per run for the understanding-v1 switch; never raises.
+
+    final_echo is measured on commission (the one published); the attempt counters come from
+    original (the Director's own commission, before any photo-recovery revision).
+    """
+    try:
+        counters = original if original is not None else commission
+        top_changed, rank = ranking_stats(scored_clusters)
+        final_echo = echo_violation(
+            [commission.word, commission.gloss, commission.commissioned_thesis, commission.visual_anchor,
+             *commission.unsplash_queries, commission.imagen_commission_prompt],
+            list(scored_clusters)[:5],
+        )
+        print(
+            f"[understanding_v1] top_changed={int(top_changed)} new_top_legacy_rank={int(rank)} "
+            f"attempt={int(counters.attempts_used)} packet={int(bool(counters.packet_used))} "
+            f"echo_rejections={int(counters.echo_rejections)} final_echo={int(final_echo is not None)}"
+        )
+    except Exception:
+        pass
+
+
+_EMBEDDING_FIELDS = frozenset(
+    {"embedding_f32", "embedding_f16", "embedding_f16_b64", "embedding_model", "embedding_source"}
+)
+
+
+def _embed_rows(
+    rows: Dict[str, Dict[str, Any]], cache: Dict[str, Dict[str, Any]], client: Any, model: str
+) -> Optional[List[Dict[str, Any]]]:
+    """Embed copies of the rows live; None on any embedding failure the run absorbs.
+
+    A SpendBlocked raised after a provider call propagates unchanged; every other
+    failure, a SpendBlocked refused before any provider call included, gives None.
+    """
+    try:
+        return embed_missing_items(
+            [dict(row) for row in rows.values()],
+            existing_cache=dict(cache),
+            genai_client=client,
+            model=model,
+            require_live=True,
+        )
+    except SpendBlocked as exc:
+        if refused_before_dispatch(exc):
+            return None
+        raise
+    except Exception:
+        return None
+
+
+def _hold_switch_over_rows(
+    run: EmbeddingRun, retained: Dict[str, Dict[str, Any]], client: Any, ref_dt_str: str
+) -> None:
+    """Switch-over night: embed the retained pool with embedding-2 and hold it unsaved on the run."""
+    if len(retained) < embedding_migration.MIN_CALIBRATION_ITEMS:
+        run.deferred = True
+        return
+    stripped = {key: {k: v for k, v in row.items() if k not in _EMBEDDING_FIELDS}
+                for key, row in retained.items()}
+    embedded = _embed_rows(stripped, {}, client, embedding_migration.EMBED_2)
+    try:
+        pending = {str(row.get("url_hash") or ""): row for row in embedded or () if isinstance(row, dict)}
+        items = [_row_to_cached_item(pending.get(key), idx, ref_dt_str) for idx, key in enumerate(retained)]
+    except Exception:
+        embedded = None
+    if embedded is None:
+        # Tonight stays on 001: nothing is held, so no calibration or embedding-2 row is written.
+        run.fallback = True
+        return
+    run.pending_rows = pending
+    run.pending_items = [item for item in items if item is not None]
 
 
 def _live_collection_enabled(value: bool | None) -> bool:
@@ -150,6 +244,7 @@ def collect_96h_signals(
     genai_client: Optional[Any] = None,
     health: Optional[dict] = None,
     offline_demo: bool | None = None,
+    embedding_run: Optional[EmbeddingRun] = None,
 ) -> List[CachedItem]:
     """Load, collect, or synthesize 96h Macro + 336h Orbit items with 768-dim L2-normalized embeddings."""
     from src.state_store import get_state_store
@@ -376,16 +471,42 @@ def collect_96h_signals(
         # Coverage depends on source metadata, not embeddings. Reject an
         # unusable corpus before model calls or cache writes; recheck afterward.
         require_live_coverage(active_rows.values())
+        if embedding_run is not None:
+            embedding_run.date_str = date_str
         if active_rows:
             from src.state_store import pack_ingestion_cache_pages
-            pack_ingestion_cache_pages(date_str, active_rows, reserve_embedding=True)
-            cache_before_embedding = dict(existing_cache_map)
-            embedded_live = embed_missing_items(
-                list(active_rows.values()),
-                existing_cache=existing_cache_map,
-                genai_client=active_genai_client,
-                require_live=True,
-            )
+            save_day = True
+            if embedding_run is not None and embedding_run.mode == "migrated":
+                pack_ingestion_cache_pages(date_str, active_rows, reserve_embedding=True,
+                    embedding_model=embedding_migration.EMBED_2)
+                cache_before_embedding = dict(existing_cache_map)
+                embedded_live = _embed_rows(active_rows, cache_before_embedding, active_genai_client,
+                    embedding_migration.EMBED_2)
+                if embedded_live is not None:
+                    embedding_run.used = embedding_migration.EMBED_2
+                else:
+                    # Refused or unavailable: publish on 001 vectors held in memory only.
+                    embedded_live = embed_missing_items(
+                        [dict(row) for row in active_rows.values()],
+                        existing_cache=dict(cache_before_embedding),
+                        genai_client=active_genai_client,
+                        model=embedding_migration.EMBED_001,
+                        require_live=True,
+                    )
+                    embedding_run.fallback = True
+                    embedding_run.used = embedding_migration.EMBED_001
+                    save_day = False
+            else:
+                pack_ingestion_cache_pages(date_str, active_rows, reserve_embedding=True)
+                cache_before_embedding = dict(existing_cache_map)
+                embedded_live = embed_missing_items(
+                    list(active_rows.values()),
+                    existing_cache=existing_cache_map,
+                    genai_client=active_genai_client,
+                    require_live=True,
+                )
+                if embedding_run is not None:
+                    embedding_run.used = embedding_migration.EMBED_001
             day_shard: Dict[str, Dict[str, Any]] = {}
             retained_cache: Dict[str, Dict[str, Any]] = {}
             for item_dict in embedded_live:
@@ -402,8 +523,12 @@ def collect_96h_signals(
                         day_shard[u_hash] = dict(item_dict)
                     retained_cache[u_hash] = dict(item_dict)
             existing_cache_map = retained_cache
-            if day_shard and hasattr(active_store, "save_ingestion_cache_day"):
+            if save_day and day_shard and hasattr(active_store, "save_ingestion_cache_day"):
                 active_store.save_ingestion_cache_day(date_str, day_shard)
+            if embedding_run is not None:
+                embedding_run.items = len(retained_cache)
+                if embedding_run.mode == "switch_over":
+                    _hold_switch_over_rows(embedding_run, retained_cache, active_genai_client, ref_dt_str)
         else:
             existing_cache_map = {}
 
@@ -609,10 +734,28 @@ class ZeitgeistADKOrchestrator:
         offline_demo: bool | None = None,
     ) -> Tuple[WeightedOrbitAnalysis, VisualDecision, ADKRunTelemetry]:
         """Execute 96h signal collection -> clustering -> Editorial Director -> Visual Critic & Renderer."""
+        config = load_orbit_config(self.config_path)
+        run_models = resolve_run_models(config)
+        with activate(run_models):
+            return self._run_staged_on_models(
+                config, run_models, date_iso, prefer_visual_mode,
+                live_collect=live_collect, now_epoch=now_epoch, offline_demo=offline_demo,
+            )
+
+    def _run_staged_on_models(
+        self,
+        config: dict,
+        run_models: RunModels,
+        date_iso: str | None,
+        prefer_visual_mode: Optional[str],
+        *,
+        live_collect: Optional[bool],
+        now_epoch: float | None,
+        offline_demo: bool | None,
+    ) -> Tuple[WeightedOrbitAnalysis, VisualDecision, ADKRunTelemetry]:
         from src.state_store import get_state_store
 
         date_iso = str(date_iso or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
-        config = load_orbit_config(self.config_path)
         owner = dict(config.get("active_interjection") or {})
         if prefer_visual_mode is not None:
             owner.update(enabled=True, override_visual_mode=prefer_visual_mode)
@@ -633,6 +776,9 @@ class ZeitgeistADKOrchestrator:
 
         # Stage 1 & 2: Collect 96h/336h signals, apply stratified windowing, and cluster
         collection_health = {}
+        embedding_run = (embedding_migration.plan_embedding_run(store, run_models.embedding)
+                         if _live_collection_enabled(live_collect) else None)
+        embedding_kwargs = {"embedding_run": embedding_run} if embedding_run is not None else {}
         try:
             raw_signals = collect_96h_signals(
                 self.repo_root,
@@ -642,16 +788,23 @@ class ZeitgeistADKOrchestrator:
                 health=collection_health,
                 now_epoch=now_epoch,
                 offline_demo=offline_demo,
+                **embedding_kwargs,
             )
         except IngestionUnavailable as exc:
             exc.public_collection_health = public_collection_health({**exc.public_collection_health, **collection_health})
             raise
         reference_time = _reference_clock(date_iso, now_epoch,
             _offline_demo_enabled(offline_demo) and not _live_collection_enabled(live_collect))
-        scored_clusters = score_and_cluster_signals(
-            raw_signals,
-            now_utc=reference_time,
-        )
+        understanding_v1 = understanding_v1_enabled()
+        if embedding_run is None:
+            scored_clusters = score_and_cluster_signals(
+                raw_signals,
+                now_utc=reference_time,
+            )
+        else:
+            scored_clusters = embedding_migration.cluster_for_run(
+                raw_signals, embedding_run, store=store, now_utc=reference_time)
+            print(embedding_migration.embedding_line(embedding_run))
 
         # Extract 30-day word & visual medium history from pulse_feed.json
         feed_entries: List[Dict[str, Any]] = []
@@ -708,13 +861,21 @@ class ZeitgeistADKOrchestrator:
             except Exception:
                 genai_client = None
 
+        commission_kwargs: Dict[str, Any] = (
+            {"evidence_packet": True, "now_utc": reference_time} if understanding_v1 else {}
+        )
         commission = commission_daily_zeitgeist(
             scored_clusters,
             history_words_30d=history_words_30d,
             genai_client=genai_client,
             owner_override=owner,
             model_name=str(config.get("budget_guardrails", {}).get("primary_text_model", "gemini-3.8-flash")),
+            run_models=run_models,
+            **commission_kwargs,
         )
+        fallback_shown = run_models.fallback_fired
+        if genai_client is not None:
+            print(model_choice_line(run_models, commission.slate_count))
         if (os.environ.get("ZEITGEIST_LIVE_LLM") == "1"
                 and not _offline_demo_enabled(offline_demo) and commission.fallback_used):
             raise ValueError("Live Director commissioning unavailable; retain last publication")
@@ -723,12 +884,19 @@ class ZeitgeistADKOrchestrator:
                 and commission.fallback_used):
             raise ValueError("Owner-constrained live commissioning unavailable; retain last publication")
         self.last_commission = commission
+        original_commission = commission
 
         top_cluster = scored_clusters[0] if scored_clusters else None
-        if (top_cluster is not None and collection_health.get("apify_batch_succeeded") is True
+        bonus_cluster = top_cluster
+        if understanding_v1 and scored_clusters:
+            try:
+                bonus_cluster = legacy_top_cluster(scored_clusters) or top_cluster
+            except Exception:
+                bonus_cluster = top_cluster
+        if (bonus_cluster is not None and collection_health.get("apify_batch_succeeded") is True
                 and hasattr(store, "load_orbit_roster") and hasattr(store, "save_orbit_roster")):
             roster_before_bonus = store.load_orbit_roster()
-            roster_with_bonus = apply_winning_cluster_bonus(roster_before_bonus, top_cluster.items,
+            roster_with_bonus = apply_winning_cluster_bonus(roster_before_bonus, bonus_cluster.items,
                 reference_time, apify_batch_succeeded=True)
             if roster_with_bonus != roster_before_bonus:
                 store.save_orbit_roster(sanitize_orbit_roster_state(roster_with_bonus))
@@ -736,6 +904,11 @@ class ZeitgeistADKOrchestrator:
         vel_score = float(top_cluster.velocity) if top_cluster is not None else 2.50
         is_breakout = bool(getattr(top_cluster, "breakout_surge", False)) if top_cluster is not None else False
         c_keywords = list(top_cluster.cluster_keywords) if top_cluster is not None else [commission.word]
+        if understanding_v1 and top_cluster is not None:
+            try:
+                c_keywords = public_keywords(c_keywords, top_cluster)
+            except Exception:
+                pass
         c_sil = float(top_cluster.silhouette_score) if top_cluster is not None else 0.75
 
         # Stage 4: Multimodal Visual Critic Funnel & Dual-Resolution WebP/SVG Renderer
@@ -750,6 +923,13 @@ class ZeitgeistADKOrchestrator:
             curated_candidates = fetch_curated_library_candidates(word=commission.word)
 
         from .visual_router import PhotoSelectionUnavailable
+        # The stored calibration is read only when Hydrogen judges a live run. At the gate the marks are those
+        # of the judge in force, which produced every score of the stage: after a hand-over to Flash the
+        # stage's earlier batches are scored again on Flash, so Flash's marks never meet Hydrogen's scores.
+        judge_document = (judge_calibration.load_document(store)
+                          if genai_client is not None and run_models.current("judge") == HYDROGEN else None)
+        pass_marks = (judge_calibration.DEFAULT_MARKS if judge_document is None
+                      else lambda: judge_calibration.marks_for(run_models.current("judge"), judge_document))
         exception_candidates = []
         def render_commission(current, *, photo_only=None):
             nonlocal exception_candidates
@@ -770,45 +950,55 @@ class ZeitgeistADKOrchestrator:
                     requested_medium="photo" if photo_only is True else requested_medium,
                     require_semantic_rescore=bool(owner.get("enabled") and not _offline_demo_enabled(offline_demo)),
                     photo_history_30d=feed_entries,
-                    judge_model=str(config.get("budget_guardrails", {}).get("multimodal_judge_model", "gemini-3.8-flash")),
+                    judge_model=(run_models.current("judge") if genai_client is not None else
+                                 str(config.get("budget_guardrails", {}).get("multimodal_judge_model", "gemini-3.8-flash"))),
                     strict_photo_errors=genai_client is not None,
                     offline_demo=offline_demo is True,
+                    pass_marks=pass_marks,
                 )
             except PhotoSelectionUnavailable as exc:
                 # Only candidates scored against this exact commission survive to
                 # the allowed exception phase; never reuse another story's score.
                 exception_candidates = exc.exception_candidates
                 raise
-        if genai_client is not None and requested_medium == "blueprint":
-            from .photo_recovery import ai_exception_allowed
-            from .media_provenance import publication_media_history
-            modes = publication_media_history(feed_entries, replacing_date=str(date_iso))
-            if not ai_exception_allowed(modes):
-                raise ValueError("Non-photo cadence does not permit this requested edition")
-        if genai_client is not None and requested_medium != "blueprint":
-            from .photo_recovery import recover_visual, revision_owner_constraints
-            def revise_for_photo(current, *, change_word):
-                selected = [cluster for cluster in scored_clusters if getattr(cluster, "cluster_id", None)==current.selected_cluster_id]
-                if not selected:
-                    raise ValueError("Original story unavailable; cannot revise unrelated signals")
-                locks = revision_owner_constraints(owner, current, change_word=change_word)
-                revised = commission_daily_zeitgeist(selected,
-                    history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
-                    genai_client=genai_client, model_name=str(config.get("budget_guardrails",{}).get("primary_text_model","gemini-3.8-flash")),
-                    max_retries=0, owner_override=locks)
-                if revised.fallback_used or revised.selected_cluster_id!=current.selected_cluster_id:
-                    raise ValueError("Same-story photo recovery did not produce a grounded commission")
-                return revised
-            from .media_provenance import publication_media_history
-            cadence_history = publication_media_history(feed_entries, replacing_date=str(date_iso))
-            commission, published, recovery_trace = recover_visual(commission,
-                render=render_commission, revise=revise_for_photo, history=cadence_history,
-                photo_required=requested_medium=="photo")
-            self.last_commission = commission
-            self.last_photo_recovery = recovery_trace
-        else:
-            published = render_commission(commission)
+        try:
+            if genai_client is not None and requested_medium == "blueprint":
+                from .photo_recovery import ai_exception_allowed
+                from .media_provenance import publication_media_history
+                modes = publication_media_history(feed_entries, replacing_date=str(date_iso))
+                if not ai_exception_allowed(modes):
+                    raise ValueError("Non-photo cadence does not permit this requested edition")
+            if genai_client is not None and requested_medium != "blueprint":
+                from .photo_recovery import recover_visual, revision_owner_constraints
+                def revise_for_photo(current, *, change_word):
+                    selected = [cluster for cluster in scored_clusters if getattr(cluster, "cluster_id", None)==current.selected_cluster_id]
+                    if not selected:
+                        raise ValueError("Original story unavailable; cannot revise unrelated signals")
+                    locks = revision_owner_constraints(owner, current, change_word=change_word)
+                    revised = commission_daily_zeitgeist(selected,
+                        history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
+                        genai_client=genai_client, model_name=run_models.current("director"),
+                        run_models=run_models, max_retries=0, owner_override=locks)
+                    if revised.fallback_used or revised.selected_cluster_id!=current.selected_cluster_id:
+                        raise ValueError("Same-story photo recovery did not produce a grounded commission")
+                    return revised
+                from .media_provenance import publication_media_history
+                cadence_history = publication_media_history(feed_entries, replacing_date=str(date_iso))
+                commission, published, recovery_trace = recover_visual(commission,
+                    render=render_commission, revise=revise_for_photo, history=cadence_history,
+                    photo_required=requested_medium=="photo")
+                self.last_commission = commission
+                self.last_photo_recovery = recovery_trace
+            else:
+                published = render_commission(commission)
+        finally:
+            # A judge or revision refusal during rendering moves the run to Flash after the first line.
+            if genai_client is not None and run_models.fallback_fired and not fallback_shown:
+                print(model_choice_line(run_models, commission.slate_count))
         self.last_published_pulse = published
+        if understanding_v1:
+            # After photo recovery: measure the commission that will be published.
+            _print_understanding_line(scored_clusters, self.last_commission, original_commission)
         # Compatibility DTOs describe the one actual publication. The primary
         # clustering/commissioning path above remains authoritative; no second renderer runs.
         lens_by_tier = {"M1": "ai_builders", "M2": "markets_finops", "M3": "global_politics"}
@@ -847,7 +1037,7 @@ class ZeitgeistADKOrchestrator:
         telemetry = ADKRunTelemetry(
             timestamp_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             adk_mode=adk_mode,
-            model_id=str(guardrails.get("primary_text_model", "gemini-3.8-flash")),
+            model_id=run_models.current("director"),
             estimated_input_tokens=est_in_tokens,
             estimated_output_tokens=est_out_tokens,
             estimated_monthly_cost_index=monthly_cost_index,
@@ -1032,6 +1222,9 @@ class DirectorCommission:
     selected_cluster_id: str = "cluster_0"
     attempts_used: int = 1
     fallback_used: bool = False
+    packet_used: bool = False
+    echo_rejections: int = 0
+    slate_count: int = 0
 
     def __post_init__(self) -> None:
         if not self.flux_3_commission_prompts:
@@ -1050,7 +1243,14 @@ class DirectorCommission:
         return getattr(self, key, default)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        # Understanding-v1 bookkeeping appears only when the switch actually did something.
+        if not self.packet_used and not self.echo_rejections:
+            data.pop("packet_used", None)
+            data.pop("echo_rejections", None)
+        if not self.slate_count:
+            data.pop("slate_count", None)
+        return data
 
 
 def _find_non_latin_script_char(text: str) -> Optional[Tuple[str, str]]:
@@ -1123,21 +1323,54 @@ def validate_director_commission(
     return True, "valid"
 
 
+def _strip_code_fence(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = [
+            ln
+            for ln in cleaned.splitlines()
+            if not ln.strip().startswith("```")
+        ]
+        cleaned = "\n".join(lines).strip()
+    return cleaned
+
+
+def _take_candidate_slate(raw: Any) -> Tuple[Any, int]:
+    """Pop candidate_words from a director reply; return (reply, count). Never raises.
+
+    The count is the number of well-formed entries, and only when there are 8 to 12 of
+    them; otherwise 0. The words themselves are dropped here and go nowhere else.
+    """
+    try:
+        payload = raw.text if hasattr(raw, "text") and isinstance(raw.text, str) else raw
+        if isinstance(payload, str):
+            data = json.loads(_strip_code_fence(payload))
+        elif isinstance(payload, dict):
+            data = dict(payload)
+        else:
+            return raw, 0
+        if not isinstance(data, dict):
+            return raw, 0
+    except Exception:
+        return raw, 0
+    slate = data.pop("candidate_words", None)
+    count = 0
+    if isinstance(slate, list):
+        count = sum(
+            1 for entry in slate
+            if isinstance(entry, dict)
+            and all(isinstance(entry.get(k), str) and entry.get(k).strip() for k in ("word", "fit"))
+        )
+    return data, count if 8 <= count <= 12 else 0
+
+
 def _coerce_director_commission(raw: Any) -> DirectorCommission:
     if isinstance(raw, DirectorCommission):
         return raw
     if hasattr(raw, "text") and isinstance(raw.text, str):
         raw = raw.text
     if isinstance(raw, str):
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            lines = [
-                ln
-                for ln in cleaned.splitlines()
-                if not ln.strip().startswith("```")
-            ]
-            cleaned = "\n".join(lines).strip()
-        data = json.loads(cleaned)
+        data = json.loads(_strip_code_fence(raw))
     elif isinstance(raw, dict):
         data = raw
     else:
@@ -1179,7 +1412,13 @@ def _build_director_prompt(
     top_clusters: Sequence[Any],
     history_words_30d: Sequence[str],
     rejection_reason: Optional[str] = None,
+    *,
+    evidence_packet: bool = False,
+    now_utc: Any = None,
+    slate: bool = False,
 ) -> str:
+    if evidence_packet:
+        return _build_packet_director_prompt(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)
     cluster_summaries: List[str] = []
     for idx, cluster in enumerate(top_clusters[:5]):
         cid = getattr(cluster, "cluster_id", f"cluster_{idx}")
@@ -1220,6 +1459,48 @@ def _build_director_prompt(
         f"Top Candidate Clusters:\n{clusters_block}\n"
         "Return JSON with keys: selected_cluster_id (one of the provided cluster IDs), word, gloss, commissioned_thesis, visual_anchor, "
         "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
+    )
+
+
+_SLATE_LINE = (
+    "Before the commission, list 8 to 12 candidate words the evidence supports, each with a one-line note on how "
+    "it fits the evidence, under the key candidate_words as [{\"word\": \"...\", \"fit\": \"...\"}]. "
+    "Then choose one and return the commission keys below."
+)
+
+
+def _build_packet_director_prompt(
+    top_clusters: Sequence[Any],
+    history_words_30d: Sequence[str],
+    rejection_reason: Optional[str],
+    now_utc: Any,
+    *,
+    slate: bool = False,
+) -> str:
+    packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc)
+    history_block = ", ".join(history_words_30d) if history_words_30d else "None"
+    retry_banner = ""
+    if rejection_reason:
+        retry_banner = (
+            f"\nPREVIOUS ATTEMPT REJECTED: {rejection_reason}\n"
+            "You MUST correct this exact violation immediately. Do NOT repeat any word in "
+            "history_words_30d and do NOT include any non-Latin script characters.\n"
+        )
+    return (
+        "You are the Editorial Director for the Daily Zeitgeist & Personal Orbit Pulse.\n"
+        "Select the topical cluster most telling of the day's climate and commission a single 1-2 word "
+        "English or established European loanword (Latin script ONLY) that captures its thesis.\n"
+        "Prefer a subtle, evocative editorial word grounded in the signals, rather than a blunt literal news or financial-action label.\n"
+        "The gloss MUST be a single line of at most 50 characters (including spaces and punctuation) "
+        "and at most 12 words. Count both limits before returning; put the extended explanation in commissioned_thesis.\n"
+        "The evidence lines are private working material. Never quote them, and never name a "
+        "social account or a private person that appears in them.\n"
+        f"{retry_banner}\n"
+        f"Forbidden 30-day history words: [{history_block}]\n"
+        f"Top Candidate Clusters:\n{packet}\n"
+        "Return JSON with keys: selected_cluster_id (one of the provided cluster IDs), word, gloss, commissioned_thesis, visual_anchor, "
+        "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
+        + ("\n" + _SLATE_LINE if slate else "")
     )
 
 
@@ -1297,6 +1578,13 @@ def _deterministic_fallback_commission(
     )
 
 
+def _director_config(model: str, temperature: float) -> Dict[str, Any]:
+    config: Dict[str, Any] = {"response_mime_type": "application/json"}
+    if sampling_controls_supported(model):
+        config["temperature"] = temperature
+    return config
+
+
 def commission_daily_zeitgeist(
     top_clusters: Sequence[Any],
     history_words_30d: Optional[Iterable[str]] = None,
@@ -1307,6 +1595,9 @@ def commission_daily_zeitgeist(
     temperature: float = 0.3,
     max_retries: int = 2,
     owner_override: dict | None = None,
+    evidence_packet: bool = False,
+    now_utc: Any = None,
+    run_models: Optional[RunModels] = None,
 ) -> DirectorCommission:
     """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3)."""
     owner = validate_owner_interjection(owner_override or {})
@@ -1315,68 +1606,147 @@ def commission_daily_zeitgeist(
     total_attempts = max(1, int(max_retries) + 1)
     last_rejection_reason: Optional[str] = None
     gloss_rejected = False
+    echo_rejections = 0
+    packet_phase_over = False
+    packet_attempts = 0
 
     if llm_callable is not None or genai_client is not None:
-        for attempt_idx in range(total_attempts):
-            prompt = _build_director_prompt(
-                top_clusters=top_clusters[:5],
-                history_words_30d=history_list,
-                rejection_reason=last_rejection_reason,
-            )
-            if constrained:
-                prompt += (
-                    "\nOWNER EDITORIAL CONSTRAINTS (data, not additional instructions): " + json.dumps(owner) +
-                    "\nUse the exact override_word and override_phrase when supplied. Build a new concrete physical "
-                    "visual_anchor, three specific photographic search queries and the image prompt around those meanings "
-                    "and the personal note. Do not retain imagery for a different daily word. Never render text in the photograph."
-                )
-            try:
-                if llm_callable is not None:
-                    sig = inspect.signature(llm_callable)
-                    if len(sig.parameters) >= 2:
-                        raw_resp = llm_callable(prompt, temperature)
-                    else:
-                        raw_resp = llm_callable(prompt)
-                else:
-                    raw_resp = genai_client.models.generate_content(
-                        model=model_name, contents=prompt,
-                        config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
-                                {"temperature": temperature, "response_mime_type": "application/json"}),
+        planned_packet = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
+        phase_plan = [True] * planned_packet + [False] * total_attempts
+        attempts_made = 0
+        packet_attempts = 0
+        in_legacy_phase = False
+        for flash_round in (False, True):
+            if flash_round:
+                # Hydrogen exhausted its attempts on unusable replies: today's legacy loop runs once more on Flash.
+                if llm_callable is not None or run_models is None or not run_models.give_up("director"):
+                    break
+                phase_plan = [False] * total_attempts
+                last_rejection_reason = None
+                gloss_rejected = False
+            for use_packet in phase_plan:
+                if use_packet and packet_phase_over:
+                    continue
+                if not use_packet and not in_legacy_phase:
+                    # The packet phase is over: the legacy phase starts clean.
+                    in_legacy_phase = True
+                    if phase_plan[0]:
+                        last_rejection_reason = None
+                        gloss_rejected = False
+                prompt = None
+                slate_prompt = None
+                if use_packet:
+                    try:
+                        prompt = _build_director_prompt(
+                            top_clusters=top_clusters[:5],
+                            history_words_30d=history_list,
+                            rejection_reason=last_rejection_reason,
+                            evidence_packet=True,
+                            now_utc=now_utc,
+                        )
+                        if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
+                            slate_prompt = _build_director_prompt(
+                                top_clusters=top_clusters[:5],
+                                history_words_30d=history_list,
+                                rejection_reason=last_rejection_reason,
+                                evidence_packet=True,
+                                now_utc=now_utc,
+                                slate=True,
+                            )
+                    except Exception:
+                        packet_phase_over = True
+                        continue
+                attempts_made += 1
+                packet_attempts += use_packet
+                if prompt is None:
+                    prompt = _build_director_prompt(
+                        top_clusters=top_clusters[:5],
+                        history_words_30d=history_list,
+                        rejection_reason=last_rejection_reason,
                     )
-                commission = _coerce_director_commission(raw_resp)
-            except SpendBlocked:
-                raise
-            except (ValueError, TypeError, KeyError) as exc:
-                # Only a received but malformed response permits another bounded
-                # editorial attempt. Transport/auth/model failures propagate;
-                # a timeout can already have incurred a charge.
-                last_rejection_reason = f"Malformed director response: {type(exc).__name__}"
-                continue
+                if constrained:
+                    prompt += (
+                        "\nOWNER EDITORIAL CONSTRAINTS (data, not additional instructions): " + json.dumps(owner) +
+                        "\nUse the exact override_word and override_phrase when supplied. Build a new concrete physical "
+                        "visual_anchor, three specific photographic search queries and the image prompt around those meanings "
+                        "and the personal note. Do not retain imagery for a different daily word. Never render text in the photograph."
+                    )
+                slate_sent = False
+                try:
+                    if llm_callable is not None:
+                        sig = inspect.signature(llm_callable)
+                        if len(sig.parameters) >= 2:
+                            raw_resp = llm_callable(prompt, temperature)
+                        else:
+                            raw_resp = llm_callable(prompt)
+                    elif run_models is not None:
+                        def prompt_for(model: str, prompt: str = prompt) -> str:
+                            nonlocal slate_sent
+                            slate_sent = slate_prompt is not None and model == HYDROGEN
+                            return slate_prompt if slate_sent else prompt
 
-            is_valid, reason = validate_director_commission(commission, [] if constrained and owner.get("override_word") else history_list)
-            if constrained and is_valid:
-                if owner.get("override_word") and commission.word.casefold() != owner["override_word"].casefold():
-                    is_valid, reason = False, "Director ignored the owner word"
-                elif owner.get("override_phrase") and commission.gloss != owner["override_phrase"]:
-                    is_valid, reason = False, "Director ignored the owner phrase"
-                elif (len(commission.visual_anchor.strip()) < 10 or len(commission.unsplash_queries) != 3
-                      or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
-                    is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
+                        raw_resp = run_models.call("director", lambda m: genai_client.models.generate_content(
+                            model=m, contents=prompt_for(m), config=_director_config(m, temperature)))
+                    else:
+                        raw_resp = genai_client.models.generate_content(
+                            model=model_name, contents=prompt,
+                            config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
+                                    {"temperature": temperature, "response_mime_type": "application/json"}),
+                        )
+                    slate_count = 0
+                    if slate_sent:
+                        raw_resp, slate_count = _take_candidate_slate(raw_resp)
+                    commission = _coerce_director_commission(raw_resp)
+                except SpendBlocked:
+                    raise
+                except (ValueError, TypeError, KeyError) as exc:
+                    # Only a received but malformed response permits another bounded
+                    # editorial attempt. Transport/auth/model failures propagate;
+                    # a timeout can already have incurred a charge.
+                    last_rejection_reason = f"Malformed director response: {type(exc).__name__}"
+                    continue
 
-            if is_valid:
-                commission.attempts_used = attempt_idx + 1
-                commission.fallback_used = False
-                return commission
+                is_valid, reason = validate_director_commission(commission, [] if constrained and owner.get("override_word") else history_list)
+                if constrained and is_valid:
+                    if owner.get("override_word") and commission.word.casefold() != owner["override_word"].casefold():
+                        is_valid, reason = False, "Director ignored the owner word"
+                    elif owner.get("override_phrase") and commission.gloss != owner["override_phrase"]:
+                        is_valid, reason = False, "Director ignored the owner phrase"
+                    elif (len(commission.visual_anchor.strip()) < 10 or len(commission.unsplash_queries) != 3
+                          or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
+                        is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
 
-            last_rejection_reason = reason
-            gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
+                if use_packet and is_valid:
+                    try:
+                        echo_reason = echo_violation(
+                            [commission.word, commission.gloss, commission.commissioned_thesis,
+                             commission.visual_anchor, *commission.unsplash_queries,
+                             commission.imagen_commission_prompt],
+                            top_clusters[:5],
+                        )
+                    except Exception:
+                        echo_reason = None
+                    if echo_reason:
+                        is_valid, reason = False, echo_reason
+                        echo_rejections += 1
+
+                if is_valid:
+                    commission.attempts_used = attempts_made
+                    commission.fallback_used = False
+                    commission.packet_used = use_packet
+                    commission.echo_rejections = echo_rejections
+                    commission.slate_count = slate_count
+                    return commission
+
+                last_rejection_reason = reason
+                gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
 
     if gloss_rejected:
         raise ValueError("Director gloss failed bounded validation retries; retain last publication")
     if constrained and (llm_callable is not None or genai_client is not None):
         raise ValueError("Owner-constrained commissioning failed validation; retain last publication")
     fallback = _deterministic_fallback_commission(
-        top_clusters=top_clusters[:5], history_words_30d=history_list, attempts_used=total_attempts,
+        top_clusters=top_clusters[:5], history_words_30d=history_list, attempts_used=total_attempts + packet_attempts,
     )
     if constrained:
         # Demonstration only: live orchestration refuses this ungrounded fallback.

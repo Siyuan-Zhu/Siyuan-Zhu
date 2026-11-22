@@ -105,3 +105,34 @@ def test_render_profile_markdown_includes_cache_busting_7_columns_mode_and_moods
     assert "title=pulse:vote:spot_on" in md
     assert "title=pulse:vote:too_sunny" in md
     assert "title=pulse:vote:too_heavy" in md
+
+
+def test_daily_workflow_passes_understanding_switch() -> None:
+    text = (REPO_ROOT / ".github" / "workflows" / "daily_zeitgeist.yml").read_text(
+        encoding="utf-8"
+    )
+    dollar = chr(36)  # the zero-dollar compliance scan forbids a literal one
+    line = (
+        "ZEITGEIST_UNDERSTANDING_V1: "
+        + dollar
+        + "{{ vars.ZEITGEIST_UNDERSTANDING_V1 || '0' }}"
+    )
+    assert text.count(line) == 2
+
+
+def test_daily_workflow_passes_model_choice_variables() -> None:
+    text = (REPO_ROOT / ".github" / "workflows" / "daily_zeitgeist.yml").read_text(
+        encoding="utf-8"
+    )
+    dollar = chr(36)  # the zero-dollar compliance scan forbids a literal one
+    for name in (
+        "ZEITGEIST_DIRECTOR_MODEL",
+        "ZEITGEIST_JUDGE_MODEL",
+        "ZEITGEIST_EMBEDDING_MODEL",
+    ):
+        line = name + ": " + dollar + "{{ vars." + name + " || '' }}"
+        assert text.count(line) == 1
+    synth = text.split("- name: Run Daily Zeitgeist Pipeline", 1)[1]
+    synth = synth.split("- name: Commit and Push", 1)[0]
+    assert "ZEITGEIST_DIRECTOR_MODEL" in synth
+    assert "ZEITGEIST_DIRECTOR_MODEL" not in text.split("studio-footer:", 1)[0]

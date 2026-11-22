@@ -19,7 +19,10 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, quote
 
 from .methodology import WeightedOrbitAnalysis
-from .spend_guard import SpendBlocked, get_spend_guard, guard_genai_client
+from . import model_choice
+from .spend_guard import (
+    SpendBlocked, get_spend_guard, guard_genai_client, refused_before_dispatch, sampling_controls_supported,
+)
 
 
 @dataclass(frozen=True)
@@ -320,7 +323,13 @@ import math
 import logging
 import os
 import re
-from typing import Any, Callable, Dict, Iterable, Sequence
+from typing import Any, Callable, Dict, Iterable, Sequence, Union
+
+from .judge_calibration import DEFAULT_MARKS
+
+# The photo gate's (meaning, composite) pass marks, or a function the gate calls for them once the
+# candidates are scored, so the marks are those of the judge that produced the final scores.
+PassMarks = Union[Tuple[float, float], Callable[[], Tuple[float, float]]]
 
 logger = logging.getLogger(__name__)
 
@@ -798,6 +807,19 @@ def update_svg_mood_vote_bar(
     return updated_svg
 
 
+def critic_config(model: str) -> Dict[str, Any]:
+    config: Dict[str, Any] = {"response_mime_type": "application/json"}
+    if sampling_controls_supported(model):
+        config["temperature"] = 0.1
+    return config
+
+
+def _critic_call(call: Callable[[str], Any], model_name: str) -> Any:
+    """Inside a run, the judge in force answers and a pre-dispatch refusal moves the run to Flash."""
+    run_models = model_choice.active()
+    return run_models.call("judge", call) if run_models else call(model_name)
+
+
 def _score_candidate_with_gemini_vision(
     thumb_bytes: bytes,
     word: str,
@@ -842,15 +864,9 @@ def _score_candidate_with_gemini_vision(
             "minimalist, non-violent, non-NSFW, and free of watermarks or memes."
         )
         part = types.Part.from_bytes(data=thumb_bytes, mime_type="image/jpeg")
-        request_config = {"response_mime_type": "application/json"}
-        if not model_name.startswith("gemini-3"):
-            request_config["temperature"] = 0.1
+        call = lambda m: client.models.generate_content(model=m, contents=[part, prompt], config=critic_config(m))
         try:
-            resp = client.models.generate_content(
-                model=model_name,
-                contents=[part, prompt],
-                config=request_config,
-            )
+            resp = _critic_call(call, model_name)
         except SpendBlocked:
             raise
         except Exception as model_exc:
@@ -910,6 +926,36 @@ def _strict_photo_scores(value):
     return {**{key: float(value[key]) for key in keys}, 'safety_pass': True}
 
 
+class _UnusableBatch(Exception):
+    """A batch reply that cannot be read as one verdict per candidate."""
+
+    def __init__(self, *, safety_block=False):
+        super().__init__()
+        self.safety_block = safety_block
+
+
+def _read_photo_batch(response, count, strict_errors):
+    for choice in getattr(response, 'candidates', None) or []:
+        reason = getattr(choice, 'finish_reason', '')
+        if any(token in str(getattr(reason, 'name', reason)).upper() for token in _SAFETY_BLOCK_FINISH_REASONS):
+            raise _UnusableBatch(safety_block=True)
+    try:
+        parsed = json.loads(response.text)
+    except Exception:
+        raise _UnusableBatch() from None
+    results = parsed if isinstance(parsed, list) else parsed.get('candidates') if isinstance(parsed, dict) else None
+    if (not isinstance(results, list) or len(results) != count
+            or any(not isinstance(row, dict) or type(row.get('index')) is not int for row in results)
+            or {row['index'] for row in results} != set(range(count))):
+        raise _UnusableBatch()
+    if strict_errors and any(type(row.get('safety_pass')) is not bool or any(
+            type(row.get(k)) not in (int,float) or not math.isfinite(row[k]) or not 0<=row[k]<=1
+            for k in ('semantic_alignment','compositional_clarity','editorial_memorability')) for row in results):
+        raise _UnusableBatch()
+    mapped = {row['index']: _strict_photo_scores(row) for row in results}
+    return [mapped[index] for index in range(count)]
+
+
 def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, model_name="gemini-3.8-flash", strict_errors=False):
     """One bounded multimodal critic request; no fabricated scores on any failure."""
     failed = [dict(_FAIL_CLOSED_VISION_SCORES) for _ in candidates]
@@ -935,30 +981,22 @@ def _score_photo_batch(candidates, *, word, gloss, thesis, gemini_api_key=None, 
             'safety_pass must be a JSON boolean, true only when completely safe, nonviolent, non-NSFW, '
             'minimalist, free of watermarks and memes. Judge semantic fit to the actual commission.')
         client = guard_genai_client(genai.Client(api_key=key), credential_key=key)
-        request_config = {'response_mime_type': 'application/json'}
-        if not model_name.startswith('gemini-3'):
-            request_config['temperature'] = 0.1
-        response = client.models.generate_content(model=model_name, contents=parts, config=request_config)
-        for choice in getattr(response, 'candidates', None) or []:
-            reason = getattr(choice, 'finish_reason', '')
-            if any(token in str(getattr(reason, 'name', reason)).upper() for token in _SAFETY_BLOCK_FINISH_REASONS):
-                return failed
-        parsed = json.loads(response.text)
-        results = parsed if isinstance(parsed, list) else parsed.get('candidates') if isinstance(parsed, dict) else None
-        if (not isinstance(results, list) or len(results) != len(candidates)
-                or any(not isinstance(row, dict) or type(row.get('index')) is not int for row in results)
-                or {row['index'] for row in results} != set(range(len(candidates)))):
-            if strict_errors:
-                raise PhotoCriticUnavailable('Photo critic returned an invalid candidate mapping')
-            return failed
-        if strict_errors and any(type(row.get('safety_pass')) is not bool or any(
-                type(row.get(k)) not in (int,float) or not math.isfinite(row[k]) or not 0<=row[k]<=1
-                for k in ('semantic_alignment','compositional_clarity','editorial_memorability')) for row in results):
-            raise PhotoCriticUnavailable('Photo critic returned malformed scores')
-        mapped = {row['index']: _strict_photo_scores(row) for row in results}
-        return [mapped[index] for index in range(len(candidates))]
+        call = lambda m: client.models.generate_content(model=m, contents=parts, config=critic_config(m))
+        response = _critic_call(call, model_name)
+        try:
+            return _read_photo_batch(response, len(candidates), strict_errors)
+        except _UnusableBatch:
+            # Strict runs only: an unusable reply from a non-Flash judge is scored once more on Flash.
+            run_models = model_choice.active()
+            if not (strict_errors and run_models is not None and run_models.give_up("judge")):
+                raise
+        return _read_photo_batch(_critic_call(call, model_name), len(candidates), strict_errors)
     except SpendBlocked:
         raise
+    except _UnusableBatch as unusable:
+        if strict_errors and not unusable.safety_block:
+            raise PhotoCriticUnavailable('Photo critic unavailable or response invalid') from None
+        return failed
     except Exception:
         if strict_errors:
             raise PhotoCriticUnavailable('Photo critic unavailable or response invalid') from None
@@ -1073,11 +1111,31 @@ def _fetch_live_unsplash_candidates(queries, *, access_key=None, per_page=6, wor
                 return None
         with ThreadPoolExecutor(max_workers=9) as pool:
             candidates = [candidate for candidate in pool.map(thumbnail, list(unique.values())[:18]) if candidate]
-    scores = []
-    for offset in range(0, len(candidates), 9):
-        scores.extend(_score_photo_batch(candidates[offset:offset + 9], word=word, gloss=gloss,
-            thesis=thesis, gemini_api_key=gemini_api_key, model_name=judge_model, strict_errors=strict_errors))
+    scores = _score_in_batches(candidates, word=word, gloss=gloss, thesis=thesis, gemini_api_key=gemini_api_key,
+        model_name=judge_model, strict_errors=strict_errors)
     return [dict(candidate, **score, _vision_verified=True) for candidate, score in zip(candidates, scores)]
+
+
+def _score_in_batches(candidates, *, word, gloss, thesis, gemini_api_key=None, model_name="gemini-3.8-flash",
+        strict_errors=False):
+    """Score a photo stage in batches of nine, all by one judge.
+
+    When the judge hands over to Flash part-way, each batch an earlier judge scored is scored once more on
+    Flash, so one model's scores meet that model's marks at the gate.
+    """
+    run_models = model_choice.active()
+    batches = [candidates[offset:offset + 9] for offset in range(0, len(candidates), 9)]
+    scores, judged_by = [], []
+    for batch in batches:
+        scores.append(_score_photo_batch(batch, word=word, gloss=gloss, thesis=thesis,
+            gemini_api_key=gemini_api_key, model_name=model_name, strict_errors=strict_errors))
+        judged_by.append(run_models.current("judge") if run_models is not None else None)
+    if run_models is not None and run_models.current("judge") == model_choice.FLASH:
+        for number, judge in enumerate(judged_by):
+            if judge != model_choice.FLASH:
+                scores[number] = _score_photo_batch(batches[number], word=word, gloss=gloss, thesis=thesis,
+                    gemini_api_key=gemini_api_key, model_name=model_choice.FLASH, strict_errors=strict_errors)
+    return [score for batch_scores in scores for score in batch_scores]
 
 
 def _download_winning_unsplash_photo(candidate, *, access_key=None):
@@ -1348,8 +1406,11 @@ def _generate_live_imagen3_bytes(prompt: str, api_key: Optional[str] = None) -> 
                         raw_data = getattr(inline, "data", None)
                         if isinstance(raw_data, (bytes, bytearray)) and raw_data:
                             return bytes(raw_data)
-            except SpendBlocked:
-                raise
+            except SpendBlocked as exc:
+                if not refused_before_dispatch(exc):
+                    raise
+                logger.info("Second-choice generator %s refused before dispatch; skipping.", model_name)
+                continue
             except Exception:
                 continue
 
@@ -1367,8 +1428,11 @@ def _generate_live_imagen3_bytes(prompt: str, api_key: Optional[str] = None) -> 
             raw_bytes = getattr(first_img, "image_bytes", None)
             if isinstance(raw_bytes, (bytes, bytearray)) and raw_bytes:
                 return bytes(raw_bytes)
-    except SpendBlocked:
-        raise
+    except SpendBlocked as exc:
+        if not refused_before_dispatch(exc):
+            raise
+        logger.info("Second-choice generator %s refused before dispatch; skipping.", "imagen-3.0-generate-002")
+        return None
     except Exception:
         return None
     return None
@@ -1418,6 +1482,8 @@ def select_and_render_pulse_assets(
     judge_model: str = "gemini-3.8-flash",
     strict_photo_errors: bool = False,
     offline_demo: bool = False,
+    scored_candidates_out: Optional[List[Dict[str, Any]]] = None,
+    pass_marks: PassMarks = DEFAULT_MARKS,
 ) -> PublishedPulse:
     """Run Multimodal Visual Critic Funnel, enforce 80/20 medium budget, and render 3:2 curatorial + 16:9 WebP + SVG."""
     import os
@@ -1511,8 +1577,12 @@ def select_and_render_pulse_assets(
         return scored
 
     scored_candidates = score_photos(effective_candidates)
+    if scored_candidates_out is not None:
+        # In memory only: the caller sees the rows this run scored, thumbnails included.
+        scored_candidates_out.extend(scored_candidates)
+    meaning_min, composite_min = pass_marks() if callable(pass_marks) else pass_marks
     passing_candidates = [row for row in scored_candidates if row['safety_pass'] is True
-        and row['semantic_alignment'] >= .70 and row['composite_score'] >= .68]
+        and row['semantic_alignment'] >= meaning_min and row['composite_score'] >= composite_min]
     # Owner-approved exception is bound to one publication date, never safety.
     best_safe_exception = False
     if (requested_medium == 'photo' and not passing_candidates
