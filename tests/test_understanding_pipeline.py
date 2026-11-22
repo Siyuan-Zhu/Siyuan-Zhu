@@ -414,6 +414,7 @@ def _run_photo_recovery(tmp_path, monkeypatch, *, recover):
         lambda clusters, **kw: DirectorCommission(
             word="Loom", gloss="steady weaving", commissioned_thesis="Looms keep time.",
             selected_cluster_id=clusters[0].cluster_id,
+            attempts_used=3, packet_used=True, echo_rejections=2,
         ),
     )
     real_render = pipeline.select_and_render_pulse_assets
@@ -482,6 +483,15 @@ def test_final_echo_measures_recovered_commission(tmp_path, monkeypatch, capsys)
     assert scored and _orbit_text(scored[0]) and staged.last_commission.commissioned_thesis == _orbit_text(scored[0])
     assert len(lines) == 1 and LINE_RE.fullmatch(lines[0]), lines
     assert lines[0].endswith("final_echo=1")
+
+
+def test_counters_come_from_original_commission(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    scored = _spy_scored(monkeypatch)
+    _run_photo_recovery(tmp_path, monkeypatch, recover=_recovering(scored))
+    lines = _understanding_lines(capsys)
+    assert len(lines) == 1
+    assert "attempt=3 packet=1 echo_rejections=2 final_echo=1" in lines[0], lines
 
 
 def test_one_line_when_no_recovery_change(tmp_path, monkeypatch, capsys):
