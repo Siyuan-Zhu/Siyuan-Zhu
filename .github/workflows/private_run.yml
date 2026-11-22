@@ -9,6 +9,7 @@ on:
 concurrency:
   group: readme-state-writer
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read

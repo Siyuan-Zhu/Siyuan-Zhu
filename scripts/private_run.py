@@ -2,7 +2,8 @@
 """A production private run: the Director and the photo path on the chosen models.
 
 It reads the ingestion cache and the 30-day feed history, commissions one edition
-with the Stage 0 packet, and scores photos for it. It publishes nothing: no commit,
+exactly as the edition would (the Stage 0 packet only under the same switch), and
+scores photos for it. It publishes nothing: no commit,
 no README, no state write, no artifact. The photo stage renders into a temporary
 directory that is removed at once. Only numbers and public model names are printed.
 """
@@ -26,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 from src.zeitgeist import adk_pipeline as pipeline  # noqa: E402
 from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import RunModels, activate, model_choice_line, resolve_run_models  # noqa: E402
+from src.zeitgeist.understanding import understanding_v1_enabled  # noqa: E402
 
 DIRECTOR_LINE = "[private_run] director_ok=%d attempts=%d packet=%d fallback=%d items=%d clusters=%d"
 PHOTO_LINE = "[private_run] photo_ok=%d candidates=%d safe=%d best_meaning=%.3f best_composite=%.3f"
@@ -64,14 +66,14 @@ def _photo_line(scored: List[Dict[str, Any]], photo_ok: bool) -> str:
 
 
 def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: RunModels) -> PrivateRun:
-    """Never raises an Exception: a failure ends the run with a numeric failed_stage line."""
+    """Never raises, not even KeyboardInterrupt or SystemExit: a failure ends the run with a numeric failed_stage line."""
     lines: List[str] = []
     scored: List[Dict[str, Any]] = []
     result = PrivateRun(lines, 3, scored_candidates=scored)
     date_iso = now.strftime("%Y-%m-%d")
     stage = READ
-    with activate(run_models):
-        try:
+    try:
+        with activate(run_models):
             cached = store.load_ingestion_cache(now)
             rows = list(cached.values()) if isinstance(cached, dict) else list(cached or ())
             items = [item for item in (pipeline._row_to_cached_item(row, index, now.isoformat())
@@ -81,21 +83,22 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             entries = list(history.get("entries", [])) if isinstance(history, dict) else list(history or ())
 
             stage = DIRECTOR
+            # The same switch the edition reads decides whether the Stage 0 packet is sent.
+            packet = {"evidence_packet": True, "now_utc": now} if understanding_v1_enabled() else {}
             commission = pipeline.commission_daily_zeitgeist(
                 clusters, history_words_30d=_history_words(entries, date_iso), genai_client=genai_client,
-                owner_override={}, model_name=run_models.current("director"), run_models=run_models,
-                evidence_packet=True, now_utc=now,
+                owner_override={}, model_name=run_models.current("director"), run_models=run_models, **packet,
             )
             result.commission = commission
             director_ok = not commission.fallback_used
             lines.append(model_choice_line(run_models, commission.slate_count))
             lines.append(DIRECTOR_LINE % (int(director_ok), commission.attempts_used, int(commission.packet_used),
                                           int(run_models.fallback_fired), len(items), len(clusters)))
-            if not director_ok:
+            if not director_ok or run_models.fallback_fired:
+                # The run can only end as a failure now; do not spend on the critic.
                 return result
 
             stage = PHOTO
-            fallback_shown = run_models.fallback_fired
             photo_ok = False
             try:
                 with tempfile.TemporaryDirectory() as scratch:
@@ -111,12 +114,13 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
                         photo_ok = False
                 lines.append(_photo_line(scored, photo_ok))
             finally:
-                if run_models.fallback_fired and not fallback_shown:
+                if run_models.fallback_fired:
                     lines.append(model_choice_line(run_models, commission.slate_count))
             result.exit_code = 0 if not run_models.fallback_fired else 3
-        except Exception:
-            lines.append(FAILED_LINE % stage)
-            result.exit_code = 3
+    except BaseException:
+        # Interrupts and timeouts included: their messages and chained causes are never printed.
+        lines.append(FAILED_LINE % stage)
+        result.exit_code = 3
     return result
 
 
@@ -148,7 +152,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 store = _store()
                 genai_client = _genai_client()
                 run_models = resolve_run_models(pipeline.load_orbit_config(ROOT / "config" / "orbit_sources.json"))
-            except Exception:
+            except BaseException:
                 result = PrivateRun([FAILED_LINE % SETUP], 3)
             else:
                 result = run_private(store, genai_client=genai_client, now=datetime.now(timezone.utc),

@@ -83,11 +83,13 @@ class Director:
 
     def __init__(self, reply):
         self.calls = []
+        self.prompts = []
         self.reply = reply
         self.models = self
 
     def generate_content(self, *, model, contents, config):
         self.calls.append(model)
+        self.prompts.append(contents)
         reply = self.reply(model) if callable(self.reply) else self.reply
         if isinstance(reply, BaseException):
             raise reply
@@ -116,7 +118,7 @@ def _photo(photo_id):
             "exif": {"make": "Synthetic Camera", "model": "Fixture"}}
 
 
-def _photo_world(monkeypatch, *, scores=SCORES, refuse_judge=None):
+def _photo_world(monkeypatch, *, scores=SCORES, refuse_judge=None, critic_raises=None):
     """Fake Unsplash (search, thumbnails, detail, winner) and a fake critic; no request leaves the process."""
     requests, critic = [], []
     queries = {}
@@ -135,6 +137,8 @@ def _photo_world(monkeypatch, *, scores=SCORES, refuse_judge=None):
 
     def generate(*, model, contents, config):
         critic.append(model)
+        if critic_raises is not None:
+            critic_raises()
         if refuse_judge is not None and model == mc.HYDROGEN:
             raise _refusal(refuse_judge)
         count = sum(isinstance(part, str) and part.startswith("Candidate index") for part in contents)
@@ -154,6 +158,7 @@ def _photo_world(monkeypatch, *, scores=SCORES, refuse_judge=None):
 def _env(monkeypatch):
     for name in (mc.DIRECTOR_ENV, mc.JUDGE_ENV, mc.EMBEDDING_ENV, "ZEITGEIST_BEST_SAFE_PHOTO_DATE", "ZEITGEIST_OFFLINE_DEMO"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
     monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
     monkeypatch.setenv("ZEITGEIST_LIVE_UNSPLASH", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
@@ -247,9 +252,46 @@ def test_refused_hydrogen_director_moves_to_flash_and_exits_3(monkeypatch):
     reply = lambda model: _refusal() if model == mc.HYDROGEN else _reply(selected_cluster_id="cluster_0")
     result, director = _run(reply=reply)
     _assert_public(result.lines)
-    assert director.calls == [mc.HYDROGEN, mc.FLASH] and critic == [mc.FLASH]
+    assert director.calls == [mc.HYDROGEN, mc.FLASH]
     assert "fallback=1" in result.lines[0] and " fallback=1 " in result.lines[1]
     assert result.exit_code == 3
+
+
+def test_a_director_fallback_to_flash_skips_the_photo_stage(monkeypatch):
+    _, critic = _photo_world(monkeypatch)
+    reply = lambda model: _refusal() if model == mc.HYDROGEN else _reply(selected_cluster_id="cluster_0")
+    result, _ = _run(reply=reply)
+    assert critic == [] and result.scored_candidates == []
+    assert len(result.lines) == 2 and result.lines[1].startswith("[private_run] director_ok=1 ")
+    assert result.exit_code == 3
+
+
+# ---- the packet follows the edition's own switch ----
+
+
+PACKET_MARKER = "The evidence lines are private working material."
+
+
+def test_switch_on_sends_the_stage0_packet(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    result, director = _run()
+    assert PACKET_MARKER in director.prompts[0]
+    assert " packet=1 " in result.lines[1]
+
+
+@pytest.mark.parametrize("value", [None, "0"])
+def test_switch_off_sends_the_legacy_prompt_like_the_edition(monkeypatch, value):
+    _photo_world(monkeypatch)
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", value)
+    result, director = _run()
+    assert PACKET_MARKER not in director.prompts[0]
+    assert "Select the most compelling topical cluster" in director.prompts[0]
+    assert " packet=0 " in result.lines[1]
+    assert result.exit_code == 0
 
 
 def test_judge_refusal_in_the_photo_stage_prints_a_second_model_choice_line(monkeypatch):
@@ -359,7 +401,8 @@ def _step_env(text, step_name):
 def test_workflow_is_a_dispatch_only_read_only_private_run():
     text = WORKFLOW.read_text()
     assert "workflow_dispatch:" in text and "schedule:" not in text and "inputs:" not in text
-    assert "group: readme-state-writer" in text and "cancel-in-progress: false" in text
+    assert "concurrency:\n  group: readme-state-writer\n  cancel-in-progress: false\n  queue: max\n" in text
+    assert text.count("concurrency:") == 1
     assert "contents: read" in text and "id-token: write" in text
     for banned in ("upload-artifact", "contents: write", "publish_readme", "git push", "git commit",
                    "refresh_daily_digest", "--measure-embedding-2"):
@@ -382,3 +425,66 @@ def test_workflow_env_mirrors_the_daily_synthesis_step_and_its_pin():
         assert any(line.startswith(name + ":") for line in private), name
     pin = re.compile(r"SPEND_POLICY_SHA256:\s*['\"]([a-f0-9]{64})['\"]")
     assert pin.findall(WORKFLOW.read_text()) == pin.findall(DAILY.read_text())[:1]
+
+
+# ---- an interrupt at any stage prints one numeric line and no traceback ----
+
+
+MARKER = "Zqsecret interrupt marker"
+
+
+def _interrupt(*args, **kwargs):
+    try:
+        raise RuntimeError(MARKER)
+    except RuntimeError:
+        raise KeyboardInterrupt(MARKER)
+
+
+class InterruptingStore(ReadOnlyStore):
+    def load_ingestion_cache(self, now_utc):
+        _interrupt()
+
+
+def _interrupted_main(monkeypatch, capsys, stage):
+    critic_raises = _interrupt if stage == 4 else None
+    _photo_world(monkeypatch, critic_raises=critic_raises)
+    store = InterruptingStore() if stage == 2 else ReadOnlyStore()
+    client = Director(_interrupt if stage == 3 else _reply(selected_cluster_id="cluster_0"))
+    if stage == 1:
+        monkeypatch.setattr(private_run, "_store", _interrupt)
+    else:
+        monkeypatch.setattr(private_run, "_store", lambda: store)
+    monkeypatch.setattr(private_run, "_genai_client", lambda: client)
+    code = private_run.main([])
+    captured = capsys.readouterr()
+    return code, captured
+
+
+@pytest.mark.parametrize("stage", [1, 2, 3, 4], ids=["setup", "read", "director", "photo"])
+def test_an_interrupt_at_any_stage_prints_one_numeric_line_and_nothing_private(monkeypatch, capsys, stage):
+    code, captured = _interrupted_main(monkeypatch, capsys, stage)
+    lines = captured.out.splitlines()
+    _assert_public(lines)
+    assert [line for line in lines if "failed_stage" in line] == [f"[private_run] failed_stage={stage}"]
+    assert lines[-1] == f"[private_run] failed_stage={stage}"
+    assert captured.err == ""
+    assert MARKER not in captured.out and "Traceback" not in captured.out
+    assert isinstance(code, int) and code == 3
+
+
+@pytest.mark.parametrize("error", [SystemExit(MARKER), GeneratorExit(MARKER)], ids=["system-exit", "base-exception"])
+def test_other_base_exceptions_in_the_director_are_a_failed_stage(monkeypatch, capsys, error):
+    _photo_world(monkeypatch)
+
+    def raise_it(model):
+        try:
+            raise RuntimeError(MARKER)
+        except RuntimeError:
+            raise error
+
+    monkeypatch.setattr(private_run, "_store", lambda: ReadOnlyStore())
+    monkeypatch.setattr(private_run, "_genai_client", lambda: Director(raise_it))
+    code = private_run.main([])
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == "[private_run] failed_stage=3"
+    assert captured.err == "" and MARKER not in captured.out and code == 3
