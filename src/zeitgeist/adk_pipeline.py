@@ -156,10 +156,10 @@ _EMBEDDING_FIELDS = frozenset(
 def _embed_rows(
     rows: Dict[str, Dict[str, Any]], cache: Dict[str, Dict[str, Any]], client: Any, model: str
 ) -> Optional[List[Dict[str, Any]]]:
-    """Embed copies of the rows live; None on an embedding failure the run absorbs.
+    """Embed copies of the rows live; None on any embedding failure the run absorbs.
 
-    That is an IngestionUnavailable, or a SpendBlocked refused before any provider call.
-    Any other SpendBlocked or exception propagates unchanged.
+    A SpendBlocked raised after a provider call propagates unchanged; every other
+    failure, a SpendBlocked refused before any provider call included, gives None.
     """
     try:
         return embed_missing_items(
@@ -169,12 +169,12 @@ def _embed_rows(
             model=model,
             require_live=True,
         )
-    except IngestionUnavailable:
-        return None
     except SpendBlocked as exc:
         if refused_before_dispatch(exc):
             return None
         raise
+    except Exception:
+        return None
 
 
 def _hold_switch_over_rows(
@@ -187,11 +187,15 @@ def _hold_switch_over_rows(
     stripped = {key: {k: v for k, v in row.items() if k not in _EMBEDDING_FIELDS}
                 for key, row in retained.items()}
     embedded = _embed_rows(stripped, {}, client, embedding_migration.EMBED_2)
+    try:
+        pending = {str(row.get("url_hash") or ""): row for row in embedded or () if isinstance(row, dict)}
+        items = [_row_to_cached_item(pending.get(key), idx, ref_dt_str) for idx, key in enumerate(retained)]
+    except Exception:
+        embedded = None
     if embedded is None:
+        # Tonight stays on 001: nothing is held, so no calibration or embedding-2 row is written.
         run.fallback = True
         return
-    pending = {str(row.get("url_hash") or ""): row for row in embedded if isinstance(row, dict)}
-    items = [_row_to_cached_item(pending.get(key), idx, ref_dt_str) for idx, key in enumerate(retained)]
     run.pending_rows = pending
     run.pending_items = [item for item in items if item is not None]
 

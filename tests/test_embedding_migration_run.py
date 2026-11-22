@@ -414,3 +414,217 @@ def test_staged_offline_path_never_plans_a_run(tmp_path, monkeypatch, capsys):
     staged._run_staged(DATE, "blueprint", live_collect=False, offline_demo=True, now_epoch=NOW.timestamp())
     assert seen["embedding_run"] is None
     assert _embedding_lines(capsys.readouterr().out) == []
+
+
+
+# ---- Task T5: the switch-over survives any failure after the embedding-2 call ----
+
+import hashlib  # noqa: E402
+
+from src.zeitgeist import collectors  # noqa: E402
+from src.zeitgeist import model_choice  # noqa: E402
+from src.zeitgeist import spend_guard  # noqa: E402
+from src.zeitgeist.spend_guard import SpendBlocked  # noqa: E402
+from tests.test_pipeline_launch_acceptance import _live_fixture  # noqa: E402
+
+COLLECT_NOW = datetime(2026, 10, 29, 17, 30, tzinfo=timezone.utc).timestamp()
+
+
+class StopAfterClustering(Exception):
+    pass
+
+
+def _vector(model, text, dim=768):
+    seed = int(hashlib.sha256((model + text).encode()).hexdigest()[:8], 16)
+    return [float(v) for v in np.random.default_rng(seed).standard_normal(dim)]
+
+
+def _e2_reply(kind):
+    def reply(contents):
+        if kind == "short":
+            return [SimpleNamespace(values=_vector(em.EMBED_2, t)) for t in contents[:-1]]
+        if kind == "dimension":
+            return [SimpleNamespace(values=_vector(em.EMBED_2, t, dim=767)) for t in contents]
+        if kind == "nonfinite":
+            rows = [_vector(em.EMBED_2, t) for t in contents]
+            rows[0][5] = float("nan")
+            return [SimpleNamespace(values=row) for row in rows]
+        return [SimpleNamespace(values=_vector(em.EMBED_2, t)) for t in contents]
+    return reply
+
+
+def _night_client(e2=None):
+    """001 always answers; e2 is a reply builder or an exception raised after the call is recorded."""
+    calls = []
+
+    def embed(*, model, contents, config):
+        calls.append(model)
+        if model == em.EMBED_2 and isinstance(e2, BaseException):
+            raise e2
+        build = _e2_reply(e2) if model == em.EMBED_2 and isinstance(e2, str) else None
+        embeddings = build(contents) if build else [SimpleNamespace(values=_vector(model, t)) for t in contents]
+        return SimpleNamespace(embeddings=embeddings)
+
+    return SimpleNamespace(models=SimpleNamespace(embed_content=embed)), calls
+
+
+class NightStore(InMemoryStateStore):
+    """Holds the calibration across nights; records cache days; stops the run after clustering."""
+
+    def __init__(self, rows):
+        super().__init__()
+        self._rows = rows
+        self.cache_days = []
+
+    def load_ingestion_cache(self, **kwargs):
+        return copy.deepcopy(self._rows)
+
+    def save_ingestion_cache_day(self, date_str, items_by_hash):
+        self.cache_days.append(copy.deepcopy(items_by_hash))
+
+    def load_pulse_feed_history(self, days=30):
+        raise StopAfterClustering()
+
+
+def _night(tmp_path, monkeypatch, capsys, store, client):
+    monkeypatch.setattr(pipeline, "embed_missing_items", collectors.embed_missing_items)
+    monkeypatch.setattr("google.genai.Client", lambda **kw: client)
+    monkeypatch.setattr(spend_guard, "guard_genai_client", lambda c, **kw: c)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    with pytest.raises(StopAfterClustering):
+        staged._run_staged("2026-10-29", live_collect=True, now_epoch=COLLECT_NOW)
+    return _embedding_lines(capsys.readouterr().out)
+
+
+@pytest.fixture
+def night(tmp_path, monkeypatch):
+    seed = _live_fixture(monkeypatch, tmp_path)
+    for name in (model_choice.DIRECTOR_ENV, model_choice.JUDGE_ENV, "ZEITGEIST_UNDERSTANDING_V1",
+                 "ZEITGEIST_OFFLINE_DEMO"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(model_choice.EMBEDDING_ENV, em.EMBED_2)
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    return NightStore(seed.load_ingestion_cache())
+
+
+def _e2_rows_written(store):
+    return [row for day in store.cache_days for row in day.values() if row.get("embedding_model") == em.EMBED_2]
+
+
+FAILURES = {
+    "short": "short",
+    "dimension": "dimension",
+    "nonfinite": "nonfinite",
+    "generic-after-call": RuntimeError("synthetic failure after the call"),
+    "value-error-after-call": ValueError("synthetic failure after the call"),
+    "marked-refusal": None,
+}
+
+
+def _failure(name):
+    if name == "marked-refusal":
+        error = SpendBlocked("Unpriced SDK request option")
+        error.refused_before_dispatch = True
+        return error
+    return FAILURES[name]
+
+
+@pytest.mark.parametrize("name", list(FAILURES))
+def test_switch_over_failure_after_the_call_clusters_on_001_and_writes_nothing(
+        tmp_path, monkeypatch, capsys, night, name):
+    client, calls = _night_client(_failure(name))
+    lines = _night(tmp_path, monkeypatch, capsys, night, client)
+    assert em.EMBED_2 in calls
+    assert night.load_calibration(em.CALIBRATION_DOCUMENT) is None
+    assert _e2_rows_written(night) == []
+    assert len(lines) == 1
+    fields = _fields(lines[0])
+    assert (fields["used"], fields["switch_over"], fields["fallback"], fields["pass"]) == ("1", "1", "1", "-1")
+    assert fields["cut"] == "-1"
+
+
+@pytest.mark.parametrize("name", ["short", "dimension", "nonfinite", "generic-after-call"])
+def test_migrated_failure_after_the_call_clusters_on_001_and_writes_no_embedding2_rows(
+        tmp_path, monkeypatch, capsys, night, name):
+    night.save_calibration(em.CALIBRATION_DOCUMENT, em.calibration_document(
+        em.Calibration("accepted", "2026-10-28", 120, (0.9, 0.8, 0.7, 0.95), 3, 0.2, 4)))
+    client, calls = _night_client(_failure(name))
+    lines = _night(tmp_path, monkeypatch, capsys, night, client)
+    assert calls[0] == em.EMBED_2 and em.EMBED_001 in calls
+    assert night.cache_days == []
+    fields = _fields(lines[0])
+    assert (fields["used"], fields["switch_over"], fields["fallback"], fields["cut"]) == ("1", "0", "1", "-1")
+
+
+def test_switch_over_unmarked_spend_block_after_the_call_propagates(tmp_path, monkeypatch, night):
+    error = SpendBlocked("Receipt mismatch")
+    client, calls = _night_client(error)
+    monkeypatch.setattr(pipeline, "embed_missing_items", collectors.embed_missing_items)
+    monkeypatch.setattr("google.genai.Client", lambda **kw: client)
+    monkeypatch.setattr(spend_guard, "guard_genai_client", lambda c, **kw: c)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=night)
+    with pytest.raises(SpendBlocked) as caught:
+        staged._run_staged("2026-10-29", live_collect=True, now_epoch=COLLECT_NOW)
+    assert caught.value is error
+    assert night.load_calibration(em.CALIBRATION_DOCUMENT) is None and _e2_rows_written(night) == []
+
+
+def test_switch_over_failure_in_the_held_rows_falls_back(tmp_path, monkeypatch, capsys, night):
+    real = pipeline._row_to_cached_item
+
+    def broken(row, idx, ref_dt_str):
+        if isinstance(row, dict) and row.get("embedding_model") == em.EMBED_2:
+            raise ValueError("synthetic failure after the call")
+        return real(row, idx, ref_dt_str)
+
+    monkeypatch.setattr(pipeline, "_row_to_cached_item", broken)
+    client, calls = _night_client()
+    lines = _night(tmp_path, monkeypatch, capsys, night, client)
+    assert em.EMBED_2 in calls
+    assert night.load_calibration(em.CALIBRATION_DOCUMENT) is None and _e2_rows_written(night) == []
+    fields = _fields(lines[0])
+    assert (fields["used"], fields["fallback"], fields["pass"]) == ("1", "1", "-1")
+
+
+@pytest.mark.parametrize("migrated", [False, True], ids=["switch_over", "migrated"])
+def test_an_error_escaping_the_embedding2_embedder_falls_back(tmp_path, monkeypatch, capsys, night, migrated):
+    if migrated:
+        night.save_calibration(em.CALIBRATION_DOCUMENT, em.calibration_document(
+            em.Calibration("accepted", "2026-10-28", 120, (0.9, 0.8, 0.7, 0.95), 3, 0.2, 4)))
+    before = night.load_calibration(em.CALIBRATION_DOCUMENT)
+    client, calls = _night_client()
+    real = collectors.embed_missing_items
+
+    def embedder(items, **kwargs):
+        if kwargs.get("model") == em.EMBED_2:
+            real(items, **kwargs)
+            raise KeyError("synthetic failure after the call")
+        return real(items, **kwargs)
+
+    monkeypatch.setattr("google.genai.Client", lambda **kw: client)
+    monkeypatch.setattr(spend_guard, "guard_genai_client", lambda c, **kw: c)
+    monkeypatch.setattr(pipeline, "embed_missing_items", embedder)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=night)
+    with pytest.raises(StopAfterClustering):
+        staged._run_staged("2026-10-29", live_collect=True, now_epoch=COLLECT_NOW)
+    lines = _embedding_lines(capsys.readouterr().out)
+    assert em.EMBED_2 in calls
+    assert night.load_calibration(em.CALIBRATION_DOCUMENT) == before
+    assert _e2_rows_written(night) == []
+    fields = _fields(lines[0])
+    assert (fields["used"], fields["fallback"], fields["cut"]) == ("1", "1", "-1")
+
+
+def test_the_night_after_a_failed_switch_over_performs_a_normal_switch_over(tmp_path, monkeypatch, capsys, night):
+    broken, _ = _night_client(RuntimeError("synthetic failure after the call"))
+    first = _night(tmp_path, monkeypatch, capsys, night, broken)
+    assert _fields(first[0])["fallback"] == "1"
+    assert night.load_calibration(em.CALIBRATION_DOCUMENT) is None
+    working, calls = _night_client()
+    second = _night(tmp_path, monkeypatch, capsys, night, working)
+    fields = _fields(second[0])
+    assert (fields["switch_over"], fields["fallback"], fields["calibration"]) == ("1", "0", "0")
+    assert fields["pass"] in ("0", "1") and fields["cut"] != "-1"
+    state, _ = em.parse_calibration(night.load_calibration(em.CALIBRATION_DOCUMENT))
+    assert state in (em.CAL_ACCEPTED, em.CAL_REJECTED)
