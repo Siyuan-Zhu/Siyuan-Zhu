@@ -70,7 +70,9 @@ def collect(live, client, run=None):
 
 
 def texts(calls, model):
-    return [text for call in calls if call["model"] == model for text in call["contents"]]
+    # Embedding-2 items are one-text Contents; 001 items are bare strings.
+    return [item if isinstance(item, str) else item.parts[0].text
+            for call in calls if call["model"] == model for item in call["contents"]]
 
 
 @pytest.fixture(autouse=True)

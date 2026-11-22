@@ -12,7 +12,8 @@ model that is not listed. The calls, in order:
 - one critic call: a synthetic batch of nine 384-pixel images in the engine's batch critic
   request shape, at thinking level high with max_output_tokens 15000;
 - one gemini-embedding-2 call, only if that model is listed: two short synthetic texts in the
-  engine's clustering form at 768 dimensions.
+  engine's clustering form at 768 dimensions (the embedder's own request contents); the probe
+  exits 1 after the embedding line when its vector count differs from its text count.
 
 Each call prints one numbers-only line with seconds=<elapsed, one decimal> (total_output =
 candidates + thoughts tokens). A summary line after the critic call gives
@@ -248,7 +249,7 @@ def _billed_tokens(response):
     return total if getattr(response, "embeddings", None) else None
 
 
-def embedding_row(response, seconds):
+def embedding_row(response, seconds, texts):
     vectors = list(getattr(response, "embeddings", None) or [])
     values = [list(getattr(v, "values", None) or []) for v in vectors]
     sizes = {len(v) for v in values}
@@ -258,6 +259,7 @@ def embedding_row(response, seconds):
     return {
         "call": "embedding",
         "model": EMBEDDING_2,
+        "texts": texts,
         "vectors": len(vectors),
         "dimension": sizes.pop() if len(sizes) == 1 and 0 not in sizes else None,
         "finite": 1 if finite else 0,
@@ -268,14 +270,14 @@ def embedding_row(response, seconds):
 
 def run_embedding(genai_client):
     """One embed_content call with two synthetic texts in the engine's clustering form."""
-    from src.zeitgeist.collectors import EMBEDDING_DIM, _request_text
+    from src.zeitgeist.collectors import EMBEDDING_DIM, embedding_request_contents
 
     try:
-        contents = [_request_text(text, EMBEDDING_2) for text in EMBED_TEXTS]
+        contents = embedding_request_contents(EMBED_TEXTS, EMBEDDING_2)
         response, seconds = _timed(lambda: genai_client.models.embed_content(
             model=EMBEDDING_2, contents=contents, config={"output_dimensionality": EMBEDDING_DIM}
         ))
-        return embedding_row(response, seconds)
+        return embedding_row(response, seconds, len(EMBED_TEXTS))
     except Exception as error:
         raise ProbeFailure("embedding", type(error).__name__) from None
 
@@ -456,7 +458,10 @@ def main(argv=None, *, env=None, http_factory=None, genai_factory=None) -> int:
         summary.update(critic_total_output=critic["total_output"], critic_seconds=critic["seconds"])
         print(json.dumps(summary))
         if EMBEDDING_2 not in report["missing"]:
-            print(json.dumps(run_embedding(genai_client)))
+            embedding = run_embedding(genai_client)
+            print(json.dumps(embedding))
+            if embedding["vectors"] != embedding["texts"]:
+                return 1
     except ProbeFailure as failure:
         print(json.dumps({"status": "failed", "phase": failure.phase,
                           "error_type": failure.error_type}))
