@@ -757,8 +757,6 @@ class ZeitgeistADKOrchestrator:
                 and commission.fallback_used):
             raise ValueError("Owner-constrained live commissioning unavailable; retain last publication")
         self.last_commission = commission
-        if understanding_v1:
-            _print_understanding_line(scored_clusters, commission)
 
         top_cluster = scored_clusters[0] if scored_clusters else None
         bonus_cluster = top_cluster
@@ -856,6 +854,9 @@ class ZeitgeistADKOrchestrator:
         else:
             published = render_commission(commission)
         self.last_published_pulse = published
+        if understanding_v1:
+            # After photo recovery: measure the commission that will be published.
+            _print_understanding_line(scored_clusters, self.last_commission)
         # Compatibility DTOs describe the one actual publication. The primary
         # clustering/commissioning path above remains authoritative; no second renderer runs.
         lens_by_tier = {"M1": "ai_builders", "M2": "markets_finops", "M3": "global_politics"}
