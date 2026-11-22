@@ -952,6 +952,9 @@ def gemini_usage_receipt(reservation_id, reservation, response, *, credential_fi
         'evidence_sha256': digest({'response_id': response['responseId'], 'model': response['modelVersion'], 'usage': usage, 'request_context': context})}
 
 
+EMBEDDING_COMPLETION_OPERATIONS = frozenset({'embed_content:gemini-embedding-001', 'embed_content:gemini-embedding-2'})
+
+
 def gemini_embedding_receipt(reservation_id, reservation, response, *, credential_fingerprint, observed_at, request_sha256):
     """Known completed embedding: book the FULL admitted cap, not invented usage.
 
@@ -960,7 +963,7 @@ def gemini_embedding_receipt(reservation_id, reservation, response, *, credentia
     the separately approved provider_usage_v1 policy; no in-month credit is
     released. A local response digest is explicitly not a provider request ID.
     """
-    if reservation.get('operation') != 'embed_content:gemini-embedding-001':
+    if reservation.get('operation') not in EMBEDDING_COMPLETION_OPERATIONS:
         raise SpendBlocked('Embedding completion policy covers only embedding-001')
     context = reservation.get('request_context', {})
     if type(context.get('counted_input_tokens')) is not int or context['counted_input_tokens'] < 0:

@@ -1,11 +1,15 @@
 """Embedding-2 admission: exact text-only policy, 768 dimensions, per-text token bound."""
+import copy
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock
 import pytest
+from google.genai import types
+from src.zeitgeist import automatic_spend as auto
 from src.zeitgeist import owner_reasons, spend_guard
 from src.zeitgeist.spend_guard import SpendBlocked, guard_genai_client
 from tests import test_gemini38_contract as base
+from tests.test_automatic_guard import budget
 from tests.test_spend_provisioning import NOW
 
 MODEL = 'gemini-embedding-2'
@@ -125,3 +129,23 @@ def test_embedding2_full_bound_equals_cap():
 @pytest.mark.parametrize('code', ['unverified-embedding2-policy', 'embedding-text-token-bound'])
 def test_new_reason_codes_resolve(code):
     assert owner_reasons.resolve(stage='spend_maintenance', code=code)[0] == code
+
+
+def test_embedding2_call_through_automatic_guard_settles_its_hold():
+    budget_guard = budget()
+    account = budget_guard.automatic_policy['providers']['gemini']['account']
+    account['request_limits'][OP] = embedding2_limits()
+    account['operation_caps_usd'][OP] = '0.04096'
+    budget_guard.expected_policy_sha = auto.digest(budget_guard.automatic_policy)
+    budget_guard.ledger.document['automatic_policy_sha256'] = budget_guard.expected_policy_sha
+    budget_guard.ledger.document['providers']['gemini'].update(copy.deepcopy(account))
+    client = counts(30, 30)
+    client.models.embed_content.return_value = types.EmbedContentResponse(embeddings=[
+        types.ContentEmbedding(values=[.1, .2]), types.ContentEmbedding(values=[.3, .4])])
+    guard_genai_client(client, budget_guard).models.embed_content(**request())
+    client.models.embed_content.assert_called_once()
+    record = next(iter(budget_guard.ledger.document['reservations'].values()))
+    assert record['operation'] == OP
+    assert record['status'] == 'settled'
+    assert record['actual_gross_usd'] == record['max_gross_usd']
+    assert record['usage_receipt']['request_id_kind'] == 'local_response_digest'
