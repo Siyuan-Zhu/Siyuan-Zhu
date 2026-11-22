@@ -64,12 +64,12 @@ def reply(prompt_tokens, candidates=700, thoughts=2100):
                         'total_token_count': prompt_tokens + candidates + thoughts})
 
 
-def client(guard, count, prompt_tokens=None):
+def client(guard, count, prompt_tokens=None, **usage):
     calls = []
 
     def generate(**kwargs):
         calls.append(kwargs)
-        return reply(prompt_tokens)
+        return reply(prompt_tokens, **usage)
     raw = SimpleNamespace(models=SimpleNamespace(generate_content=generate, count_tokens=count))
     return guard_genai_client(raw, guard), calls
 
@@ -113,9 +113,11 @@ def test_director_admits_the_counted_figure_plus_the_allowance_and_settles_the_m
     assert guard.ledger.document.get('reconciliation_required') is not True
 
 
-def test_director_reply_billing_above_the_allowance_is_refused_and_freezes():
+def test_director_reply_above_the_admitted_figure_whose_cost_is_above_the_hold_is_refused_and_freezes():
     guard = successor_guard()
-    api, calls = client(guard, counter(DIRECTOR_COUNTED), prompt_tokens=1314)
+    # Output at the cap puts the billed cost above the hold; a prompt overage inside the hold settles (C2).
+    api, calls = client(guard, counter(DIRECTOR_COUNTED), prompt_tokens=1314, candidates=700, thoughts=OUTPUT_CAP - 700)
+    assert (Decimal(1314) * INPUT_RATE + Decimal(OUTPUT_CAP) * OUTPUT_RATE) / 1000000 > hold(1313)
     with pytest.raises(SpendBlocked, match='Authenticated Gemini usage exceeds the admitted request policy') as caught:
         director(api)
     assert refused_before_dispatch(caught.value) is False
@@ -129,6 +131,20 @@ def test_director_reply_billing_above_the_allowance_is_refused_and_freezes():
     with pytest.raises(SpendBlocked):
         director(api)
     assert len(calls) == 1
+
+
+def test_director_reply_one_token_above_the_admitted_figure_with_low_output_settles():
+    guard = successor_guard()
+    api, calls = client(guard, counter(DIRECTOR_COUNTED), prompt_tokens=1314)
+    director(api)
+    assert len(calls) == 1
+    record = only_record(guard)
+    assert record['request_context']['admitted_input_tokens'] == 1313
+    assert record['status'] == 'settled'
+    assert record['usage_receipt']['prompt_tokens_over_admitted'] == 1
+    # Booked at the billed 1314, which is above the admitted figure.
+    assert Decimal(record['actual_gross_usd']) == (Decimal(1314) * INPUT_RATE + Decimal(2800) * OUTPUT_RATE) / 1000000
+    assert guard.ledger.document.get('reconciliation_required') is not True
 
 
 def test_critic_with_nine_images_settles_the_measured_bill():
