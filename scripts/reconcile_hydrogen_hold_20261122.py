@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.state_store import _commit_documents, PublicationConflict, PublicationOutcomeUnknown
 from src.zeitgeist.automatic_guard import request_digest
 from src.zeitgeist.automatic_spend import (
-    admit_usage_receipt, cash_exposure, digest, validate_policy)
+    admit_usage_receipt, assert_credit_only_funding, cash_exposure, digest, validate_policy)
 from src.zeitgeist.automatic_spend_runtime import PrivateFirestoreStore
 from src.zeitgeist.spend_guard import GENAI_RATE_KEYS, money
 
@@ -62,10 +62,19 @@ def _billed(usage):
             or counts['totalTokenCount'] != (counts['promptTokenCount'] + counts['candidatesTokenCount']
                                              + counts['thoughtsTokenCount'])):
         raise RuntimeError('Tool use or inconsistent Gemini usage')
-    return counts['promptTokenCount'], counts['candidatesTokenCount'] + counts['thoughtsTokenCount']
+    details = usage.get('candidatesTokensDetails', [])
+    if (not isinstance(details, list)
+            or any(not isinstance(item, dict) or item.get('modality') != 'TEXT' for item in details)):
+        raise RuntimeError('Typed text-only Gemini reply required')
+    prompt = counts['promptTokenCount']
+    output = counts['candidatesTokenCount'] + counts['thoughtsTokenCount']
+    # The reviewed freeze is a billed prompt above the admitted count with output inside its cap.
+    if not (prompt > ADMITTED_INPUT_TOKENS and output <= MAX_OUTPUT_TOKENS):
+        raise RuntimeError('Usage is not the reviewed prompt-token excess')
+    return prompt, output
 
 
-def _check_reservation(record, policy):
+def _check_reservation(record, policy, policy_sha, ledger):
     if (not isinstance(record, dict) or record.get('status') != 'reserved' or record.get('provider') != 'gemini'
             or record.get('operation') != OPERATION or record.get('created_at') != CREATED_AT
             or record.get('provider_request_id') != PROVIDER_REQUEST_ID
@@ -75,6 +84,9 @@ def _check_reservation(record, policy):
                                              'reconciliation_reasons', 'usage_receipt_conflict',
                                              'reconciled_usage'))):
         raise RuntimeError('Reservation differs from the reviewed frozen hold')
+    if (record.get('automatic_policy_sha256') != policy_sha
+            or record.get('credential_fingerprint') != ledger['providers']['gemini'].get('credential_fingerprint')):
+        raise RuntimeError('Reservation was admitted under another policy or credential')
     if record.get('unreconciled_usage') != {'reason': FREEZE_REASON, 'evidence_sha256': EVIDENCE_SHA256}:
         raise RuntimeError('Reservation freeze differs from the reviewed usage record')
     context = record.get('request_context')
@@ -140,7 +152,7 @@ def reconcile(store, policy_sha, usage, *, apply=False, expected_plan_sha=None, 
     if prior.exists:
         return _reconciled(prior.to_dict(), ledger)
     record = ledger.get('reservations', {}).get(RESERVATION_ID)
-    context = _check_reservation(record, policy)
+    context = _check_reservation(record, policy, policy_sha, ledger)
     for ident, other in ledger['reservations'].items():
         if ident != RESERVATION_ID and any(key in other for key in _FROZEN_MARKERS):
             raise RuntimeError('Another reservation requires reconciliation; the ledger stays frozen')
@@ -173,6 +185,8 @@ def reconcile(store, policy_sha, usage, *, apply=False, expected_plan_sha=None, 
                                             reconciled_at=now.isoformat(), receipt_id=RECEIPT_ID,
                                             billed_prompt_tokens=prompt, billed_output_tokens=output)
     after['reconciliation_required'] = False
+    # The same funding check the engine makes before any new reservation.
+    assert_credit_only_funding(after, now=now)
     if cash_exposure(after) > money(policy['cash_ceiling_usd']):
         raise RuntimeError('Cash exposure exceeds the ceiling; the ledger stays frozen')
     amount_text = record_after['actual_gross_usd']
@@ -215,7 +229,12 @@ def main(argv=None, *, store=None, now=None):
         result = reconcile(store or PrivateFirestoreStore(), os.environ.get('SPEND_POLICY_SHA256', ''), usage,
                            apply=args.apply, expected_plan_sha=args.expected_plan_sha, now=now)
     except RuntimeError as exc:
+        # Fixed source-defined refusal texts only.
         print(json.dumps({'error': str(exc)}, sort_keys=True))
+        return 1
+    except Exception as exc:
+        # Any other failure prints only its type: its message may carry input or private detail.
+        print(json.dumps({'error': type(exc).__name__}, sort_keys=True))
         return 1
     print(json.dumps(result, sort_keys=True))
     return 0

@@ -11,6 +11,7 @@ import pytest
 
 from scripts import reconcile_hydrogen_hold_20261122 as hold
 from src.zeitgeist import automatic_spend as auto
+from src.zeitgeist.spend_guard import money
 from src.zeitgeist.automatic_guard import request_digest
 from src.zeitgeist.spend_successor import build_successor, successor_ledger
 from tests.test_automatic_spend_runtime import PrivateWire
@@ -270,8 +271,12 @@ def test_ledger_under_another_policy_refuses(monkeypatch):
 
 
 def test_cash_exposure_above_the_ceiling_refuses(monkeypatch):
-    wire, sha, ledger, _ = setup(monkeypatch, ledger_changes={'cash_spent_before_ledger_usd': '10.00'})
-    with pytest.raises(RuntimeError):
+    wire, sha, _, _ = setup(monkeypatch)
+    # A settled Gemini liability near the ceiling: credit-only funding still passes, the ceiling does not.
+    wire.docs['2026-11']['reservations']['large'] = dict(settled_flash(), max_gross_usd='10.00',
+                                                         actual_gross_usd='9.99')
+    ledger = copy.deepcopy(wire.docs['2026-11'])
+    with pytest.raises(RuntimeError, match='ceiling'):
         reconcile(wire, sha, apply=True, expected_plan_sha='0' * 64)
     assert_untouched(wire, ledger)
 
@@ -316,6 +321,76 @@ def test_cli_refusal_prints_the_error_and_writes_nothing(monkeypatch, capsys):
     monkeypatch.setenv('SPEND_POLICY_SHA256', sha)
     assert hold.main(['--usage-json', '[1, 2]', '--apply'], store=wire.store, now=NOW) == 1
     assert set(json.loads(capsys.readouterr().out)) == {'error'}
+    assert_untouched(wire, ledger)
+
+
+def test_non_text_reply_refuses(monkeypatch):
+    usage = dict(USAGE, candidatesTokensDetails=[{'modality': 'IMAGE', 'tokenCount': 2000}])
+    wire, sha, ledger, _ = setup(monkeypatch, usage=usage)
+    with pytest.raises(RuntimeError, match='text'):
+        reconcile(wire, sha, usage, apply=True, expected_plan_sha='0' * 64)
+    assert_untouched(wire, ledger)
+
+
+@pytest.mark.parametrize('usage', [
+    {'promptTokenCount': 100, 'candidatesTokenCount': 3000, 'thoughtsTokenCount': 3080, 'totalTokenCount': 6180},
+    {'promptTokenCount': 720, 'candidatesTokenCount': 2000, 'thoughtsTokenCount': 1800, 'totalTokenCount': 4520},
+    {'promptTokenCount': 1500, 'candidatesTokenCount': 3000, 'thoughtsTokenCount': 3001, 'totalTokenCount': 7501}])
+def test_usage_outside_the_reviewed_prompt_excess_refuses(monkeypatch, usage):
+    wire, sha, ledger, _ = setup(monkeypatch, usage=usage)
+    with pytest.raises(RuntimeError, match='reviewed prompt'):
+        reconcile(wire, sha, usage, apply=True, expected_plan_sha='0' * 64)
+    assert_untouched(wire, ledger)
+
+
+def test_hold_admitted_under_another_policy_refuses(monkeypatch):
+    wire, sha, ledger, _ = setup(monkeypatch, automatic_policy_sha256='e' * 64)
+    with pytest.raises(RuntimeError, match='policy or credential'):
+        reconcile(wire, sha, apply=True, expected_plan_sha='0' * 64)
+    assert_untouched(wire, ledger)
+
+
+def test_hold_admitted_under_another_credential_refuses(monkeypatch):
+    wire, sha, ledger, _ = setup(monkeypatch, credential_fingerprint='f' * 16)
+    with pytest.raises(RuntimeError, match='policy or credential'):
+        reconcile(wire, sha, apply=True, expected_plan_sha='0' * 64)
+    assert_untouched(wire, ledger)
+
+
+def test_credit_only_funding_failure_refuses(monkeypatch):
+    # Unattributed prior cash fails credit-only funding while the cash exposure still fits the ceiling.
+    wire, sha, ledger, _ = setup(monkeypatch, ledger_changes={'cash_spent_before_ledger_usd': '0.01'})
+    with pytest.raises(RuntimeError, match='Credit-only'):
+        reconcile(wire, sha, apply=True, expected_plan_sha='0' * 64)
+    assert_untouched(wire, ledger)
+
+
+def test_applied_ledger_passes_credit_only_funding_and_the_cash_ceiling(monkeypatch):
+    wire, sha, _, policy = setup(monkeypatch)
+    reconcile(wire, sha, apply=True, expected_plan_sha=reconcile(wire, sha)['plan_sha256'])
+    after = wire.docs['2026-11']
+    auto.assert_credit_only_funding(after, now=NOW)
+    assert auto.cash_exposure(after) <= money(policy['cash_ceiling_usd'])
+
+
+@pytest.mark.parametrize('case', ['nan_usage', 'missing_policy'])
+def test_cli_never_prints_a_traceback_or_a_foreign_message(monkeypatch, capsys, case):
+    wire, sha, ledger, _ = setup(monkeypatch)
+    usage = json.dumps(USAGE)
+    if case == 'nan_usage':
+        usage = '{"promptTokenCount": NaN, "candidatesTokenCount": 2000, "totalTokenCount": 2000}'
+    else:
+        sha = 'f' * 64
+    monkeypatch.setenv('SPEND_POLICY_SHA256', sha)
+    assert hold.main(['--usage-json', usage, '--apply', '--expected-plan-sha', '0' * 64],
+                     store=wire.store, now=NOW) == 1
+    captured = capsys.readouterr()
+    assert 'Traceback' not in captured.out + captured.err
+    assert len(captured.out.strip().splitlines()) == 1
+    printed = json.loads(captured.out)
+    assert set(printed) == {'error'}
+    if case == 'nan_usage':
+        assert printed['error'] == 'ValueError'
     assert_untouched(wire, ledger)
 
 
