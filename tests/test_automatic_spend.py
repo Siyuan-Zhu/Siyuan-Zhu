@@ -354,6 +354,40 @@ def test_successful_embedding_completion_accounts_full_bound_without_invented_to
         observed_at=NOW.isoformat(),request_sha256='f'*64)
 
 
+def test_embedding_2_completion_books_full_counted_bound():
+    ledger,policy,obs=fixtures()
+    operation='embed_content:gemini-embedding-2'
+    for account in (ledger['providers']['gemini'],policy['providers']['gemini']['account']):
+        account['operation_caps_usd'][operation]='.04096'
+        account['request_limits'][operation]={}
+    ledger['automatic_policy_sha256']=auto.digest(policy)
+    record=hold('gemini','.000012',credential_fingerprint='a'*16,request_sha256='f'*64,
+        request_context={'embedding_input_count':2,'counted_input_tokens':60})
+    record['operation']=operation
+    response={'embeddings':[{'values':[.1,.2]},{'values':[.3,.4]}]}
+    receipt=auto.gemini_embedding_receipt('embedding-2',record,response,credential_fingerprint='a'*16,
+        observed_at=NOW.isoformat(),request_sha256='f'*64)
+    assert auto.money(receipt['accounted_gross_usd'])==auto.money('.000012')
+    assert receipt['operation']==operation
+    assert receipt['request_id_kind']=='local_response_digest'
+    record['provider_request_id']=receipt['provider_request_id'];ledger['reservations']['embedding-2']=record
+    after=auto.admit_usage_receipt(ledger,policy,receipt,expected_policy_sha=auto.digest(policy),now=NOW)
+    assert auto.cash_exposure(after)==auto.money('.000012')
+    assert after['reservations']['embedding-2']['status']=='settled'
+    assert record['status']=='reserved'
+    with pytest.raises(SpendBlocked): auto.gemini_embedding_receipt('embedding-2',record,
+        {'embeddings':[{'values':[float('nan')]}]},credential_fingerprint='a'*16,
+        observed_at=NOW.isoformat(),request_sha256='f'*64)
+
+
+def test_unknown_embedding_operation_still_refused():
+    record=hold('gemini','.000012',request_context={'embedding_input_count':1,'counted_input_tokens':10})
+    record['operation']='embed_content:gemini-embedding-3'
+    with pytest.raises(SpendBlocked, match='Embedding completion'):
+        auto.gemini_embedding_receipt('embedding-3',record,{'embeddings':[{'values':[.1]}]},
+            credential_fingerprint='a'*16,observed_at=NOW.isoformat(),request_sha256='f'*64)
+
+
 def test_repeated_same_usage_evidence_can_be_observed_later_without_reaccounting():
     ledger,policy,response,receipt=request_fixture()
     first=auto.admit_usage_receipt(ledger,policy,receipt,expected_policy_sha=auto.digest(policy),now=NOW)

@@ -18,8 +18,9 @@ SOURCE_URL = 'https://ai.google.dev/gemini-api/docs/pricing'
 MAX_HTML_BYTES = 2_000_000
 CURRENCY_PREFIX = re.escape(chr(36))
 HYDROGEN_SECTION = 'gemini-4-hydrogen'
+EMBEDDING_2_SECTION = 'gemini-embedding-2'
 MODELS = {'gemini-3.8-flash': 'gemini-3.8-flash', HYDROGEN_SECTION: 'gemini-4-hydrogen',
-          'gemini-embedding': 'gemini-embedding-001'}
+          EMBEDDING_2_SECTION: 'gemini-embedding-2', 'gemini-embedding': 'gemini-embedding-001'}
 
 
 def _text(value):
@@ -244,6 +245,10 @@ def normalize_gemini_tariff(html):
         hydrogen_rows = _optional_rows(parser, HYDROGEN_SECTION, (
             'input price','output price (including thinking tokens)','context caching price',
             'grounding with google search','grounding with google maps','used to improve our products'))
+        # Other-modality rows are bound as labels only; only the text rate is emitted.
+        embedding_2_rows = _optional_rows(parser, EMBEDDING_2_SECTION, (
+            'text input price','image input price','audio input price','video input price',
+            'used to improve our products'))
         embedding, embedding_conditions = _rows(parser, 'gemini-embedding', ('input price','used to improve our products'))
         input_rate, future_input = _dated_rate(generation['input price'])
         output_rate, future_output = _dated_rate(generation['output price (including thinking tokens)'])
@@ -269,6 +274,12 @@ def normalize_gemini_tariff(html):
                 'output_token_usd_per_million':_current_rate(hydrogen['output price (including thinking tokens)']),
                 'output_includes_thinking':True,'published_rate_schedule':'current_only'}
             conditions['gemini-4-hydrogen'] = hydrogen_conditions
+        if embedding_2_rows is not None:
+            embedding_2, embedding_2_conditions = embedding_2_rows
+            operations['embed_content:gemini-embedding-2'] = {
+                'model':'gemini-embedding-2','input_token_usd_per_million':_current_rate(embedding_2['text input price']),
+                'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'}
+            conditions['gemini-embedding-2'] = embedding_2_conditions
         return {'schema_version':2,'provider':'gemini','api':'gemini_developer_api',
             'currency':'USD','service_tier':'paid_standard','unit':'1000000_tokens',
             'operations':operations,'standard_conditions':conditions,

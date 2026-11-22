@@ -163,7 +163,8 @@ def _cache_payload_bytes(payload: dict) -> int:
         for key, value in payload.items()}}, ensure_ascii=True).encode("utf-8"))
 
 
-def pack_ingestion_cache_pages(date_str: str, items: dict, *, reserve_embedding: bool = False) -> dict[str, dict]:
+def pack_ingestion_cache_pages(date_str: str, items: dict, *, reserve_embedding: bool = False,
+        embedding_model: str = "gemini-embedding-001") -> dict[str, dict]:
     """Losslessly page server-owned caches, bounded below Firestore request limits.
 
     OAuth/IAM writers bypass Firebase client rules. Existing client rules intentionally
@@ -179,7 +180,7 @@ def pack_ingestion_cache_pages(date_str: str, items: dict, *, reserve_embedding:
         raw = row.get("embedding_f16") or row.get("embedding_f16_b64")
         if reserve_embedding:
             raw = bytes(1536)
-            cleaned["embedding_model"] = "gemini-embedding-001"
+            cleaned["embedding_model"] = embedding_model
             cleaned["embedding_source"] = "gemini"
         elif isinstance(raw, str):
             raw = base64.b64decode(raw, validate=True)
@@ -596,6 +597,16 @@ def _increment_completed_game_count(
     return updated
 
 
+CALIBRATION_DOCUMENT_NAMES = frozenset({"embedding_calibration", "judge_calibration"})
+
+
+def _calibration_name(name: Any) -> str:
+    """Return `name` when it is a known private calibration document; refuse any other."""
+    if not isinstance(name, str) or name not in CALIBRATION_DOCUMENT_NAMES:
+        raise ValueError("Unknown calibration document name")
+    return name
+
+
 @runtime_checkable
 class StateStore(Protocol):
     """Port interface for persisting Community Game and Weighted Pulse state."""
@@ -672,6 +683,15 @@ class StateStore(Protocol):
     def save_orbit_roster(self, roster: dict[str, Any]) -> None:
         """Persist 1-hop `OrbitScout` roster to `profile_state/orbit_roster`."""
 
+    def load_calibration(self, name: str) -> dict[str, Any] | None:
+        """Load the private calibration document `profile_state/{name}`, or None when absent."""
+
+    def save_calibration(self, name: str, document: dict[str, Any]) -> None:
+        """Replace the private calibration document `profile_state/{name}` (never mirrored)."""
+
+    def clear_calibration(self, name: str) -> bool:
+        """Remove `profile_state/{name}`; True when a document existed."""
+
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         """Persist daily commissioned entry to `pulse_history/{date_str}` and `data/pulse_feed.json` (365-day window)."""
 
@@ -718,6 +738,7 @@ class InMemoryStateStore:
             "curated_o3_cursor": {},
             "state_version": 0,
         }
+        self._calibrations: dict[str, dict[str, Any]] = {}
         self._bot_memory: dict[str, Any] = {
             "state_version": 0,
             "games_learned": 0,
@@ -837,6 +858,16 @@ class InMemoryStateStore:
     def save_orbit_roster(self, roster: dict[str, Any]) -> None:
         self._orbit_roster = _strip_transient_keys(roster)
 
+    def load_calibration(self, name: str) -> dict[str, Any] | None:
+        document = self._calibrations.get(_calibration_name(name))
+        return copy.deepcopy(document) if document is not None else None
+
+    def save_calibration(self, name: str, document: dict[str, Any]) -> None:
+        self._calibrations[_calibration_name(name)] = _strip_transient_keys(document)
+
+    def clear_calibration(self, name: str) -> bool:
+        return self._calibrations.pop(_calibration_name(name), None) is not None
+
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         item = _strip_transient_keys(entry)
         item["date"] = str(date_str)[:10]
@@ -872,6 +903,12 @@ class JsonFileStateStore:
         self.ingestion_cache_dir = self.repo_root / "data" / "ingestion_cache"
         self.game_rate_limits_path = self.repo_root / "data" / "game_rate_limits.json"
         self.orbit_roster_path = self.repo_root / "data" / "orbit_roster.json"
+        # Private calibration documents sit in data/, outside ingestion_cache_dir,
+        # whose *.json glob would read them as cache shards. Both are gitignored.
+        self.calibration_paths = {
+            name: self.repo_root / "data" / f"{name}.json"
+            for name in CALIBRATION_DOCUMENT_NAMES
+        }
         self.pulse_feed_path = self.repo_root / "data" / "pulse_feed.json"
         self.bot_memory_path = self.repo_root / "data" / "bot_brain.json"
         self.elo_ledger_path = self.repo_root / "data" / "hall_of_records.json"
@@ -1053,6 +1090,26 @@ class JsonFileStateStore:
         self.orbit_roster_path.write_text(
             json.dumps(cleaned, indent=2) + "\n", encoding="utf-8"
         )
+
+    def load_calibration(self, name: str) -> dict[str, Any] | None:
+        path = self.calibration_paths[_calibration_name(name)]
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def save_calibration(self, name: str, document: dict[str, Any]) -> None:
+        path = self.calibration_paths[_calibration_name(name)]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(_strip_transient_keys(document), indent=2) + "\n", encoding="utf-8"
+        )
+
+    def clear_calibration(self, name: str) -> bool:
+        path = self.calibration_paths[_calibration_name(name)]
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
 
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         item = _strip_transient_keys(entry)
@@ -2635,6 +2692,38 @@ class FirestoreStateStore:
             self._fallback_store, "save_orbit_roster"
         ):
             self._fallback_store.save_orbit_roster(cleaned)
+
+    # Calibration documents are private: never mirrored to the checkout.
+    def load_calibration(self, name: str) -> dict[str, Any] | None:
+        doc_id = _calibration_name(name)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            return self._fallback_store.load_calibration(doc_id)
+        doc = client.collection(self._col("profile_state")).document(doc_id).get()
+        if not getattr(doc, "exists", False):
+            return None
+        return copy.deepcopy(doc.to_dict() or {})
+
+    def save_calibration(self, name: str, document: dict[str, Any]) -> None:
+        doc_id = _calibration_name(name)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            self._fallback_store.save_calibration(doc_id, document)
+            return
+        client.collection(self._col("profile_state")).document(doc_id).set(
+            _strip_transient_keys(document)
+        )
+
+    def clear_calibration(self, name: str) -> bool:
+        doc_id = _calibration_name(name)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            return self._fallback_store.clear_calibration(doc_id)
+        ref = client.collection(self._col("profile_state")).document(doc_id)
+        if not getattr(ref.get(), "exists", False):
+            return False
+        ref.delete()
+        return True
 
     def load_pulse_feed_history(self, days: int = 30) -> list[dict[str, Any]]:
         """Read authoritative dated history, never a potentially stale Git mirror."""
