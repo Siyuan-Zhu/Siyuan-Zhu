@@ -1076,6 +1076,11 @@ def get_spend_guard(*, credential_keys=None):
     return BudgetGuard(ledger, credential_fingerprints=fingerprints, require_credential_binding=True)
 
 
+def refused_before_dispatch(error):
+    """True only for a SpendBlocked raised before any provider call was made."""
+    return isinstance(error, SpendBlocked) and getattr(error, 'refused_before_dispatch', False) is True
+
+
 def guard_genai_client(client, guard=None, *, credential_key=None):
     """Wrap every SDK request in a shared reservation; unknown tariffs block.
 
@@ -1091,21 +1096,33 @@ def guard_genai_client(client, guard=None, *, credential_key=None):
                 raise SpendBlocked("Unregistered paid SDK method")
 
             def invoke(*args, **kwargs):
-                if args:
-                    raise SpendBlocked("Positional SDK payloads are not admitted")
-                model = str(kwargs.get("model", ""))
-                operation = name + ":" + model
-                # Freeze inputs before counting so another caller cannot mutate
-                # the paid request after its admission count.
-                bounded = guard.bounded_genai_request(operation, copy.deepcopy(kwargs))
-                counted = guard.counted_genai_admission(operation, bounded, client.models.count_tokens)
-                automatic_invoke = getattr(guard, 'invoke_prepared_genai', None)
-                if getattr(guard, 'automatic_accounting_enabled', False) is True and callable(automatic_invoke):
-                    return automatic_invoke(operation, counted, bounded, target)
-                return guard.call(
-                    "gemini", operation, counted['maximum'], lambda: target(*args, **bounded),
-                    expected_reference=counted['reference'],
-                )
+                dispatched = False
+
+                def dispatch(*a, **kw):
+                    nonlocal dispatched
+                    dispatched = True
+                    return target(*a, **kw)
+
+                try:
+                    if args:
+                        raise SpendBlocked("Positional SDK payloads are not admitted")
+                    model = str(kwargs.get("model", ""))
+                    operation = name + ":" + model
+                    # Freeze inputs before counting so another caller cannot mutate
+                    # the paid request after its admission count.
+                    bounded = guard.bounded_genai_request(operation, copy.deepcopy(kwargs))
+                    counted = guard.counted_genai_admission(operation, bounded, client.models.count_tokens)
+                    automatic_invoke = getattr(guard, 'invoke_prepared_genai', None)
+                    if getattr(guard, 'automatic_accounting_enabled', False) is True and callable(automatic_invoke):
+                        return automatic_invoke(operation, counted, bounded, dispatch)
+                    return guard.call(
+                        "gemini", operation, counted['maximum'], lambda: dispatch(*args, **bounded),
+                        expected_reference=counted['reference'],
+                    )
+                except SpendBlocked as error:
+                    if not dispatched:
+                        error.refused_before_dispatch = True
+                    raise
 
             return invoke
 
