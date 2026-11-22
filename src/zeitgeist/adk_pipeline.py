@@ -771,6 +771,9 @@ class ZeitgeistADKOrchestrator:
 
         # Stage 1 & 2: Collect 96h/336h signals, apply stratified windowing, and cluster
         collection_health = {}
+        embedding_run = (embedding_migration.plan_embedding_run(store, run_models.embedding)
+                         if _live_collection_enabled(live_collect) else None)
+        embedding_kwargs = {"embedding_run": embedding_run} if embedding_run is not None else {}
         try:
             raw_signals = collect_96h_signals(
                 self.repo_root,
@@ -780,6 +783,7 @@ class ZeitgeistADKOrchestrator:
                 health=collection_health,
                 now_epoch=now_epoch,
                 offline_demo=offline_demo,
+                **embedding_kwargs,
             )
         except IngestionUnavailable as exc:
             exc.public_collection_health = public_collection_health({**exc.public_collection_health, **collection_health})
@@ -787,10 +791,15 @@ class ZeitgeistADKOrchestrator:
         reference_time = _reference_clock(date_iso, now_epoch,
             _offline_demo_enabled(offline_demo) and not _live_collection_enabled(live_collect))
         understanding_v1 = understanding_v1_enabled()
-        scored_clusters = score_and_cluster_signals(
-            raw_signals,
-            now_utc=reference_time,
-        )
+        if embedding_run is None:
+            scored_clusters = score_and_cluster_signals(
+                raw_signals,
+                now_utc=reference_time,
+            )
+        else:
+            scored_clusters = embedding_migration.cluster_for_run(
+                raw_signals, embedding_run, store=store, now_utc=reference_time)
+            print(embedding_migration.embedding_line(embedding_run))
 
         # Extract 30-day word & visual medium history from pulse_feed.json
         feed_entries: List[Dict[str, Any]] = []

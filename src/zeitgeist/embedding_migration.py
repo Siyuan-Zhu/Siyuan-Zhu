@@ -6,6 +6,7 @@ public model names. Nothing here prints or stores item text, urls, hashes or sou
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import math
 import re
@@ -14,7 +15,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from . import collectors, spend_guard
-from .methodology import ScoredCluster, _extract_unit_embedding_f32, _get_item_hash
+from .methodology import (
+    ScoredCluster,
+    _extract_unit_embedding_f32,
+    _get_item_hash,
+    score_and_cluster_signals,
+)
 
 EMBED_001: str = collectors.EMBEDDING_MODEL
 EMBED_2: str = spend_guard.EMBEDDING_2_MODEL
@@ -271,3 +277,82 @@ def embedding_line(run: EmbeddingRun) -> str:
         int(gate.passed) if gate else -1,
         int(bool(run.write_failed)),
     )
+
+
+def _usable_similarities(items: Sequence[Any]) -> np.ndarray:
+    """Pairwise similarities of the items that carry a finite, nonzero vector of the common size."""
+    usable: List[Tuple[Any, int]] = []
+    for item in items:
+        try:
+            vec = _extract_unit_embedding_f32(item)
+        except Exception:
+            continue
+        if vec.size and bool(np.all(np.isfinite(vec))) and float(np.linalg.norm(vec)) > 0.5:
+            usable.append((item, vec.size))
+    if len(usable) < 2:
+        return np.empty(0, dtype=np.float64)
+    dim = Counter(size for _, size in usable).most_common(1)[0][0]
+    return pairwise_similarities([item for item, size in usable if size == dim])
+
+
+def cluster_for_run(
+    items: Sequence[Any],
+    run: EmbeddingRun,
+    *,
+    store: Any,
+    now_utc: Any,
+    **score_kwargs: Any,
+) -> List[ScoredCluster]:
+    """Cluster with the model the run settled on; on a switch-over night, gate and record the result."""
+    clusters = _clusters_for_run(items, run, store, now_utc, score_kwargs)
+    run.multi_source, run.largest_share = cluster_shape(clusters)
+    return clusters
+
+
+def _clusters_for_run(
+    items: Sequence[Any], run: EmbeddingRun, store: Any, now_utc: Any, score_kwargs: Dict[str, Any]
+) -> List[ScoredCluster]:
+    def score(rows: Sequence[Any], cut: Optional[Tuple[float, ...]] = None) -> List[ScoredCluster]:
+        if cut is None:
+            return score_and_cluster_signals(rows, now_utc=now_utc, **score_kwargs)
+        return score_and_cluster_signals(
+            rows, now_utc=now_utc, cutoffs=cut[:3], near_duplicate_threshold=cut[3], **score_kwargs
+        )
+
+    if run.fallback or run.deferred or run.mode not in ("migrated", "switch_over"):
+        return score(items)
+    sims = _usable_similarities(items)
+    if run.mode == "migrated":
+        if sims.size == 0 or run.percentiles is None:
+            return score(items)
+        run.cutoffs = cutoffs_at(sims, run.percentiles)
+        return score(items, run.cutoffs)
+    pending_sims = _usable_similarities(run.pending_items or ())
+    if sims.size == 0 or pending_sims.size == 0:
+        # Too few vectors to calibrate: no decision tonight, no write.
+        run.deferred = True
+        return score(items)
+    clusters_001 = score(items)
+    percentiles = percentile_ranks(sims)
+    cut = cutoffs_at(pending_sims, percentiles)
+    clusters_e2 = score(run.pending_items, cut)
+    gate = gate_report(clusters_001, clusters_e2)
+    run.percentiles, run.cutoffs, run.gate = percentiles, cut, gate
+    status = "accepted" if gate.passed else "rejected"
+    document = calibration_document(
+        Calibration(status, run.date_str, run.items, percentiles, gate.multi_source,
+                    gate.largest_share, gate.top5_survivors)
+    )
+    try:
+        store.save_calibration(CALIBRATION_DOCUMENT, document)
+    except Exception:
+        run.write_failed = True
+        return clusters_001
+    if not gate.passed:
+        return clusters_001
+    try:
+        store.save_ingestion_cache_day(run.date_str, run.pending_rows)
+    except Exception:
+        run.write_failed = True
+    run.used = EMBED_2
+    return clusters_e2
