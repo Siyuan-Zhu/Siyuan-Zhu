@@ -263,6 +263,20 @@ def test_packet_build_failure_uses_legacy_prompt_and_skips_echo(monkeypatch):
     assert commission.packet_used is False and commission.echo_rejections == 0
 
 
+def test_packet_build_failure_spends_only_legacy_attempts(monkeypatch):
+    def explode(*a, **k):
+        raise RuntimeError("packet failure")
+
+    monkeypatch.setattr(pipeline, "render_evidence_packet", explode)
+    bad = _reply(word="Entropy")
+    llm, prompts = _scripted([bad, bad, bad, bad, bad])
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm, evidence_packet=True)
+    assert len(prompts) == 3 and commission.fallback_used is True
+    assert all(_is_legacy(p) for p in prompts)
+    assert commission.attempts_used == len(prompts)
+    assert "PREVIOUS ATTEMPT REJECTED" not in prompts[0]
+
+
 def test_echo_check_failure_never_raises(monkeypatch):
     def explode(*a, **k):
         raise RuntimeError("echo failure")
@@ -393,3 +407,117 @@ def test_pipeline_switch_off(tmp_path, monkeypatch, capsys):
     assert seen["cohesion"] == [None]
     assert seen["legacy_top"] == []
     assert "[understanding_v1]" not in capsys.readouterr().out
+
+
+def _run_photo_recovery(tmp_path, monkeypatch, *, recover):
+    """Run with a fake model client so the photo-recovery branch runs; no network."""
+    import sys
+    import types
+
+    from src.zeitgeist import photo_recovery, spend_guard
+
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    fake_genai = types.ModuleType("google.genai")
+    fake_genai.Client = lambda **kw: object()
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    monkeypatch.setattr(sys.modules.setdefault("google", types.ModuleType("google")), "genai", fake_genai, raising=False)
+    monkeypatch.setattr(spend_guard, "guard_genai_client", lambda client, **kw: client)
+    monkeypatch.setattr(
+        pipeline, "commission_daily_zeitgeist",
+        lambda clusters, **kw: DirectorCommission(
+            word="Loom", gloss="steady weaving", commissioned_thesis="Looms keep time.",
+            selected_cluster_id=clusters[0].cluster_id,
+            attempts_used=3, packet_used=True, echo_rejections=2,
+        ),
+    )
+    real_render = pipeline.select_and_render_pulse_assets
+    monkeypatch.setattr(
+        pipeline, "select_and_render_pulse_assets",
+        lambda *a, **kw: real_render(*a, **{**kw, "offline_demo": True, "strict_photo_errors": False}),
+    )
+    monkeypatch.setattr(photo_recovery, "recover_visual", recover)
+    real_collect = pipeline.collect_96h_signals
+    monkeypatch.setattr(
+        pipeline, "collect_96h_signals", lambda *a, **kw: real_collect(*a, **{**kw, "offline_demo": True}),
+    )
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/orbit_sources.json").write_text("{}")
+    store = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=_FakeStore(tmp_path, store))
+    staged._run_staged("2026-11-21", None, offline_demo=False)
+    return staged
+
+
+def _orbit_text(clusters):
+    for cluster in list(clusters)[:5]:
+        for it in cluster.items:
+            if str(getattr(it, "bucket", "")).upper() == "ORBIT":
+                return f"{it.title} {it.summary}"
+    return ""
+
+
+def _recovering(scored):
+    def recover(commission, *, render, revise, history, photo_required):
+        revised = DirectorCommission(
+            word="Loom", gloss="steady weaving", commissioned_thesis=_orbit_text(scored[0]),
+            selected_cluster_id=commission.selected_cluster_id,
+        )
+        return revised, render(revised), {"recovered": True}
+
+    return recover
+
+
+def _no_recovery(commission, *, render, revise, history, photo_required):
+    return commission, render(commission), {"recovered": False}
+
+
+def _spy_scored(monkeypatch):
+    scored = []
+    real_score = pipeline.score_and_cluster_signals
+
+    def score(rows, **kw):
+        out = real_score(rows, **kw)
+        scored.append(out)
+        return out
+
+    monkeypatch.setattr(pipeline, "score_and_cluster_signals", score)
+    return scored
+
+
+def _understanding_lines(capsys):
+    return [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("[understanding_v1]")]
+
+
+def test_final_echo_measures_recovered_commission(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    scored = _spy_scored(monkeypatch)
+    staged = _run_photo_recovery(tmp_path, monkeypatch, recover=_recovering(scored))
+    lines = _understanding_lines(capsys)
+    assert scored and _orbit_text(scored[0]) and staged.last_commission.commissioned_thesis == _orbit_text(scored[0])
+    assert len(lines) == 1 and LINE_RE.fullmatch(lines[0]), lines
+    assert lines[0].endswith("final_echo=1")
+
+
+def test_counters_come_from_original_commission(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    scored = _spy_scored(monkeypatch)
+    _run_photo_recovery(tmp_path, monkeypatch, recover=_recovering(scored))
+    lines = _understanding_lines(capsys)
+    assert len(lines) == 1
+    assert "attempt=3 packet=1 echo_rejections=2 final_echo=1" in lines[0], lines
+
+
+def test_one_line_when_no_recovery_change(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    _run_photo_recovery(tmp_path, monkeypatch, recover=_no_recovery)
+    lines = _understanding_lines(capsys)
+    assert len(lines) == 1 and LINE_RE.fullmatch(lines[0]), lines
+    assert lines[0].endswith("final_echo=0")
+
+
+def test_no_line_with_switch_off_after_recovery(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    scored = _spy_scored(monkeypatch)
+    _run_photo_recovery(tmp_path, monkeypatch, recover=_recovering(scored))
+    assert _understanding_lines(capsys) == []

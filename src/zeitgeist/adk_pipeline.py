@@ -118,9 +118,18 @@ def _row_to_cached_item(row: Any, idx: int, ref_dt_str: str) -> Optional[CachedI
     )
 
 
-def _print_understanding_line(scored_clusters: Sequence[Any], commission: "DirectorCommission") -> None:
-    """One diagnostic line per run for the understanding-v1 switch; never raises."""
+def _print_understanding_line(
+    scored_clusters: Sequence[Any],
+    commission: "DirectorCommission",
+    original: Optional["DirectorCommission"] = None,
+) -> None:
+    """One diagnostic line per run for the understanding-v1 switch; never raises.
+
+    final_echo is measured on commission (the one published); the attempt counters come from
+    original (the Director's own commission, before any photo-recovery revision).
+    """
     try:
+        counters = original if original is not None else commission
         top_changed, rank = ranking_stats(scored_clusters)
         final_echo = echo_violation(
             [commission.word, commission.gloss, commission.commissioned_thesis, commission.visual_anchor,
@@ -129,8 +138,8 @@ def _print_understanding_line(scored_clusters: Sequence[Any], commission: "Direc
         )
         print(
             f"[understanding_v1] top_changed={int(top_changed)} new_top_legacy_rank={int(rank)} "
-            f"attempt={int(commission.attempts_used)} packet={int(bool(commission.packet_used))} "
-            f"echo_rejections={int(commission.echo_rejections)} final_echo={int(final_echo is not None)}"
+            f"attempt={int(counters.attempts_used)} packet={int(bool(counters.packet_used))} "
+            f"echo_rejections={int(counters.echo_rejections)} final_echo={int(final_echo is not None)}"
         )
     except Exception:
         pass
@@ -780,8 +789,7 @@ class ZeitgeistADKOrchestrator:
                 and commission.fallback_used):
             raise ValueError("Owner-constrained live commissioning unavailable; retain last publication")
         self.last_commission = commission
-        if understanding_v1:
-            _print_understanding_line(scored_clusters, commission)
+        original_commission = commission
 
         top_cluster = scored_clusters[0] if scored_clusters else None
         bonus_cluster = top_cluster
@@ -885,6 +893,9 @@ class ZeitgeistADKOrchestrator:
             if genai_client is not None and run_models.fallback_fired and not fallback_shown:
                 print(model_choice_line(run_models, commission.slate_count))
         self.last_published_pulse = published
+        if understanding_v1:
+            # After photo recovery: measure the commission that will be published.
+            _print_understanding_line(scored_clusters, self.last_commission, original_commission)
         # Compatibility DTOs describe the one actual publication. The primary
         # clustering/commissioning path above remains authoritative; no second renderer runs.
         lens_by_tier = {"M1": "ai_builders", "M2": "markets_finops", "M3": "global_politics"}
@@ -1355,11 +1366,6 @@ _SLATE_LINE = (
 )
 
 
-_PACKET_ONLY_REASONS = frozenset(
-    {"Echoes source text", "Names a source account", "Names an internal cluster id"}
-)
-
-
 def _build_packet_director_prompt(
     top_clusters: Sequence[Any],
     history_words_30d: Sequence[str],
@@ -1502,8 +1508,8 @@ def commission_daily_zeitgeist(
     packet_attempts = 0
 
     if llm_callable is not None or genai_client is not None:
-        packet_attempts = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
-        phase_plan = [True] * packet_attempts + [False] * total_attempts
+        planned_packet = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
+        phase_plan = [True] * planned_packet + [False] * total_attempts
         attempts_made = 0
         packet_attempts = 0
         in_legacy_phase = False
