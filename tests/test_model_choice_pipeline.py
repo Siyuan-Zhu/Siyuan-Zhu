@@ -525,3 +525,82 @@ def test_pipeline_flash_packet_line_reports_zero(tmp_path, monkeypatch, capsys):
     client, _ = _live(tmp_path, monkeypatch, [_slate_reply(_slate(10))], understanding=True)
     assert "candidate_words" not in client.models.calls[0]["contents"]
     assert _lines(capsys)[0].endswith(" slate=0")
+
+
+
+# ---- a judge fallback during the render stage shows in a second model_choice line ----
+
+
+def _judge_call(model):
+    if model == mc.HYDROGEN:
+        raise _refusal()
+    return _published()
+
+
+def _render_stage(tmp_path, monkeypatch, *, judge=None, director=None, replies=None, render_raises=False):
+    def render(**kwargs):
+        published = mc.active().call("judge", _judge_call)
+        if render_raises:
+            raise Stop()
+        return published
+
+    def recover(commission, *, render, **kw):
+        return commission, render(commission, photo_only=True), []
+
+    def telemetry(**kwargs):
+        raise Stop()
+
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets", render)
+    _live(tmp_path, monkeypatch, replies or [_reply()], director=director, judge=judge, recover=recover,
+          telemetry=telemetry)
+
+
+def test_judge_refusal_during_render_prints_a_second_line_with_fallback(tmp_path, monkeypatch, capsys):
+    _render_stage(tmp_path, monkeypatch, judge=mc.HYDROGEN)
+    assert _lines(capsys) == [
+        "[model_choice] director=gemini-3.8-flash judge=gemini-4-hydrogen embedding=gemini-embedding-001 "
+        "fallback=0 unrecognized=0 slate=0",
+        "[model_choice] director=gemini-3.8-flash judge=gemini-3.8-flash embedding=gemini-embedding-001 "
+        "fallback=1 unrecognized=0 slate=0",
+    ]
+
+
+def test_judge_refusal_before_a_failed_render_still_prints_the_second_line(tmp_path, monkeypatch, capsys):
+    _render_stage(tmp_path, monkeypatch, judge=mc.HYDROGEN, render_raises=True)
+    lines = _lines(capsys)
+    assert len(lines) == 2 and "fallback=0" in lines[0] and "fallback=1" in lines[1]
+
+
+def test_no_fallback_during_render_prints_exactly_one_line(tmp_path, monkeypatch, capsys):
+    _render_stage(tmp_path, monkeypatch, judge=mc.FLASH)
+    assert _lines(capsys) == [
+        "[model_choice] director=gemini-3.8-flash judge=gemini-3.8-flash embedding=gemini-embedding-001 "
+        "fallback=0 unrecognized=0 slate=0"
+    ]
+
+
+def test_fallback_already_shown_by_the_director_is_not_printed_again(tmp_path, monkeypatch, capsys):
+    _render_stage(tmp_path, monkeypatch, director=mc.HYDROGEN, judge=mc.HYDROGEN,
+                  replies=[_refuse_hydrogen(), _reply()])
+    lines = _lines(capsys)
+    assert len(lines) == 1 and "fallback=1" in lines[0]
+
+
+def test_offline_judge_flip_during_render_prints_no_line(tmp_path, monkeypatch, capsys):
+    from src.state_store import InMemoryStateStore
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/orbit_sources.json").write_text(json.dumps({"active_interjection": {"enabled": False}}))
+    monkeypatch.setenv(mc.JUDGE_ENV, mc.HYDROGEN)
+    flipped = []
+
+    def render(**kw):
+        mc.active().call("judge", _judge_call)
+        flipped.append(mc.active().fallback_fired)
+        raise Stop()
+
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets", render)
+    with pytest.raises(Stop):
+        pipeline.ZeitgeistADKOrchestrator(tmp_path, InMemoryStateStore()).run("2026-10-30", offline_demo=True)
+    assert flipped == [True]
+    assert _lines(capsys) == []

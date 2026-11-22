@@ -769,6 +769,7 @@ class ZeitgeistADKOrchestrator:
             run_models=run_models,
             **commission_kwargs,
         )
+        fallback_shown = run_models.fallback_fired
         if genai_client is not None:
             print(model_choice_line(run_models, commission.slate_count))
         if (os.environ.get("ZEITGEIST_LIVE_LLM") == "1"
@@ -849,35 +850,40 @@ class ZeitgeistADKOrchestrator:
                 # the allowed exception phase; never reuse another story's score.
                 exception_candidates = exc.exception_candidates
                 raise
-        if genai_client is not None and requested_medium == "blueprint":
-            from .photo_recovery import ai_exception_allowed
-            from .media_provenance import publication_media_history
-            modes = publication_media_history(feed_entries, replacing_date=str(date_iso))
-            if not ai_exception_allowed(modes):
-                raise ValueError("Non-photo cadence does not permit this requested edition")
-        if genai_client is not None and requested_medium != "blueprint":
-            from .photo_recovery import recover_visual, revision_owner_constraints
-            def revise_for_photo(current, *, change_word):
-                selected = [cluster for cluster in scored_clusters if getattr(cluster, "cluster_id", None)==current.selected_cluster_id]
-                if not selected:
-                    raise ValueError("Original story unavailable; cannot revise unrelated signals")
-                locks = revision_owner_constraints(owner, current, change_word=change_word)
-                revised = commission_daily_zeitgeist(selected,
-                    history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
-                    genai_client=genai_client, model_name=run_models.current("director"),
-                    run_models=run_models, max_retries=0, owner_override=locks)
-                if revised.fallback_used or revised.selected_cluster_id!=current.selected_cluster_id:
-                    raise ValueError("Same-story photo recovery did not produce a grounded commission")
-                return revised
-            from .media_provenance import publication_media_history
-            cadence_history = publication_media_history(feed_entries, replacing_date=str(date_iso))
-            commission, published, recovery_trace = recover_visual(commission,
-                render=render_commission, revise=revise_for_photo, history=cadence_history,
-                photo_required=requested_medium=="photo")
-            self.last_commission = commission
-            self.last_photo_recovery = recovery_trace
-        else:
-            published = render_commission(commission)
+        try:
+            if genai_client is not None and requested_medium == "blueprint":
+                from .photo_recovery import ai_exception_allowed
+                from .media_provenance import publication_media_history
+                modes = publication_media_history(feed_entries, replacing_date=str(date_iso))
+                if not ai_exception_allowed(modes):
+                    raise ValueError("Non-photo cadence does not permit this requested edition")
+            if genai_client is not None and requested_medium != "blueprint":
+                from .photo_recovery import recover_visual, revision_owner_constraints
+                def revise_for_photo(current, *, change_word):
+                    selected = [cluster for cluster in scored_clusters if getattr(cluster, "cluster_id", None)==current.selected_cluster_id]
+                    if not selected:
+                        raise ValueError("Original story unavailable; cannot revise unrelated signals")
+                    locks = revision_owner_constraints(owner, current, change_word=change_word)
+                    revised = commission_daily_zeitgeist(selected,
+                        history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
+                        genai_client=genai_client, model_name=run_models.current("director"),
+                        run_models=run_models, max_retries=0, owner_override=locks)
+                    if revised.fallback_used or revised.selected_cluster_id!=current.selected_cluster_id:
+                        raise ValueError("Same-story photo recovery did not produce a grounded commission")
+                    return revised
+                from .media_provenance import publication_media_history
+                cadence_history = publication_media_history(feed_entries, replacing_date=str(date_iso))
+                commission, published, recovery_trace = recover_visual(commission,
+                    render=render_commission, revise=revise_for_photo, history=cadence_history,
+                    photo_required=requested_medium=="photo")
+                self.last_commission = commission
+                self.last_photo_recovery = recovery_trace
+            else:
+                published = render_commission(commission)
+        finally:
+            # A judge or revision refusal during rendering moves the run to Flash after the first line.
+            if genai_client is not None and run_models.fallback_fired and not fallback_shown:
+                print(model_choice_line(run_models, commission.slate_count))
         self.last_published_pulse = published
         # Compatibility DTOs describe the one actual publication. The primary
         # clustering/commissioning path above remains authoritative; no second renderer runs.
