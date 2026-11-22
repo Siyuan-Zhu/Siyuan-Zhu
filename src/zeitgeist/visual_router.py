@@ -1432,6 +1432,7 @@ def select_and_render_pulse_assets(
     judge_model: str = "gemini-3.8-flash",
     strict_photo_errors: bool = False,
     offline_demo: bool = False,
+    scored_candidates_out: Optional[List[Dict[str, Any]]] = None,
 ) -> PublishedPulse:
     """Run Multimodal Visual Critic Funnel, enforce 80/20 medium budget, and render 3:2 curatorial + 16:9 WebP + SVG."""
     import os
@@ -1525,6 +1526,9 @@ def select_and_render_pulse_assets(
         return scored
 
     scored_candidates = score_photos(effective_candidates)
+    if scored_candidates_out is not None:
+        # In memory only: the caller sees the rows this run scored, thumbnails included.
+        scored_candidates_out.extend(scored_candidates)
     passing_candidates = [row for row in scored_candidates if row['safety_pass'] is True
         and row['semantic_alignment'] >= .70 and row['composite_score'] >= .68]
     # Owner-approved exception is bound to one publication date, never safety.
