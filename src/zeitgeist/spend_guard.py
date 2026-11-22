@@ -28,6 +28,9 @@ HYDROGEN_OPERATION = "generate_content:" + HYDROGEN_MODEL
 HYDROGEN_OUTPUT_TOKENS = (4000, 6000, 8000, 10000, 15000)
 HYDROGEN_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
 HYDROGEN_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
+# Measured 2026-11-22: JSON-mode Hydrogen bills 67 prompt tokens above countTokens, plus 2 per image;
+# countTokens refuses the generation config, so the guard admits this allowance on top of the count.
+HYDROGEN_PROMPT_ALLOWANCE_TOKENS = 256
 EMBEDDING_2_MODEL = "gemini-embedding-2"
 EMBEDDING_2_OPERATION = "embed_content:" + EMBEDDING_2_MODEL
 EMBEDDING_2_DIMENSIONS = 768
@@ -1109,6 +1112,8 @@ class BudgetGuard:
             output = int(bounded['config']['max_output_tokens'])
             if output > int(limits.get('max_output_tokens', 0)):
                 raise SpendBlocked('Output policy changed after request validation')
+            if operation == HYDROGEN_OPERATION:
+                total += HYDROGEN_PROMPT_ALLOWANCE_TOKENS
         maximum = limits.get('max_input_tokens')
         if type(maximum) is not int or not 0 <= total <= maximum:
             raise SpendBlocked('Counted input exceeds verified token ceiling')
