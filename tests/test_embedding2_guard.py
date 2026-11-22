@@ -37,7 +37,9 @@ def guard(mutate=None, cap='0.04096'):
 
 
 def request(contents=('synthetic text one', 'synthetic text two'), config=None):
-    return {'model': MODEL, 'contents': list(contents),
+    # Embedding-2 takes each text as its own one-part Content (bare strings would be aggregated).
+    contents = [types.Content(parts=[types.Part(text=c)]) if isinstance(c, str) else c for c in contents]
+    return {'model': MODEL, 'contents': contents,
             'config': {'output_dimensionality': 768} if config is None else config}
 
 

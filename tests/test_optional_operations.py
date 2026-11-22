@@ -116,8 +116,10 @@ def generate(api, model):
 
 
 def embed(api, model):
-    return api.models.embed_content(model=model, contents=['task: clustering | query: a synthetic headline'],
-                                    config={'output_dimensionality': 768})
+    text = 'task: clustering | query: a synthetic headline'
+    # Embedding-2 is admitted only as one-text Contents (bare strings would be aggregated).
+    contents = [types.Content(parts=[types.Part(text=text)])] if model == EMBEDDING_2_MODEL else [text]
+    return api.models.embed_content(model=model, contents=contents, config={'output_dimensionality': 768})
 
 
 @pytest.mark.parametrize('name', sorted(CASES))

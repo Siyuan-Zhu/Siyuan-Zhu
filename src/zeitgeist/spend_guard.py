@@ -482,6 +482,22 @@ class FirestoreLedger:
         )
 
 
+def embedding_2_text(item):
+    """The text of one embedding-2 input that is a single one-text Content, else None."""
+    if hasattr(item, 'model_dump'):
+        item = item.model_dump(exclude_none=True)
+    if not isinstance(item, dict) or set(item) != {'parts'}:
+        return None
+    parts = item['parts']
+    if not isinstance(parts, list) or len(parts) != 1:
+        return None
+    part = parts[0]
+    if not isinstance(part, dict) or set(part) != {'text'}:
+        return None
+    text = part['text']
+    return text if isinstance(text, str) and text.strip() else None
+
+
 class BudgetGuard:
     def __init__(self, ledger, now: Callable[[], datetime] | None = None, *,
                  credential_fingerprints=None, require_credential_binding=False):
@@ -1021,10 +1037,16 @@ class BudgetGuard:
             return total
         if method == 'embed_content':
             batch = contents if isinstance(contents, list) else [contents]
+            if model == EMBEDDING_2_MODEL:
+                # Embedding-2 aggregates bare strings into one vector; only one-text Contents
+                # get one vector each. Count the texts themselves.
+                batch = [embedding_2_text(item) for item in batch]
             if not batch or len(batch) > 100 or any(not isinstance(item, str) for item in batch):
                 raise SpendBlocked('Only bounded text embedding batches are priced')
-            # EmbedContent treats strings as distinct requests. Count each string
-            # independently; a joined prompt can undercount per-item boundaries.
+            # Each text is its own request: embedding-001 treats a list of strings that way,
+            # and embedding-2 only when each text is its own Content (bare strings there are
+            # merged into one embedding, which is why they are refused above). Count each
+            # text independently; a joined prompt can undercount per-item boundaries.
             total = 0
             for item in batch:
                 item_tokens = count(item)

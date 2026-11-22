@@ -489,11 +489,12 @@ def test_embedding_step_line(capsys, monkeypatch):
     assert code == 0 and len(lines) == 8
     assert models.embed_calls == [{
         "model": "gemini-embedding-2",
-        "contents": [collectors._request_text(text, "gemini-embedding-2") for text in probe.EMBED_TEXTS],
+        "contents": collectors.embedding_request_contents(probe.EMBED_TEXTS, "gemini-embedding-2"),
         "config": {"output_dimensionality": collectors.EMBEDDING_DIM}}]
-    assert all(c.startswith("task: clustering | query: ") for c in models.embed_calls[0]["contents"])
+    assert [c.parts[0].text for c in models.embed_calls[0]["contents"]] == [
+        "task: clustering | query: " + text for text in probe.EMBED_TEXTS]
     assert len(probe.EMBED_TEXTS) == 2
-    assert json.loads(lines[7]) == {"call": "embedding", "model": "gemini-embedding-2", "vectors": 2,
+    assert json.loads(lines[7]) == {"call": "embedding", "model": "gemini-embedding-2", "texts": 2, "vectors": 2,
                                     "dimension": 768, "finite": 1, "billed_tokens": 14, "seconds": 1.5}
 
 
@@ -509,7 +510,9 @@ def test_embedding_line_reports_shape_and_finiteness(capsys, values, tokens, exp
                         embed_values=values, embed_tokens=tokens)
     code, _, models, *_ = run_main(models=models, capsys=capsys)
     row = json.loads(run_main.full.splitlines()[-1])
-    assert code == 0 and row["call"] == "embedding"
+    # The line is printed either way; a vector count other than the text count exits 1.
+    assert code == (0 if expected["vectors"] == 2 else 1) and row["call"] == "embedding"
+    assert row["texts"] == 2
     assert {k: row[k] for k in expected} == expected
 
 

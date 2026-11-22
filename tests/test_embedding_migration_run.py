@@ -435,6 +435,7 @@ class StopAfterClustering(Exception):
 
 
 def _vector(model, text, dim=768):
+    text = text if isinstance(text, str) else text.parts[0].text  # embedding-2 sends one-text Contents
     seed = int(hashlib.sha256((model + text).encode()).hexdigest()[:8], 16)
     return [float(v) for v in np.random.default_rng(seed).standard_normal(dim)]
 

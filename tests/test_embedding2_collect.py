@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from google.genai import types
 
 from src import state_store as stores
 from src.zeitgeist import collectors
@@ -12,6 +13,10 @@ DATE = "2026-10-30"
 PREFIX = "task: clustering | query: "
 E2 = "gemini-embedding-2"
 E1 = "gemini-embedding-001"
+
+
+def content(text):
+    return types.Content(parts=[types.Part(text=text)])
 
 
 def row(key="story", title=None, **extra):
@@ -43,8 +48,9 @@ def test_embedding_2_sends_prefixed_001_text_and_tags_rows():
     items = [row("alpha", title="Alpha"), row("beta", title="Beta")]
     client, calls = provider()
     result = collectors.embed_missing_items(items, {}, client, model=E2, require_live=True)
-    sent = [text for call in calls for text in call["contents"]]
-    assert sent == [PREFIX + "Alpha\nSynthetic systems summary.", PREFIX + "Beta\nSynthetic systems summary."]
+    sent = [item for call in calls for item in call["contents"]]
+    assert sent == [content(PREFIX + "Alpha\nSynthetic systems summary."),
+                    content(PREFIX + "Beta\nSynthetic systems summary.")]
     assert all(call["model"] == E2 for call in calls)
     assert all(call["config"] == {"output_dimensionality": 768} for call in calls)
     assert [r["embedding_model"] for r in result] == [E2, E2]
@@ -70,7 +76,8 @@ def test_embedding_2_single_retry_is_prefixed_too():
         {}, client, model=E2)
     assert len(calls) == 3
     singles = [call["contents"] for call in calls[1:]]
-    assert singles == [[PREFIX + "Alpha\nSynthetic systems summary."], [PREFIX + "Beta\nSynthetic systems summary."]]
+    assert singles == [[content(PREFIX + "Alpha\nSynthetic systems summary.")],
+                       [content(PREFIX + "Beta\nSynthetic systems summary.")]]
     assert all(call["config"] == {"output_dimensionality": 768} for call in calls)
     assert [r["embedding_model"] for r in result] == [E2, E2]
 
@@ -92,7 +99,7 @@ def test_001_cache_row_is_reembedded_under_embedding_2():
     result = collectors.embed_missing_items([row()], {"story": cached(E1)}, client, model=E2, require_live=True)
     assert len(calls) == 1
     assert calls[0]["model"] == E2
-    assert calls[0]["contents"] == [PREFIX + "story\nSynthetic systems summary."]
+    assert calls[0]["contents"] == [content(PREFIX + "story\nSynthetic systems summary.")]
     assert result[0]["embedding_model"] == E2
 
 

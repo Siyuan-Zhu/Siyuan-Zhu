@@ -1737,6 +1737,18 @@ def _request_text(text: str, model: str) -> str:
     return EMBEDDING_2_TASK_PREFIX + text if model == EMBEDDING_2_MODEL else text
 
 
+def embedding_request_contents(texts: list[str], model: str) -> list[Any]:
+    """The `contents` of one embed_content call for these texts.
+
+    Embedding-2 aggregates bare strings into ONE vector (the SDK folds them into one
+    Content), so each text goes as its own one-part Content. Embedding-001 takes bare strings.
+    """
+    if model != EMBEDDING_2_MODEL:
+        return [_request_text(text, model) for text in texts]
+    from google.genai import types
+    return [types.Content(parts=[types.Part(text=_request_text(text, model))]) for text in texts]
+
+
 def embed_missing_items(
     items: list[dict[str, Any]],
     existing_cache: dict[str, dict[str, Any]] | None = None,
@@ -1806,13 +1818,17 @@ def embed_missing_items(
             try:
                 response = active_client.models.embed_content(
                     model=model,
-                    contents=[_request_text(text, model) for text in batch_text_slice],
+                    contents=embedding_request_contents(batch_text_slice, model),
                     config={"output_dimensionality": EMBEDDING_DIM},
                 )
                 raw_embeddings = getattr(response, "embeddings", None) or []
                 for pos, raw_emb in enumerate(raw_embeddings[: len(batch_idx_slice)]):
                     packed_batch[pos] = _pack_embedding_vector(raw_emb)
                 if any(b is None for b in packed_batch):
+                    batch_failed = True
+                if model == EMBEDDING_2_MODEL and len(raw_embeddings) != len(batch_idx_slice):
+                    # Exactly one vector per text; any other count cannot be matched to the texts.
+                    packed_batch = [None] * len(batch_idx_slice)
                     batch_failed = True
             except SpendBlocked:
                 raise
@@ -1838,11 +1854,11 @@ def embed_missing_items(
                     try:
                         single_resp = active_client.models.embed_content(
                             model=model,
-                            contents=[_request_text(single_text, model)],
+                            contents=embedding_request_contents([single_text], model),
                             config={"output_dimensionality": EMBEDDING_DIM},
                         )
                         single_embs = getattr(single_resp, "embeddings", None) or []
-                        if single_embs:
+                        if single_embs and (model != EMBEDDING_2_MODEL or len(single_embs) == 1):
                             packed_batch[pos] = _pack_embedding_vector(single_embs[0])
                     except SpendBlocked:
                         raise
