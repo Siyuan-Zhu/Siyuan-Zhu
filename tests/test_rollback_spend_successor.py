@@ -6,11 +6,11 @@ import pytest
 from scripts import rollback_spend_successor_20261122 as rollback_module
 from src.zeitgeist import automatic_spend as auto
 from src.zeitgeist import automatic_spend_runtime as runtime
-from src.zeitgeist.spend_guard import HYDROGEN_OPERATION
-from src.zeitgeist.spend_successor import rollback_ledger, field_diff
+from src.zeitgeist.spend_guard import EMBEDDING_2_OPERATION, HYDROGEN_OPERATION
+from src.zeitgeist.spend_successor import build_successor, rollback_ledger, field_diff
 from tests.test_automatic_spend import fixtures
-from tests.test_install_spend_successor import NOW, applied
-from tests.test_spend_successor import hold
+from tests.test_install_spend_successor import E2_PUBLISHED, NOW, applied, contract, run, setup
+from tests.test_spend_successor import KW, hold
 
 REPORT_KEYS = {'mode', 'from_policy_sha256', 'to_policy_sha256', 'plan_sha256', 'ledger_diff',
                'open_reservation_count', 'reservations_unchanged'}
@@ -361,3 +361,62 @@ def test_main_pins_the_install_receipt_to_the_reviewed_policy(monkeypatch, capsy
     out = capsys.readouterr().out.strip().splitlines()
     assert code == 1 and len(out) == 1 and 'reviewed installed policy' in json.loads(out[0])['error']
     assert len(wire.posts) == posts
+
+
+def applied_with_embedding_2(monkeypatch):
+    wire, old_sha, _, p0 = setup(monkeypatch, published=contract(embedding_2=E2_PUBLISHED))
+    p1 = build_successor(p0, **KW, include_embedding_2=True)
+    new_sha = auto.digest(p1)
+    run(wire, old_sha, apply=True, expected_new_sha=new_sha, include_embedding_2=True)
+    assert EMBEDDING_2_OPERATION in wire.docs['2026-11']['providers']['gemini']['operation_caps_usd']
+    assert EMBEDDING_2_OPERATION not in wire.docs['policy_' + old_sha]['providers']['gemini']['account'][
+        'operation_caps_usd']
+    return wire, old_sha, new_sha, p1
+
+
+@pytest.mark.parametrize('apply', [False, True])
+@pytest.mark.parametrize('age', [timedelta(hours=2), timedelta(days=9)])
+def test_unsettled_embedding_2_hold_older_than_the_window_blocks(monkeypatch, age, apply):
+    wire, old_sha, _, _ = applied_with_embedding_2(monkeypatch)
+    wire.docs['2026-11']['reservations']['e2'] = hold(NOW - age, operation=EMBEDDING_2_OPERATION)
+    wire.versions['2026-11'] += 1
+    ledger = wire.docs['2026-11']
+    after = rollback_ledger(ledger, wire.docs['policy_' + old_sha], old_sha)
+    # The digest the plan would print if it were allowed, so apply is refused by the hold alone.
+    sha = auto.digest({'before_sha256': auto.digest(ledger), 'after_sha256': auto.digest(after)})
+    before, posts = copy.deepcopy(wire.docs), len(wire.posts)
+    with pytest.raises(RuntimeError, match='unsettled .*' + EMBEDDING_2_OPERATION):
+        undo(wire, apply=apply, expected_plan_sha=sha)
+    assert len(wire.posts) == posts and wire.docs == before
+    assert runtime.ROLLBACK_RECEIPT_ID not in wire.docs
+
+
+def test_settled_embedding_2_hold_allows_the_rollback(monkeypatch):
+    wire, old_sha, _, _ = applied_with_embedding_2(monkeypatch)
+    wire.docs['2026-11']['reservations']['e2_done'] = hold(
+        NOW - timedelta(hours=3), 'settled', operation=EMBEDDING_2_OPERATION, actual_gross_usd='0.01',
+        billing_reference='r')
+    wire.versions['2026-11'] += 1
+    ledger = copy.deepcopy(wire.docs['2026-11'])
+    old = wire.docs['policy_' + old_sha]
+    report = undo(wire, apply=True, expected_plan_sha=plan_sha(wire))
+    assert report['mode'] == 'applied' and report['reservations_unchanged'] is True
+    assert wire.docs['2026-11'] == rollback_ledger(ledger, old, old_sha)
+    caps = wire.docs['2026-11']['providers']['gemini']['operation_caps_usd']
+    assert EMBEDDING_2_OPERATION not in caps and HYDROGEN_OPERATION not in caps
+
+
+@pytest.mark.parametrize('age', [timedelta(hours=2), timedelta(days=9)])
+def test_unsettled_hydrogen_hold_blocks_an_embedding_2_rollback(monkeypatch, age):
+    wire, old_sha, _, _ = applied_with_embedding_2(monkeypatch)
+    wire.docs['2026-11']['reservations']['h'] = hold(NOW - age, operation=HYDROGEN_OPERATION)
+    before, posts = copy.deepcopy(wire.docs), len(wire.posts)
+    with pytest.raises(RuntimeError, match='Hydrogen'):
+        undo(wire)
+    assert len(wire.posts) == posts and wire.docs == before
+
+
+def test_unsettled_hold_on_a_kept_operation_older_than_the_window_allows_an_embedding_2_rollback(monkeypatch):
+    wire, old_sha, _, _ = applied_with_embedding_2(monkeypatch)
+    assert wire.docs['2026-11']['reservations']['old']['status'] != 'settled'
+    assert undo(wire)['mode'] == 'plan'

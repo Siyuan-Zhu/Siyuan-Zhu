@@ -104,14 +104,18 @@ def rollback(store, *, apply=False, expected_plan_sha=None, now=None, required_o
     window = _request_window_seconds(old)
     if (now + timedelta(seconds=window)).strftime('%Y-%m') != month:
         raise RuntimeError('Too close to the month boundary to roll back; retry in the new month')
-    # An unsettled Hydrogen hold of any age would be orphaned: its operation leaves
-    # operation_caps_usd and reconciliation would then block it permanently.
+    after = rollback_ledger(ledger, old, old_sha)
+    # An unsettled Gemini hold of any age whose operation the rollback drops from
+    # operation_caps_usd (Hydrogen, embedding-2) would be orphaned: it could never settle.
+    kept = after['providers']['gemini']['operation_caps_usd']
     for record in (ledger.get('reservations') or {}).values():
-        if record.get('operation') == HYDROGEN_OPERATION and record.get('status') != 'settled':
-            raise RuntimeError('An unsettled Hydrogen hold exists; settle it before rolling back')
+        operation = record.get('operation')
+        if (record.get('provider', 'gemini') == 'gemini' and record.get('status') != 'settled'
+                and operation not in kept):
+            name = 'Hydrogen' if operation == HYDROGEN_OPERATION else operation
+            raise RuntimeError(f'An unsettled {name} hold exists; settle it before rolling back')
     assert_no_hold_in_flight(ledger, now=now, duration_seconds=window)
 
-    after = rollback_ledger(ledger, old, old_sha)
     plan_sha = _plan_sha(digest(ledger), digest(after))
     unchanged = digest(after['reservations']) == digest(ledger['reservations'])
     ledger_diff = field_diff(ledger, after)
