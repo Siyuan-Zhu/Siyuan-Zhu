@@ -65,7 +65,9 @@ from .visual_router import (
     select_and_render_pulse_assets,
 )
 
-from .spend_guard import SpendBlocked, sampling_controls_supported
+from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_controls_supported
+from . import embedding_migration
+from .embedding_migration import EmbeddingRun
 from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
 
@@ -145,6 +147,54 @@ def _print_understanding_line(
         pass
 
 
+_EMBEDDING_FIELDS = frozenset(
+    {"embedding_f32", "embedding_f16", "embedding_f16_b64", "embedding_model", "embedding_source"}
+)
+
+
+def _embed_rows(
+    rows: Dict[str, Dict[str, Any]], cache: Dict[str, Dict[str, Any]], client: Any, model: str
+) -> Optional[List[Dict[str, Any]]]:
+    """Embed copies of the rows live; None on an embedding failure the run absorbs.
+
+    That is an IngestionUnavailable, or a SpendBlocked refused before any provider call.
+    Any other SpendBlocked or exception propagates unchanged.
+    """
+    try:
+        return embed_missing_items(
+            [dict(row) for row in rows.values()],
+            existing_cache=dict(cache),
+            genai_client=client,
+            model=model,
+            require_live=True,
+        )
+    except IngestionUnavailable:
+        return None
+    except SpendBlocked as exc:
+        if refused_before_dispatch(exc):
+            return None
+        raise
+
+
+def _hold_switch_over_rows(
+    run: EmbeddingRun, retained: Dict[str, Dict[str, Any]], client: Any, ref_dt_str: str
+) -> None:
+    """Switch-over night: embed the retained pool with embedding-2 and hold it unsaved on the run."""
+    if len(retained) < embedding_migration.MIN_CALIBRATION_ITEMS:
+        run.deferred = True
+        return
+    stripped = {key: {k: v for k, v in row.items() if k not in _EMBEDDING_FIELDS}
+                for key, row in retained.items()}
+    embedded = _embed_rows(stripped, {}, client, embedding_migration.EMBED_2)
+    if embedded is None:
+        run.fallback = True
+        return
+    pending = {str(row.get("url_hash") or ""): row for row in embedded if isinstance(row, dict)}
+    items = [_row_to_cached_item(pending.get(key), idx, ref_dt_str) for idx, key in enumerate(retained)]
+    run.pending_rows = pending
+    run.pending_items = [item for item in items if item is not None]
+
+
 def _live_collection_enabled(value: bool | None) -> bool:
     return value if value is not None else os.environ.get("ZEITGEIST_LIVE_COLLECT", "").strip() == "1"
 
@@ -189,6 +239,7 @@ def collect_96h_signals(
     genai_client: Optional[Any] = None,
     health: Optional[dict] = None,
     offline_demo: bool | None = None,
+    embedding_run: Optional[EmbeddingRun] = None,
 ) -> List[CachedItem]:
     """Load, collect, or synthesize 96h Macro + 336h Orbit items with 768-dim L2-normalized embeddings."""
     from src.state_store import get_state_store
@@ -415,16 +466,42 @@ def collect_96h_signals(
         # Coverage depends on source metadata, not embeddings. Reject an
         # unusable corpus before model calls or cache writes; recheck afterward.
         require_live_coverage(active_rows.values())
+        if embedding_run is not None:
+            embedding_run.date_str = date_str
         if active_rows:
             from src.state_store import pack_ingestion_cache_pages
-            pack_ingestion_cache_pages(date_str, active_rows, reserve_embedding=True)
-            cache_before_embedding = dict(existing_cache_map)
-            embedded_live = embed_missing_items(
-                list(active_rows.values()),
-                existing_cache=existing_cache_map,
-                genai_client=active_genai_client,
-                require_live=True,
-            )
+            save_day = True
+            if embedding_run is not None and embedding_run.mode == "migrated":
+                pack_ingestion_cache_pages(date_str, active_rows, reserve_embedding=True,
+                    embedding_model=embedding_migration.EMBED_2)
+                cache_before_embedding = dict(existing_cache_map)
+                embedded_live = _embed_rows(active_rows, cache_before_embedding, active_genai_client,
+                    embedding_migration.EMBED_2)
+                if embedded_live is not None:
+                    embedding_run.used = embedding_migration.EMBED_2
+                else:
+                    # Refused or unavailable: publish on 001 vectors held in memory only.
+                    embedded_live = embed_missing_items(
+                        [dict(row) for row in active_rows.values()],
+                        existing_cache=dict(cache_before_embedding),
+                        genai_client=active_genai_client,
+                        model=embedding_migration.EMBED_001,
+                        require_live=True,
+                    )
+                    embedding_run.fallback = True
+                    embedding_run.used = embedding_migration.EMBED_001
+                    save_day = False
+            else:
+                pack_ingestion_cache_pages(date_str, active_rows, reserve_embedding=True)
+                cache_before_embedding = dict(existing_cache_map)
+                embedded_live = embed_missing_items(
+                    list(active_rows.values()),
+                    existing_cache=existing_cache_map,
+                    genai_client=active_genai_client,
+                    require_live=True,
+                )
+                if embedding_run is not None:
+                    embedding_run.used = embedding_migration.EMBED_001
             day_shard: Dict[str, Dict[str, Any]] = {}
             retained_cache: Dict[str, Dict[str, Any]] = {}
             for item_dict in embedded_live:
@@ -441,8 +518,12 @@ def collect_96h_signals(
                         day_shard[u_hash] = dict(item_dict)
                     retained_cache[u_hash] = dict(item_dict)
             existing_cache_map = retained_cache
-            if day_shard and hasattr(active_store, "save_ingestion_cache_day"):
+            if save_day and day_shard and hasattr(active_store, "save_ingestion_cache_day"):
                 active_store.save_ingestion_cache_day(date_str, day_shard)
+            if embedding_run is not None:
+                embedding_run.items = len(retained_cache)
+                if embedding_run.mode == "switch_over":
+                    _hold_switch_over_rows(embedding_run, retained_cache, active_genai_client, ref_dt_str)
         else:
             existing_cache_map = {}
 
