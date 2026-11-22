@@ -173,9 +173,51 @@ def test_legacy_attempt_has_no_banner_for_packet_rejections():
 
 def test_legacy_banner_kept_for_todays_reasons():
     bad = _reply(word="Entropy")
-    llm, prompts = _scripted([bad, bad, _reply()])
+    llm, prompts = _scripted([_echo_reply(), _echo_reply(), bad, _reply()])
     commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm, evidence_packet=True)
-    assert _is_legacy(prompts[2]) and "PREVIOUS ATTEMPT REJECTED" in prompts[2]
+    assert _is_legacy(prompts[3]) and "PREVIOUS ATTEMPT REJECTED" in prompts[3]
+    assert "PREVIOUS ATTEMPT REJECTED" not in prompts[2]
+
+
+def test_packet_attempts_are_additional():
+    bad = _reply(word="Entropy")
+    llm, prompts = _scripted([_echo_reply(), _echo_reply(), bad, _reply()])
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm, evidence_packet=True)
+    assert len(prompts) == 4
+    assert _is_packet(prompts[0]) and _is_packet(prompts[1])
+    assert _is_legacy(prompts[2]) and _is_legacy(prompts[3])
+    assert commission.word == "Selvedge" and commission.fallback_used is False
+    assert commission.attempts_used == 4 and commission.packet_used is False
+    assert commission.echo_rejections == 2
+
+
+def test_all_attempts_fail_falls_back_after_five_calls():
+    bad = _reply(word="Entropy")
+    llm, prompts = _scripted([_echo_reply(), _echo_reply(), bad, bad, bad])
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm, evidence_packet=True)
+    assert len(prompts) == 5 and commission.fallback_used is True
+    assert "PREVIOUS ATTEMPT REJECTED" not in prompts[2]
+
+
+def test_one_retry_is_one_packet_then_two_legacy():
+    bad = _reply(word="Entropy")
+    llm, prompts = _scripted([_echo_reply(), bad, bad])
+    commission = commission_daily_zeitgeist(
+        _clusters(), HISTORY, llm_callable=llm, evidence_packet=True, max_retries=1
+    )
+    assert len(prompts) == 3 and commission.fallback_used is True
+    assert _is_packet(prompts[0]) and _is_legacy(prompts[1]) and _is_legacy(prompts[2])
+    assert "PREVIOUS ATTEMPT REJECTED" not in prompts[1]
+
+
+def test_switch_off_prompts_match_base():
+    bad = _reply(word="Entropy")
+    llm, prompts = _scripted([bad, bad, _reply()])
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm)
+    assert len(prompts) == 3 and all(_is_legacy(p) for p in prompts)
+    assert prompts[0] == LEGACY_PROMPT and "PREVIOUS ATTEMPT REJECTED" not in prompts[0]
+    assert all("PREVIOUS ATTEMPT REJECTED" in p for p in prompts[1:])
+    assert commission.attempts_used == 3 and commission.packet_used is False
 
 
 def test_zero_retries_is_legacy_and_ungated():

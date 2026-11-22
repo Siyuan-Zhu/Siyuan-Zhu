@@ -1414,11 +1414,24 @@ def commission_daily_zeitgeist(
     last_rejection_reason: Optional[str] = None
     gloss_rejected = False
     echo_rejections = 0
+    packet_phase_over = False
+    packet_attempts = 0
 
     if llm_callable is not None or genai_client is not None:
-        for attempt_idx in range(total_attempts):
-            use_packet = evidence_packet and not constrained and attempt_idx < total_attempts - 1
-            use_packet_attempted = bool(evidence_packet and not constrained)
+        packet_attempts = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
+        phase_plan = [True] * packet_attempts + [False] * total_attempts
+        attempts_made = 0
+        packet_attempts = 0
+        in_legacy_phase = False
+        for use_packet in phase_plan:
+            if use_packet and packet_phase_over:
+                continue
+            if not use_packet and not in_legacy_phase:
+                # The packet phase is over: the legacy phase starts clean.
+                in_legacy_phase = True
+                if phase_plan[0]:
+                    last_rejection_reason = None
+                    gloss_rejected = False
             prompt = None
             if use_packet:
                 try:
@@ -1430,15 +1443,15 @@ def commission_daily_zeitgeist(
                         now_utc=now_utc,
                     )
                 except Exception:
-                    use_packet = False
+                    packet_phase_over = True
+                    continue
+            attempts_made += 1
+            packet_attempts += use_packet
             if prompt is None:
-                legacy_reason = last_rejection_reason
-                if use_packet_attempted and legacy_reason in _PACKET_ONLY_REASONS:
-                    legacy_reason = None
                 prompt = _build_director_prompt(
                     top_clusters=top_clusters[:5],
                     history_words_30d=history_list,
-                    rejection_reason=legacy_reason,
+                    rejection_reason=last_rejection_reason,
                 )
             if constrained:
                 prompt += (
@@ -1495,7 +1508,7 @@ def commission_daily_zeitgeist(
                     echo_rejections += 1
 
             if is_valid:
-                commission.attempts_used = attempt_idx + 1
+                commission.attempts_used = attempts_made
                 commission.fallback_used = False
                 commission.packet_used = use_packet
                 commission.echo_rejections = echo_rejections
@@ -1509,7 +1522,7 @@ def commission_daily_zeitgeist(
     if constrained and (llm_callable is not None or genai_client is not None):
         raise ValueError("Owner-constrained commissioning failed validation; retain last publication")
     fallback = _deterministic_fallback_commission(
-        top_clusters=top_clusters[:5], history_words_30d=history_list, attempts_used=total_attempts,
+        top_clusters=top_clusters[:5], history_words_30d=history_list, attempts_used=total_attempts + packet_attempts,
     )
     if constrained:
         # Demonstration only: live orchestration refuses this ungrounded fallback.

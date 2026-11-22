@@ -130,7 +130,7 @@ def _cut(text: str, limit: int) -> str:
 
 def _render_cluster(cluster: Any) -> str:
     items = list(getattr(cluster, "items", None) or [])
-    keywords = list(getattr(cluster, "cluster_keywords", None) or [])
+    keywords = public_keywords(list(getattr(cluster, "cluster_keywords", None) or []), cluster)
     titles: List[str] = []
     for it in typical_items(items):
         title = _cut(_clean(_get_item_field(it, "title", ""), item_handles(it)), TITLE_CHARS)
@@ -181,21 +181,36 @@ def echo_violation(fields: Sequence[str], clusters: Sequence[Any]) -> Optional[s
         for text in texts:
             if _ngrams(_TOKEN_RE.findall(text.lower()), ECHO_NGRAM) & orbit_grams:
                 return "Echoes source text"
-        risky = [
-            h
-            for h in dict.fromkeys(handles)
-            if h and (_PLAIN_LETTERS_RE.fullmatch(h) is None or len(h) >= LONG_HANDLE_LETTERS)
-        ]
+        risky = _risky_handles(list(dict.fromkeys(handles)))
+        part_sets = _handle_part_sets(risky)
         for text in texts:
             for h in risky:
                 if _handle_pattern(h).search(text):
                     return "Names a source account"
+            toks = _TOKEN_RE.findall(text.lower())
+            for parts in part_sets:
+                run_len = 0
+                for tok in toks:
+                    run_len = run_len + 1 if tok in parts else 0
+                    if run_len >= 2:
+                        return "Names a source account"
         for text in texts:
             if _CLUSTER_ID_RE.search(text):
                 return "Names an internal cluster id"
     except Exception:
         return None
     return None
+
+
+def _risky_handles(handles: Sequence[str]) -> List[str]:
+    return [
+        h for h in handles
+        if h and (_PLAIN_LETTERS_RE.fullmatch(h) is None or len(h) >= LONG_HANDLE_LETTERS)
+    ]
+
+
+def _handle_part_sets(risky: Sequence[str]) -> List[set]:
+    return [{p for p in re.split(r"[^a-z]+", h.lower()) if len(p) >= 2} for h in risky]
 
 
 def public_keywords(keywords: Sequence[str], cluster: Any) -> List[str]:
@@ -205,13 +220,8 @@ def public_keywords(keywords: Sequence[str], cluster: Any) -> List[str]:
         for it in getattr(cluster, "items", None) or []:
             handles.extend(item_handles(it))
         handles = list(dict.fromkeys(h for h in handles if h))
-        risky = [
-            h for h in handles
-            if _PLAIN_LETTERS_RE.fullmatch(h) is None or len(h) >= LONG_HANDLE_LETTERS
-        ]
-        part_sets = [
-            {p for p in re.split(r"[^a-z]+", h.lower()) if len(p) >= 2} for h in risky
-        ]
+        risky = _risky_handles(handles)
+        part_sets = _handle_part_sets(risky)
         kept: List[str] = []
         for kw in keywords:
             low = str(kw).strip().lower()
