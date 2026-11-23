@@ -1,7 +1,7 @@
 """Understanding v1 helpers: typical-titles packet, handle blanking, echo check, realms and links.
 
 Pure functions only: no I/O, no logging. The only environment reads are in
-`understanding_v1_enabled` and `links_enabled`.
+`understanding_v1_enabled`, `links_enabled` and `repair_enabled`.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from .undercurrents import find_undercurrents, source_realms_from_feeds
 
 SWITCH_ENV = "ZEITGEIST_UNDERSTANDING_V1"
 LINKS_ENV = "ZEITGEIST_LINKS"
+REPAIR_ENV = "ZEITGEIST_CHOSEN_GROUP_FIELDS"
 
 MAX_CLUSTERS = 5
 TITLE_CHARS = 120
@@ -44,6 +45,11 @@ def understanding_v1_enabled(environ: Optional[Mapping[str, str]] = None) -> boo
 def links_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
     env = os.environ if environ is None else environ
     return env.get(LINKS_ENV) == "1"
+
+
+def repair_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if environ is None else environ
+    return env.get(REPAIR_ENV) == "1"
 
 
 def item_handles(item: Any) -> List[str]:
