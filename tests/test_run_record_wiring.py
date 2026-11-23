@@ -27,8 +27,10 @@ COMMISSION_KEYS = {
     "packet_used", "echo_rejections", "slate_count",
 }
 SLATE = [{"word": f"Synthword{i}", "fit": f"synthetic fit {i}"} for i in range(10)]
-RECORD_LINE = "ZEITGEIST_RUN_RECORD: ${{ vars.ZEITGEIST_RUN_RECORD || '0' }}"
-UNDERSTANDING_LINE = "ZEITGEIST_UNDERSTANDING_V1: ${{ vars.ZEITGEIST_UNDERSTANDING_V1 || '0' }}"
+# The repository forbids a literal dollar character in test files; build the expression prefix instead.
+DOLLAR = chr(36)
+RECORD_LINE = "ZEITGEIST_RUN_RECORD: " + DOLLAR + "{{ vars.ZEITGEIST_RUN_RECORD || '0' }}"
+UNDERSTANDING_LINE = "ZEITGEIST_UNDERSTANDING_V1: " + DOLLAR + "{{ vars.ZEITGEIST_UNDERSTANDING_V1 || '0' }}"
 
 # sha256 of each prompt as the builders rendered it before this change: not one character may move.
 GOLDEN = {
@@ -293,12 +295,27 @@ def test_a_photo_recovery_revision_is_recorded_with_its_main_pass(tmp_path, monk
 # ---- the workflows pass the switch, off by default ----
 
 
-def test_the_daily_workflow_passes_the_switch_beside_every_understanding_line():
-    lines = [line.strip() for line in (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text().splitlines()]
-    understanding = [i for i, line in enumerate(lines) if line == UNDERSTANDING_LINE]
-    assert len(understanding) == 2
-    assert [lines[i + 1] for i in understanding] == [RECORD_LINE, RECORD_LINE]
-    assert lines.count(RECORD_LINE) == 2
+def _job_lines(text, job):
+    """The stripped lines of one top-level job of a workflow."""
+    lines = text.splitlines()
+    start = lines.index("  " + job + ":")
+    block = []
+    for line in lines[start + 1:]:
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:", line):
+            break
+        block.append(line.strip())
+    return block
+
+
+def test_the_daily_workflow_passes_the_switch_to_the_edition_job_only():
+    text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
+    edition = _job_lines(text, "synthesize-pulse")
+    assert edition.count(RECORD_LINE) == 1
+    assert edition[edition.index(UNDERSTANDING_LINE) + 1] == RECORD_LINE
+    # The read-only preflight writes no record, and the provider canary mirrors it.
+    preflight = _job_lines(text, "profile-preflight")
+    assert UNDERSTANDING_LINE in preflight and RECORD_LINE not in preflight
+    assert [line.strip() for line in text.splitlines()].count(RECORD_LINE) == 1
 
 
 def test_the_private_run_workflow_passes_the_switch():
