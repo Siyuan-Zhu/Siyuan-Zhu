@@ -390,3 +390,356 @@ def test_the_private_run_workflow_passes_the_switch():
     lines = [line.strip() for line in (ROOT / ".github/workflows/private_run.yml").read_text().splitlines()]
     assert lines.count(RECORD_LINE) == 1
     assert lines[lines.index(UNDERSTANDING_LINE) + 1] == RECORD_LINE
+
+
+# ---- the own-group check runs after the record, only with its switch on ----
+
+import threading  # noqa: E402
+import time  # noqa: E402
+
+from src.zeitgeist import own_group  # noqa: E402
+
+OWN_GROUP_LINE = "ZEITGEIST_OWN_GROUP: " + DOLLAR + "{{ vars.ZEITGEIST_OWN_GROUP || '0' }}"
+
+
+@pytest.fixture(autouse=True)
+def _own_group_switch_off_unless_set(monkeypatch):
+    """A shell that exports ZEITGEIST_OWN_GROUP must not change these tests; those that want it set it."""
+    monkeypatch.delenv("ZEITGEIST_OWN_GROUP", raising=False)
+
+
+class _MemoryRecordStore(_RecordingStore):
+    """Run records kept in memory and read back from there; every load is noted among the events."""
+
+    def load_run_record(self, run_id):
+        self.events.append("load_run_record")
+        found = [document for saved_id, document in self.records if saved_id == run_id]
+        return json.loads(json.dumps(found[-1])) if found else None
+
+
+def _own_group_switch(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_OWN_GROUP", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_OWN_GROUP", value)
+
+
+def _spy_check(monkeypatch, events, error=None):
+    calls = []
+
+    def spy(store, run_id, **kwargs):
+        events.append("own_group_check")
+        calls.append((run_id, kwargs))
+        if error is not None:
+            raise error
+
+    monkeypatch.setattr(own_group, "run_own_group_check", spy)
+    return calls
+
+
+def _spied_edition(tmp_path, monkeypatch, *, error=None, store_cls=_MemoryRecordStore):
+    holder = []
+
+    def make(root, events):
+        holder.append(store_cls(root, events))
+        holder.append(_spy_check(monkeypatch, events, error))
+        return holder[0]
+
+    _, _, result = _edition(tmp_path, monkeypatch, make, switch="1")
+    return holder[0], holder[1], result
+
+
+def test_switch_on_checks_once_after_the_record_with_the_records_inputs(tmp_path, monkeypatch, capsys):
+    _own_group_switch(monkeypatch, "1")
+    store, calls, result = _spied_edition(tmp_path, monkeypatch)
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record", "own_group_check"]
+    [(run_id, kwargs)] = calls
+    [(record_id, record)] = store.records
+    assert run_id == record_id == "daily_run:2026-11-21:local:1"
+    assert (kwargs["word"], kwargs["gloss"]) == (record["word"], record["gloss"]) and kwargs["word"] == result[0]
+    assert kwargs["chosen_cluster_id"] == record["chosen_cluster_id"] == "cluster_0"
+    assert [str(c.cluster_id) for c in kwargs["clusters"]][:5] == [g["cluster_id"] for g in record["groups"]]
+    assert kwargs["embedding_model"] == record["models"]["embedding"]
+    # The offline edition has no live client, so the real check would store "skipped".
+    assert kwargs["genai_client"] is None
+    assert capsys.readouterr().out.count(record["gloss"]) == 0
+
+
+def test_switch_on_without_a_client_stores_skipped_and_keeps_the_edition(tmp_path, monkeypatch, capsys):
+    _own_group_switch(monkeypatch, "0")
+    off_store, _, off = _edition(tmp_path / "off", monkeypatch, _MemoryRecordStore, switch="1")
+    off_out = capsys.readouterr()
+    _own_group_switch(monkeypatch, "1")
+    on_store, _, on = _edition(tmp_path / "on", monkeypatch, _MemoryRecordStore, switch="1")
+    on_out = capsys.readouterr()
+    assert on == off
+    assert on_store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record",
+                               "load_run_record", "load_run_record", "save_run_record"]
+    saved = on_store.records[-1][1]
+    assert saved["tests"] == {"own_group": {"status": "skipped", "reason": "no_client"}}
+    assert {k: v for k, v in saved.items() if k != "tests"} == {k: v for k, v in on_store.records[0][1].items()
+                                                                if k != "tests"}
+    assert _published_state(on_store, tmp_path / "on") == _published_state(off_store, tmp_path / "off")
+    assert (on_out.out, on_out.err) == (off_out.out, off_out.err)
+
+
+@pytest.mark.parametrize("value", [None, "0", "true"])
+def test_switch_off_makes_no_new_call(tmp_path, monkeypatch, value):
+    _own_group_switch(monkeypatch, value)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("own-group check called with the switch off")
+
+    monkeypatch.setattr(own_group, "run_own_group_check", forbidden)
+    monkeypatch.setattr(pipeline, "_daily_own_group_check", forbidden, raising=False)
+    store, _, _ = _edition(tmp_path, monkeypatch, _MemoryRecordStore, switch="1")
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+    assert len(store.records) == 1 and store.records[0][1]["tests"] == {}
+
+
+@pytest.mark.parametrize("error", [RuntimeError("Zqsecret failure"), _Halt("Zqsecret halt")])
+def test_a_failing_check_leaves_the_published_edition(tmp_path, monkeypatch, capsys, error):
+    _own_group_switch(monkeypatch, "0")
+    clean_store, _, clean = _edition(tmp_path / "clean", monkeypatch, _MemoryRecordStore, switch="1")
+    clean_out = capsys.readouterr()
+    _own_group_switch(monkeypatch, "1")
+    store, _, result = _spied_edition(tmp_path / "failing", monkeypatch, error=error)
+    out = capsys.readouterr()
+    assert result == clean
+    assert store.events[-2:] == ["save_run_record", "own_group_check"]
+    assert _published_state(store, tmp_path / "failing") == _published_state(clean_store, tmp_path / "clean")
+    assert _published_state(store, tmp_path / "failing")[1:] == (False, False)
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+def test_an_exception_inside_the_check_never_reaches_the_edition(tmp_path, monkeypatch):
+    # Raised in the check's own thread, even an interrupt or an exit stays there.
+    _own_group_switch(monkeypatch, "1")
+    for error in (KeyboardInterrupt(), SystemExit(1)):
+        store, _, result = _spied_edition(tmp_path / type(error).__name__, monkeypatch, error=error)
+        assert result[0] == "Selvedge"
+        assert store.events[-2:] == ["save_run_record", "own_group_check"]
+
+
+def test_an_interrupt_while_the_edition_waits_is_not_a_failed_publication(tmp_path, monkeypatch):
+    import _thread
+
+    from src.zeitgeist.publication_commit import PublicationMirrorError
+
+    _own_group_switch(monkeypatch, "1")
+    release = threading.Event()
+    holder = []
+
+    def check(store, run_id, **kwargs):
+        holder[0].events.append("own_group_check")
+        _thread.interrupt_main()
+        release.wait(10)
+
+    def make(root, events):
+        holder.append(_MemoryRecordStore(root, events))
+        monkeypatch.setattr(own_group, "run_own_group_check", check)
+        return holder[0]
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            _edition(tmp_path, monkeypatch, make, switch="1")
+    finally:
+        release.set()
+    assert not isinstance(raised.value, PublicationMirrorError)
+    [store] = holder
+    assert store.events[-2:] == ["save_run_record", "own_group_check"]
+    assert _published_state(store, tmp_path) == ("Selvedge", False, False)
+
+
+# ---- what runs after publication has a hard time budget ----
+
+
+def _clean_edition(tmp_path, monkeypatch, capsys):
+    _own_group_switch(monkeypatch, "0")
+    store, _, result = _edition(tmp_path / "clean", monkeypatch, _MemoryRecordStore, switch="1")
+    out = capsys.readouterr()
+    return store, result, out
+
+
+def _saved_state(store, root):
+    state = store.load_pulse_state()
+    return state, store.needs_git_reconcile, (root / "data" / "publication_reconcile.json").exists()
+
+
+def _comparable(state):
+    """The saved pulse state without the fields that differ between any two runs (ids and moments)."""
+    published = dict(state["published_pulse"])
+    return {"word": published.get("word"), "keys": sorted(state), "published_keys": sorted(published),
+            "tally": state.get("visitor_mood_tally")}
+
+
+def test_a_check_past_its_budget_leaves_the_edition_as_a_clean_run_and_stores_nothing(tmp_path, monkeypatch, capsys):
+    clean_store, clean, clean_out = _clean_edition(tmp_path, monkeypatch, capsys)
+    _own_group_switch(monkeypatch, "1")
+    monkeypatch.setattr(own_group, "BUDGET_SECONDS", 0.2)
+    release, late = threading.Event(), []
+    real = own_group.run_own_group_check
+
+    def stalled(store, run_id, **kwargs):
+        release.wait(10)
+        # Once the edition has moved on, the abandoned check stores nothing.
+        late.append(real(store, run_id, **{**kwargs, "genai_client": None}))
+
+    monkeypatch.setattr(own_group, "run_own_group_check", stalled)
+    started = time.monotonic()
+    store, _, result = _edition(tmp_path / "slow", monkeypatch, _MemoryRecordStore, switch="1")
+    elapsed = time.monotonic() - started
+    out = capsys.readouterr()
+    events_at_return = list(store.events)
+    release.set()
+    deadline = time.monotonic() + 5
+    while not late and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert late == [False]
+    assert elapsed < 5
+    assert result == clean
+    assert events_at_return == clean_store.events == ["publish_bundle:called", "publish_bundle:returned",
+                                                      "save_run_record"]
+    slow_state, slow_flag, slow_journal = _saved_state(store, tmp_path / "slow")
+    clean_state, clean_flag, clean_journal = _saved_state(clean_store, tmp_path / "clean")
+    assert _comparable(slow_state) == _comparable(clean_state)
+    assert (slow_flag, slow_journal) == (clean_flag, clean_journal) == (False, False)
+    assert len(store.records) == 1 and store.records[0][1]["tests"] == {}
+    assert "save_run_record" not in store.events[3:]
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+class _EmbedClient:
+    """A fake embedding endpoint: one fixed vector per text."""
+
+    def __init__(self):
+        self.models = self
+        self.requests = []
+
+    def embed_content(self, *, model, contents, config):
+        self.requests.append(model)
+        vector = [0.0] * 768
+        vector[0] = 1.0
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=vector) for _ in contents])
+
+
+def test_a_check_inside_its_budget_returns_true_and_its_numbers_are_stored(tmp_path, monkeypatch, capsys):
+    clean_store, clean, clean_out = _clean_edition(tmp_path, monkeypatch, capsys)
+    _own_group_switch(monkeypatch, "1")
+    real_check, real_budget = own_group.run_own_group_check, own_group.run_with_budget
+    client, budgets, measured = _EmbedClient(), [], []
+
+    def check(store, run_id, **kwargs):
+        measured.append(kwargs)
+        return real_check(store, run_id, **{**kwargs, "genai_client": client})
+
+    def budget(fn, seconds):
+        budgets.append((seconds, real_budget(fn, seconds)))
+        return budgets[-1][1]
+
+    monkeypatch.setattr(own_group, "run_own_group_check", check)
+    monkeypatch.setattr(own_group, "run_with_budget", budget)
+    store, _, result = _edition(tmp_path / "on", monkeypatch, _MemoryRecordStore, switch="1")
+    out = capsys.readouterr()
+    assert budgets == [(own_group.BUDGET_SECONDS, True)] and own_group.BUDGET_SECONDS == 45.0
+    assert result == clean
+    [kwargs] = measured
+    clusters = list(kwargs["clusters"])[:5]
+    own = next(c for c in clusters if str(c.cluster_id) == str(kwargs["chosen_cluster_id"]))
+    numbers = own_group.own_group_numbers([1.0] + [0.0] * 767, own.items, [c.items for c in clusters if c is not own])
+    stored = store.records[-1][1]["tests"]["own_group"]
+    assert stored["status"] == numbers["status"] == "ok" and client.requests == [kwargs["embedding_model"]]
+    assert stored["own"] == pytest.approx(numbers["own"], abs=1e-3)
+    assert stored["others"] == pytest.approx(numbers["others"], abs=1e-3)
+    assert stored["margin"] == pytest.approx(numbers["margin"], abs=1e-3)
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+def test_with_the_switch_off_no_thread_is_started(tmp_path, monkeypatch):
+    _own_group_switch(monkeypatch, "0")
+    started = []
+
+    class _Thread(threading.Thread):
+        def start(self):
+            started.append(self.name)
+            super().start()
+
+    monkeypatch.setattr(own_group, "threading", SimpleNamespace(Thread=_Thread, Event=threading.Event))
+    budgets = []
+    monkeypatch.setattr(own_group, "run_with_budget", lambda *a, **k: budgets.append(a))
+    store, _, _ = _edition(tmp_path, monkeypatch, _MemoryRecordStore, switch="1")
+    assert started == [] and budgets == []
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+
+
+def test_a_failed_publication_runs_no_check(tmp_path, monkeypatch):
+    _own_group_switch(monkeypatch, "1")
+    holder = []
+
+    def make(root, events):
+        holder.append(_MemoryRecordStore(root, events))
+        _spy_check(monkeypatch, events)
+        return holder[0]
+
+    with pytest.raises(RuntimeError, match="synthetic publication failure"):
+        _edition(tmp_path, monkeypatch, make, switch="1", publish_fails=True)
+    assert holder[0].events == ["publish_bundle:called"]
+
+
+@pytest.mark.parametrize("record, value, kept", [("1", None, False), ("1", "0", False), ("1", "1", True),
+                                                 ("0", "1", False), (None, "1", False)])
+def test_a_staged_run_keeps_the_check_inputs_only_with_both_switches_on(tmp_path, monkeypatch, record, value, kept):
+    _own_group_switch(monkeypatch, value)
+    _, events = _edition_setup(tmp_path, monkeypatch, switch=record)
+    store = _RecordingStore(tmp_path, events)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
+    assert store.records == [] and events == []
+    assert (staged._own_group_inputs is not None) is kept
+
+
+def test_the_daily_workflow_passes_the_own_group_switch_to_the_edition_job_only():
+    text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
+    edition = _job_lines(text, "synthesize-pulse")
+    assert edition[edition.index(RECORD_LINE) + 1] == OWN_GROUP_LINE
+    assert OWN_GROUP_LINE not in _job_lines(text, "profile-preflight")
+    assert [line.strip() for line in text.splitlines()].count(OWN_GROUP_LINE) == 1
+
+
+@pytest.mark.parametrize("name", ["private_run.yml", "comparison_run.yml"])
+def test_the_private_and_comparison_workflows_pass_the_own_group_switch(name):
+    lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
+    assert lines.count(OWN_GROUP_LINE) == 1
+    assert lines[lines.index(RECORD_LINE) + 1] == OWN_GROUP_LINE
+
+
+def test_the_provider_canary_does_not_pass_the_own_group_switch():
+    assert "ZEITGEIST_OWN_GROUP" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
+
+
+def test_a_photo_recovery_revision_is_measured_against_the_published_commissions_candidate(tmp_path, monkeypatch):
+    # In the edition, a revision must keep the main pass's candidate (revise_for_photo refuses any other), so
+    # the two ids agree. A revision that named another candidate would be about that candidate, and the
+    # published word and gloss are measured against the one the published commission is about.
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+
+    def recover(commission, *, render, revise, history, photo_required):
+        assert commission.selected_cluster_id == "cluster_0"
+        revised = DirectorCommission(word="Warp", gloss="threads held taut", commissioned_thesis="Synthetic thesis.",
+                                     selected_cluster_id="cluster_1")
+        return revised, render(revised), {"recovered": True}
+
+    staged = _run_photo_recovery(tmp_path, monkeypatch, recover=recover)
+    inputs = staged._own_group_inputs
+    assert staged._run_record_inputs["main_commission"].selected_cluster_id == "cluster_0"
+    assert "cluster_1" in [str(cluster.cluster_id) for cluster in inputs["clusters"][:5]]
+    calls = []
+    monkeypatch.setattr(own_group, "run_own_group_check", lambda store, run_id, **kw: calls.append((run_id, kw)))
+    pipeline._daily_own_group_check(object(), **inputs)
+    [(run_id, kwargs)] = calls
+    assert run_id == "daily_run:2026-11-21:local:1"
+    assert (kwargs["word"], kwargs["gloss"]) == ("Warp", "threads held taut")
+    assert kwargs["chosen_cluster_id"] == "cluster_1"

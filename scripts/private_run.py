@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT))
 from src.zeitgeist import adk_pipeline as pipeline  # noqa: E402
 from src.zeitgeist import embedding_migration as em  # noqa: E402
 from src.zeitgeist import judge_calibration as jc  # noqa: E402
+from src.zeitgeist import own_group  # noqa: E402
 from src.zeitgeist import run_record  # noqa: E402
 from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import (  # noqa: E402
@@ -195,6 +196,9 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             if run_record.run_record_enabled():
                 written = _write_private_record(store, now, date_iso, run_models, grouping, commission)
                 lines.append(RECORD_LINE % int(written))
+                if written and director_ok and not run_models.fallback_fired and own_group.own_group_enabled():
+                    _check_own_group(store, run_record.make_run_id("private_run", date_iso), grouping, commission,
+                                     genai_client)
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -245,6 +249,15 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
         raise
     except BaseException:
         return False
+
+
+def _check_own_group(store: Any, run_id: str, grouping: Grouping, commission: Any, genai_client: Any) -> bool:
+    """The own-group check on a written record; never raises but an interrupt or an exit, prints nothing."""
+    return own_group.run_own_group_check(
+        store, run_id, word=getattr(commission, "word", None), gloss=getattr(commission, "gloss", None),
+        chosen_cluster_id=commission.selected_cluster_id, clusters=grouping.clusters,
+        embedding_model=grouping.embedding_model, genai_client=genai_client,
+    )
 
 
 def _flash_scores(scored: List[Dict[str, Any]], commission: Any) -> List[Tuple[float, float]]:
@@ -451,9 +464,11 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
         chosen_cluster_id=commission.selected_cluster_id, prompt_sha256=evidence["prompt_sha256"],
         intake_hash=digest, arm=name, repeat=repeat, cutoffs_source=grouping.cutoffs_source,
     )
-    written = run_record.write_run_record(
-        store, run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat), record)
+    run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
+    written = run_record.write_run_record(store, run_id, record)
     ok = director_ok and not run_models.fallback_fired
+    if written and ok and own_group.own_group_enabled():
+        _check_own_group(store, run_id, grouping, commission, genai_client)
     if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
         scored: List[Dict[str, Any]] = []
         photo_ok = False
