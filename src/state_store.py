@@ -607,6 +607,29 @@ def _calibration_name(name: Any) -> str:
     return name
 
 
+RUN_RECORD_ID_RE = re.compile(r"[A-Za-z0-9_.:-]{1,150}")
+
+
+def _run_record_id(run_id: Any) -> str:
+    """Return `run_id` when it is a safe private run-record id; refuse any other."""
+    if not isinstance(run_id, str) or not RUN_RECORD_ID_RE.fullmatch(run_id):
+        raise ValueError("Invalid run record id")
+    return run_id
+
+
+def _newest_run_records(
+    documents: Any, *, kind: str | None, limit: int
+) -> list[dict[str, Any]]:
+    """Newest first by `written_at`, filtered by `kind` when given, at most `limit`."""
+    records = [
+        copy.deepcopy(doc)
+        for doc in documents
+        if isinstance(doc, dict) and (kind is None or doc.get("kind") == kind)
+    ]
+    records.sort(key=lambda doc: str(doc.get("written_at") or ""), reverse=True)
+    return records[: max(0, int(limit))]
+
+
 @runtime_checkable
 class StateStore(Protocol):
     """Port interface for persisting Community Game and Weighted Pulse state."""
@@ -692,6 +715,14 @@ class StateStore(Protocol):
     def clear_calibration(self, name: str) -> bool:
         """Remove `profile_state/{name}`; True when a document existed."""
 
+    def save_run_record(self, run_id: str, document: dict[str, Any]) -> None:
+        """Replace the private run record `run_records/{run_id}` (never mirrored)."""
+
+    def load_run_records(
+        self, *, kind: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Private run records, newest first by `written_at`, filtered by `kind` when given."""
+
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         """Persist daily commissioned entry to `pulse_history/{date_str}` and `data/pulse_feed.json` (365-day window)."""
 
@@ -739,6 +770,7 @@ class InMemoryStateStore:
             "state_version": 0,
         }
         self._calibrations: dict[str, dict[str, Any]] = {}
+        self._run_records: dict[str, dict[str, Any]] = {}
         self._bot_memory: dict[str, Any] = {
             "state_version": 0,
             "games_learned": 0,
@@ -868,6 +900,14 @@ class InMemoryStateStore:
     def clear_calibration(self, name: str) -> bool:
         return self._calibrations.pop(_calibration_name(name), None) is not None
 
+    def save_run_record(self, run_id: str, document: dict[str, Any]) -> None:
+        self._run_records[_run_record_id(run_id)] = copy.deepcopy(document)
+
+    def load_run_records(
+        self, *, kind: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        return _newest_run_records(self._run_records.values(), kind=kind, limit=limit)
+
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         item = _strip_transient_keys(entry)
         item["date"] = str(date_str)[:10]
@@ -909,6 +949,8 @@ class JsonFileStateStore:
             name: self.repo_root / "data" / f"{name}.json"
             for name in CALIBRATION_DOCUMENT_NAMES
         }
+        # Private run records, one file per run; the folder is gitignored.
+        self.run_records_dir = self.repo_root / "data" / "run_records"
         self.pulse_feed_path = self.repo_root / "data" / "pulse_feed.json"
         self.bot_memory_path = self.repo_root / "data" / "bot_brain.json"
         self.elo_ledger_path = self.repo_root / "data" / "hall_of_records.json"
@@ -1110,6 +1152,22 @@ class JsonFileStateStore:
             return False
         path.unlink()
         return True
+
+    def save_run_record(self, run_id: str, document: dict[str, Any]) -> None:
+        path = self.run_records_dir / f"{_run_record_id(run_id)}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+    def load_run_records(
+        self, *, kind: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if not self.run_records_dir.is_dir():
+            return []
+        documents = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(self.run_records_dir.glob("*.json"))
+        ]
+        return _newest_run_records(documents, kind=kind, limit=limit)
 
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         item = _strip_transient_keys(entry)
@@ -2724,6 +2782,27 @@ class FirestoreStateStore:
             return False
         ref.delete()
         return True
+
+    # Run records are private: never mirrored to the checkout.
+    def save_run_record(self, run_id: str, document: dict[str, Any]) -> None:
+        doc_id = _run_record_id(run_id)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            self._fallback_store.save_run_record(doc_id, document)
+            return
+        client.collection(self._col("run_records")).document(doc_id).set(copy.deepcopy(document))
+
+    def load_run_records(
+        self, *, kind: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            return self._fallback_store.load_run_records(kind=kind, limit=limit)
+        records_col = client.collection(self._col("run_records"))
+        snapshots = list(records_col.stream()) if hasattr(records_col, "stream") else []
+        return _newest_run_records(
+            (snapshot.to_dict() or {} for snapshot in snapshots), kind=kind, limit=limit
+        )
 
     def load_pulse_feed_history(self, days: int = 30) -> list[dict[str, Any]]:
         """Read authoritative dated history, never a potentially stale Git mirror."""
