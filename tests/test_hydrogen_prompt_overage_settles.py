@@ -134,7 +134,7 @@ def test_a_prompt_at_or_below_the_admitted_figure_returns_the_unchanged_receipt(
             'evidence_sha256': EVIDENCE[prompt]}
 
 
-def test_the_same_overage_on_flash_still_freezes():
+def test_a_flash_overage_with_output_above_the_cap_freezes():
     guard = successor_guard()
     version = flash_version(guard)
     api, calls = client(guard, [response(ADMITTED + 67, 778, 2096, version=version)])
@@ -143,7 +143,13 @@ def test_the_same_overage_on_flash_still_freezes():
     record = records(guard)[0]
     assert record['operation'] == FLASH_OPERATION
     assert record['request_context']['admitted_input_tokens'] == COUNTED
+    # The output is above Flash's cap, so the reply freezes whatever its prompt count.
+    assert record['request_context']['max_output_tokens'] == 1500
+    assert 778 + 2096 > record['request_context']['max_output_tokens']
     assert_frozen_as_today(guard, record)
+    with pytest.raises(SpendBlocked):
+        director(api, model='gemini-3.8-flash')
+    assert len(calls) == 1
 
 
 def freezes_and_refuses_the_next_call(guard, api, calls):
