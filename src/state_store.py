@@ -597,7 +597,7 @@ def _increment_completed_game_count(
     return updated
 
 
-CALIBRATION_DOCUMENT_NAMES = frozenset({"embedding_calibration", "judge_calibration"})
+CALIBRATION_DOCUMENT_NAMES = frozenset({"embedding_calibration", "judge_calibration", "orbit_realms"})
 
 
 def _calibration_name(name: Any) -> str:

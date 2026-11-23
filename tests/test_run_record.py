@@ -21,7 +21,7 @@ SWITCH_NAMES = (
     "ZEITGEIST_LIVE_LLM", "ZEITGEIST_LIVE_COLLECT", "ZEITGEIST_LIVE_UNSPLASH", "ZEITGEIST_OFFLINE_DEMO",
     "ZEITGEIST_UNDERSTANDING_V1", "ZEITGEIST_RUN_RECORD", "ZEITGEIST_DIRECTOR_MODEL", "ZEITGEIST_JUDGE_MODEL",
     "ZEITGEIST_EMBEDDING_MODEL", "ZEITGEIST_LINKS", "ZEITGEIST_CHOSEN_GROUP_FIELDS", "ZEITGEIST_OWN_NIGHT",
-    "ZEITGEIST_REFLECTOR", "ZEITGEIST_REFLECTOR_CANDIDATE",
+    "ZEITGEIST_OWN_GROUP", "ZEITGEIST_REFLECTOR", "ZEITGEIST_REFLECTOR_MODEL", "ZEITGEIST_REFLECTOR_CANDIDATE",
 )
 ENVIRON = {
     "GITHUB_SHA": "0123abcd",
@@ -38,7 +38,8 @@ EXPECTED_KEYS = {
     "record_schema", "kind", "date", "written_at", "commit", "switches", "models", "prompt_path",
     "attempts_used", "groups", "evidence_text", "chosen_cluster_id", "chosen_rank", "candidate_words",
     "word", "gloss", "thesis", "commission_sha256", "prompt_sha256", "revised_by_photo_recovery",
-    "main_pass", "intake_hash", "cutoffs_source", "arm", "repeat", "tests",
+    "main_pass", "intake_hash", "cutoffs_source", "arm", "repeat", "tests", "links", "realm_counts",
+    "chosen_mapped",
 }
 GROUP_KEYS = {
     "cluster_id", "rank", "commission_score", "velocity", "orbit_resonance", "s_intra",
@@ -519,3 +520,46 @@ def test_the_callers_record_keeps_its_own_text() -> None:
     record = _build(evidence_text="synthetic " + HIGH + " evidence")
     rr.write_run_record(_Store(), RUN_ID, record)
     assert record["evidence_text"] == "synthetic " + HIGH + " evidence"
+
+
+# ---- links and realm counts (links plan, Task 3) ----
+
+
+def _link(number: int, members: tuple) -> SimpleNamespace:
+    return SimpleNamespace(link_id=f"link_{number}", member_ids=members, realms=("culture_and_community", "tech", "markets"),
+                           source_count=np.int64(5), mean_link_similarity=np.float32(0.875),
+                           members=tuple(CLUSTERS[int(m[-1])] for m in members))
+
+
+def test_links_and_realm_counts_are_null_without_the_switch() -> None:
+    record = _build()
+    assert record["links"] is None and record["realm_counts"] is None
+
+
+def test_the_record_carries_each_link_and_the_realm_counts() -> None:
+    counts = {"intake": {"tech": np.int64(4), "none": 1},
+              "candidates": {"cluster_0": {"tech": 2}, "link_1": {"tech": 2, "culture_and_community": 3}}}
+    record = _build(links=[_link(1, ("cluster_0", "cluster_5", "cluster_3"))], realm_counts=counts)
+    assert record["links"] == [{
+        "link_id": "link_1", "member_ids": ["cluster_0", "cluster_5", "cluster_3"],
+        "realms": ["culture_and_community", "tech", "markets"], "source_count": 5,
+        "mean_link_similarity": 0.875,
+    }]
+    assert type(record["links"][0]["source_count"]) is int
+    assert record["realm_counts"] == {"intake": {"tech": 4, "none": 1},
+                                      "candidates": {"cluster_0": {"tech": 2},
+                                                     "link_1": {"tech": 2, "culture_and_community": 3}}}
+    json.dumps(record, allow_nan=False)
+
+
+def test_a_night_with_the_switch_on_and_no_links_records_an_empty_list() -> None:
+    record = _build(links=[], realm_counts={"intake": {}, "candidates": {}})
+    assert record["links"] == [] and record["realm_counts"] == {"intake": {}, "candidates": {}}
+
+
+
+@pytest.mark.parametrize("value", [None, True, False])
+def test_the_record_says_whether_the_chosen_candidate_was_mapped(value) -> None:
+    record = _build(chosen_mapped=value)
+    assert record["chosen_mapped"] is value
+    assert _build()["chosen_mapped"] is None

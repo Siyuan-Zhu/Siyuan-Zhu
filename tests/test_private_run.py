@@ -933,9 +933,8 @@ def test_the_photo_path_runs_for_at_most_the_first_two_arms(monkeypatch, capsys)
     (["--arms", "previous,,current"], 2),
     (["--arms", "previous,current,previous,current,previous", "--repeats", "3"], 4),
     (["--arms", "previous,previous", "--repeats", "1"], 5),
-    (["--arms", "previous,current_links"], 3),
     (["--arms", "current_reflector", "--repeats", "1"], 3),
-], ids=["zero", "four", "word", "unknown", "empty-part", "over-twelve", "duplicate", "links", "reflector"])
+], ids=["zero", "four", "word", "unknown", "empty-part", "over-twelve", "duplicate", "reflector"])
 def test_a_refused_dispatch_ends_with_one_numeric_line_before_any_call(monkeypatch, capsys, argv, refusal):
     _photo_world(monkeypatch)
     opened = []
@@ -1418,6 +1417,148 @@ def test_each_arm_and_repeat_is_checked_after_its_record(monkeypatch, capsys):
     assert all(_own_group(record)["status"] == "ok" for record in finals.values())
 
 
+
+# ---- the links arm (links plan, Task 3) ----
+
+
+def test_the_links_arm_is_runnable_and_the_reflector_arm_is_known_but_not():
+    assert private_run.ARMS["current_links"] == private_run.Arm(mc.HYDROGEN, mc.HYDROGEN, em.EMBED_2, packet=True,
+                                                               links=True)
+    assert private_run.ARMS["current"].links is False and private_run.ARMS["previous"].links is False
+    assert private_run.ARMS["current_reflector"].runnable is False
+    assert private_run.parse_arms("current,current_links", "1") == (["current", "current_links"], 1, 0)
+
+
+class LinksArmStore(ArmStore):
+    """The arm store plus the two reads the night's links make."""
+
+    def load_calibration(self, name):
+        self.reads.append(("load_calibration", name))
+        return {"synthetic_handle": "design"} if name == "orbit_realms" else self.calibration
+
+    def load_orbit_roster(self):
+        self.reads.append(("load_orbit_roster",))
+        return {"handles": {}}
+
+
+def test_the_links_arm_is_the_current_arm_with_the_links_the_edition_would_show(monkeypatch, capsys):
+    from src.zeitgeist.understanding import LinkCandidate
+
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("ZEITGEIST_LINKS", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    shown = []
+    real_commission = private_run.pipeline.commission_daily_zeitgeist
+
+    def spy_commission(top_clusters, *args, **kwargs):
+        shown.append(kwargs.get("links"))
+        return real_commission(top_clusters, *args, **kwargs)
+
+    built = []
+    real_night_links = private_run.pipeline._night_links
+
+    def spy_night_links(store, config, clusters):
+        found = real_night_links(store, config, clusters)
+        built.append((config, list(clusters), found))
+        return found
+
+    def one_link(clusters, realm_map):
+        members = tuple(clusters[:2])
+        return [LinkCandidate("link_1", tuple(str(c.cluster_id) for c in members), ("markets", "tech", "civic"),
+                              4, 0.93, members)]
+
+    monkeypatch.setattr(private_run.pipeline, "commission_daily_zeitgeist", spy_commission)
+    monkeypatch.setattr(private_run.pipeline, "_night_links", spy_night_links)
+    monkeypatch.setattr(private_run.pipeline, "link_candidates", one_link)
+    config = {"feeds": [{"id": "src_0_0", "category": "tech_ai"}]}
+    monkeypatch.setattr(private_run, "_orbit_config", lambda: config)
+    store = LinksArmStore()
+    code, lines, everything, store, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "current,current_links", "--repeats", "1"], store=store)
+    _assert_arms_public(lines)
+    assert not any(text in everything for text in PRIVATE + ("synthetic_handle", "Link"))
+    assert code == 0 and len(store.records) == 2
+    # The current arm is shown no links; the links arm the night's links, built as the edition builds them.
+    assert shown[0] is None and [link.link_id for link in shown[1]] == ["link_1"]
+    [(config_seen, clusters_seen, (links, _))] = built
+    assert config_seen is config and links is shown[1]
+    assert ("load_calibration", "orbit_realms") in store.reads and ("load_orbit_roster",) in store.reads
+    assert "- Link link_1" not in client.prompts[0] and "\n- Link link_1: groups=" in client.prompts[1]
+    current, with_links = [record for _, record in store.records]
+    assert current["links"] is None and current["realm_counts"] is None
+    assert with_links["arm"] == "current_links"
+    assert with_links["links"] == [{"link_id": "link_1", "member_ids": [str(c.cluster_id) for c in clusters_seen[:2]],
+                                    "realms": ["markets", "tech", "civic"], "source_count": 4,
+                                    "mean_link_similarity": 0.93}]
+    assert sum(with_links["realm_counts"]["intake"].values()) == 8
+    differ = ("arm", "links", "realm_counts", "chosen_mapped", "evidence_text", "prompt_sha256", "written_at",
+              "run_id")
+    assert {k: v for k, v in current.items() if k not in differ} == {
+        k: v for k, v in with_links.items() if k not in differ}
+
+
+def test_a_failing_night_links_read_leaves_the_links_arm_running_without_links(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.setattr(private_run, "_orbit_config", lambda: {"feeds": []})
+    # The plain arm store has no roster read: the night's links run on the defaults and find none here.
+    code, lines, everything, store, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "current_links", "--repeats", "1"])
+    _assert_arms_public(lines)
+    assert code == 0 and len(store.records) == 1
+    [(_, record)] = store.records
+    assert record["links"] == [] and "- Link" not in client.prompts[0]
+
+
+class LinksRecordingStore(RecordingStore):
+    """The recording store plus the two reads the night's links make."""
+
+    def load_calibration(self, name):
+        self.reads.append(("load_calibration", name))
+        return {}
+
+    def load_orbit_roster(self):
+        self.reads.append(("load_orbit_roster",))
+        return {"handles": {}}
+
+
+def _first_two_linked(clusters, realm_map):
+    from src.zeitgeist.understanding import LinkCandidate
+
+    members = tuple(clusters[:2])
+    return [LinkCandidate("link_1", tuple(str(c.cluster_id) for c in members), ("markets", "tech", "civic"), 4,
+                          0.93, members)]
+
+
+def test_the_private_run_shows_the_links_as_the_edition_does_under_the_links_switch(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_LINKS", "1")
+    monkeypatch.setattr(private_run.pipeline, "link_candidates", _first_two_linked)
+    monkeypatch.setattr(private_run, "_orbit_config", lambda: {"feeds": []})
+    store = LinksRecordingStore()
+    result, director = _run(store, reply=_slate_reply())
+    _assert_public_with_record(result.lines)
+    assert result.exit_code == 0
+    assert "\n- Link link_1: groups=" in director.prompts[0]
+    assert ("load_calibration", "orbit_realms") in store.reads and ("load_orbit_roster",) in store.reads
+    [(_, record)] = store.records
+    assert [link["link_id"] for link in record["links"]] == ["link_1"]
+    assert set(record["realm_counts"]) == {"intake", "candidates"}
+
+
+def test_the_private_run_without_the_links_switch_reads_nothing_more(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.delenv("ZEITGEIST_LINKS", raising=False)
+    store = LinksRecordingStore()
+    result, director = _run(store, reply=_slate_reply())
+    assert [read[0] for read in store.reads] == ["load_ingestion_cache", "load_pulse_feed_history"]
+    [(_, record)] = store.records
+    assert record["links"] is None and record["realm_counts"] is None
+    assert "- Link" not in director.prompts[0]
+
+
 @pytest.mark.parametrize("case", ["director_failed", "fallback_fired"])
 def test_no_check_is_paid_for_when_the_run_cannot_succeed(monkeypatch, case):
     _photo_world(monkeypatch)
@@ -1445,6 +1586,48 @@ def test_an_arm_whose_director_failed_is_not_checked(monkeypatch, capsys):
     # Only the previous arm's in-memory re-embedding; no own-group request.
     assert {model for model, _ in client.embeds} == {em.EMBED_001} and sum(size for _, size in client.embeds) == 8
     assert store.calls == ["save_run_record"] * 2
+
+
+
+def test_the_arm_records_say_whether_the_chosen_candidate_was_mapped(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    monkeypatch.setattr(private_run, "_orbit_config", lambda: {"feeds": []})
+    code, lines, _, store, _ = _arms_main(monkeypatch, capsys, ["--arms", "current,current_links", "--repeats", "1"])
+    assert code == 0
+    current, with_links = [record for _, record in store.records]
+    assert current["chosen_mapped"] is None and with_links["chosen_mapped"] is False
+
+
+def test_the_private_run_record_says_whether_the_chosen_candidate_was_mapped(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.delenv("ZEITGEIST_LINKS", raising=False)
+    monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    store = RecordingStore()
+    _run(store, reply=_slate_reply())
+    assert store.records[-1][1]["chosen_mapped"] is None
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    store = RecordingStore()
+    _run(store, reply=_reply(selected_cluster_id="cluster_nowhere", candidate_words=SLATE))
+    [(_, record)] = store.records
+    assert record["chosen_mapped"] is True and record["chosen_cluster_id"] == "cluster_0"
+
+
+
+def test_the_private_run_with_the_packet_path_off_records_no_links_as_offered(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_LINKS", "1")
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    monkeypatch.setattr(private_run.pipeline, "link_candidates", _first_two_linked)
+    monkeypatch.setattr(private_run, "_orbit_config", lambda: {"feeds": []})
+    store = LinksRecordingStore()
+    result, director = _run(store, reply=_slate_reply())
+    assert "- Link" not in director.prompts[0]
+    [(_, record)] = store.records
+    assert record["links"] is None and "link_1" not in record["realm_counts"]["candidates"]
+    assert record["chosen_mapped"] is False
 
 
 # ---- the reflector's inputs after the record and the own-group check (SIY-210) ----

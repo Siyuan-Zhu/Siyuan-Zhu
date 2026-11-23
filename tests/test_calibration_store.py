@@ -41,7 +41,7 @@ def store(request, tmp_path):
 
 
 def test_names_are_exactly_the_two_calibration_documents() -> None:
-    assert CALIBRATION_DOCUMENT_NAMES == frozenset(NAMES)
+    assert CALIBRATION_DOCUMENT_NAMES == frozenset(NAMES + ("orbit_realms",))
 
 
 def test_every_store_satisfies_the_protocol(store) -> None:

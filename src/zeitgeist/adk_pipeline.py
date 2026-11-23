@@ -39,9 +39,16 @@ from .collectors import (
 )
 from .understanding import (
     echo_violation,
+    link_candidates,
+    link_keywords,
+    links_enabled,
     public_keywords,
     ranking_stats,
+    realm_counts,
     render_evidence_packet,
+    repair_enabled,
+    shown_groups,
+    source_realm_map,
     understanding_v1_enabled,
 )
 from .methodology import (
@@ -904,6 +911,13 @@ class ZeitgeistADKOrchestrator:
         commission_kwargs: Dict[str, Any] = (
             {"evidence_packet": True, "now_utc": reference_time} if understanding_v1 else {}
         )
+        # Links between groups in different realms, offered on the packet path only. With the switch
+        # off nothing is read and the Director call is today's.
+        night_links: Optional[List[Any]] = None
+        realm_map: Any = None
+        if links_enabled():
+            night_links, realm_map = _night_links(store, config, scored_clusters)
+            commission_kwargs["links"] = night_links
         commission = commission_daily_zeitgeist(
             scored_clusters,
             history_words_30d=history_words_30d,
@@ -940,16 +954,24 @@ class ZeitgeistADKOrchestrator:
                 reference_time, apify_batch_succeeded=True)
             if roster_with_bonus != roster_before_bonus:
                 store.save_orbit_roster(sanitize_orbit_roster_state(roster_with_bonus))
-        orbit_res = float(top_cluster.orbit_resonance) if top_cluster is not None else 1.50
-        vel_score = float(top_cluster.velocity) if top_cluster is not None else 2.50
-        is_breakout = bool(getattr(top_cluster, "breakout_surge", False)) if top_cluster is not None else False
-        c_keywords = list(top_cluster.cluster_keywords) if top_cluster is not None else [commission.word]
-        if understanding_v1 and top_cluster is not None:
+        # The published figures and keywords: the top group's, or with the repair switch on the candidate
+        # the word is about (for a link, its merged keywords and its highest-ranked member's figures).
+        field_cluster, link_words = top_cluster, None
+        if repair_enabled() and top_cluster is not None:
+            field_cluster, link_words = _published_candidate(
+                commission.selected_cluster_id, scored_clusters, night_links, top_cluster)
+        orbit_res = float(field_cluster.orbit_resonance) if field_cluster is not None else 1.50
+        vel_score = float(field_cluster.velocity) if field_cluster is not None else 2.50
+        is_breakout = bool(getattr(field_cluster, "breakout_surge", False)) if field_cluster is not None else False
+        c_keywords = list(field_cluster.cluster_keywords) if field_cluster is not None else [commission.word]
+        if understanding_v1 and field_cluster is not None:
             try:
-                c_keywords = public_keywords(c_keywords, top_cluster)
+                c_keywords = public_keywords(c_keywords, field_cluster)
             except Exception:
                 pass
-        c_sil = float(top_cluster.silhouette_score) if top_cluster is not None else 0.75
+        if link_words is not None:
+            c_keywords = link_words
+        c_sil = float(field_cluster.silhouette_score) if field_cluster is not None else 0.75
 
         # Stage 4: Multimodal Visual Critic Funnel & Dual-Resolution WebP/SVG Renderer
         curated_candidates = None
@@ -1014,16 +1036,24 @@ class ZeitgeistADKOrchestrator:
             if genai_client is not None and requested_medium != "blueprint":
                 from .photo_recovery import recover_visual, revision_owner_constraints
                 def revise_for_photo(current, *, change_word):
-                    selected = [cluster for cluster in scored_clusters if getattr(cluster, "cluster_id", None)==current.selected_cluster_id]
+                    # A chosen link's story is its highest-ranked member; the revision keeps the link's id.
+                    chosen_link = _shown_link(current.selected_cluster_id, night_links)
+                    if chosen_link is not None:
+                        selected = [chosen_link.members[0]]
+                    else:
+                        selected = [cluster for cluster in scored_clusters if getattr(cluster, "cluster_id", None)==current.selected_cluster_id]
                     if not selected:
                         raise ValueError("Original story unavailable; cannot revise unrelated signals")
+                    story_id = getattr(selected[0], "cluster_id", None) if chosen_link is not None else current.selected_cluster_id
                     locks = revision_owner_constraints(owner, current, change_word=change_word)
                     revised = commission_daily_zeitgeist(selected,
                         history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
                         genai_client=genai_client, model_name=run_models.current("director"),
-                        run_models=run_models, max_retries=0, owner_override=locks)
-                    if revised.fallback_used or revised.selected_cluster_id!=current.selected_cluster_id:
+                        run_models=run_models, max_retries=0, owner_override=locks, check_shown_ids=False)
+                    if revised.fallback_used or revised.selected_cluster_id!=story_id:
                         raise ValueError("Same-story photo recovery did not produce a grounded commission")
+                    if chosen_link is not None:
+                        revised.selected_cluster_id = current.selected_cluster_id
                     return revised
                 from .media_provenance import publication_media_history
                 cadence_history = publication_media_history(feed_entries, replacing_date=str(date_iso))
@@ -1095,11 +1125,17 @@ class ZeitgeistADKOrchestrator:
             self._run_record_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
+                # Only links an attempt showed are listed; with the packet path off, none (as with links off).
+                "links": links_shown(original_commission, night_links),
+                "realm_counts": (None if night_links is None else _night_realm_counts(
+                    raw_signals, realm_map, scored_clusters, links_shown(original_commission, night_links) or [])),
+                "links_on": night_links is not None,
             }
         if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "genai_client": genai_client,
+                "links": links_shown(original_commission, night_links),
             }
         if run_record.run_record_enabled() and reflector.reflector_enabled():
             self._reflector_inputs = {
@@ -1479,6 +1515,7 @@ def _write_pending_run_record(store: Any, staged: Any) -> bool:
 def _write_daily_run_record(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission,
+    links: Optional[Sequence[Any]] = None, realm_counts: Optional[Dict[str, Any]] = None, links_on: bool = False,
 ) -> bool:
     """The edition's private run record, after its state is saved; True when written. Never raises, prints or logs."""
     try:
@@ -1490,6 +1527,7 @@ def _write_daily_run_record(
             clusters=clusters, evidence_text=evidence["evidence_text"], commission=commission,
             candidate_words=evidence["candidate_words"], chosen_cluster_id=main_commission.selected_cluster_id,
             main_commission=main_commission, prompt_sha256=evidence["prompt_sha256"],
+            links=links, realm_counts=realm_counts, chosen_mapped=recorded_chosen_mapping(main_commission, [] if links_on else None),
         )
         return run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
@@ -1499,6 +1537,7 @@ def _write_daily_run_record(
 def _daily_own_group_check(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, genai_client: Any,
+    links: Optional[Sequence[Any]] = None,
 ) -> None:
     """The own-group check on the edition's run record. Prints and logs nothing.
 
@@ -1513,7 +1552,7 @@ def _daily_own_group_check(
         word=commission.word, gloss=commission.gloss, chosen_cluster_id=commission.selected_cluster_id,
         clusters=clusters,
         embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
-        genai_client=genai_client,
+        genai_client=genai_client, links=links,
     )
 
 
@@ -1530,6 +1569,68 @@ def _daily_reflector_inputs(
         store, run_record.make_run_id("daily_run", date_iso), clusters, commission.selected_cluster_id,
         embedding_run.used if embedding_run is not None else run_models.current("embedding"),
     )
+
+
+def _night_links(store: Any, config: Any, clusters: Sequence[Any]) -> Tuple[List[Any], Any]:
+    """The night's links and its realm map, from the feeds, the private realm map and the roster.
+
+    No private map, an unreadable one or a failing read: the defaults. Never raises, prints or logs.
+    """
+    try:
+        private = store.load_calibration("orbit_realms")
+    except Exception:
+        private = None
+    try:
+        roster = store.load_orbit_roster()
+    except Exception:
+        roster = None
+    try:
+        feeds = config.get("feeds") if isinstance(config, dict) else None
+        realm_map = source_realm_map(feeds, private, roster)
+    except Exception:
+        return [], None
+    try:
+        links = link_candidates(clusters, realm_map)
+    except Exception:
+        links = []
+    return links, realm_map
+
+
+def _shown_link(chosen_id: Any, links: Optional[Sequence[Any]]) -> Any:
+    """The shown link the id names, or None."""
+    chosen = str(chosen_id).strip()
+    return next((link for link in links or () if str(link.link_id) == chosen), None)
+
+
+def _published_candidate(
+    chosen_id: Any, clusters: Sequence[Any], links: Optional[Sequence[Any]], top_cluster: Any,
+) -> Tuple[Any, Optional[List[str]]]:
+    """The group whose figures are published, and for a link its merged keywords; the top group when none matches."""
+    try:
+        link = _shown_link(chosen_id, links)
+        if link is not None and link.members:
+            return link.members[0], link_keywords(link)
+        chosen = str(chosen_id).strip()
+        group = next((c for c in list(clusters or [])[:5] if str(getattr(c, "cluster_id", "")) == chosen), None)
+        if group is not None:
+            return group, None
+    except Exception:
+        pass
+    return top_cluster, None
+
+
+def _night_realm_counts(
+    intake: Sequence[Any], realm_map: Any, clusters: Sequence[Any], links: Optional[Sequence[Any]],
+) -> Optional[Dict[str, Any]]:
+    """Items by realm: the whole intake, and each shown candidate (the five groups and each link). Never raises."""
+    try:
+        candidates = {str(getattr(c, "cluster_id", "")): realm_counts(list(getattr(c, "items", None) or []), realm_map)
+                      for c in list(clusters or [])[:5]}
+        for link in links or ():
+            candidates[str(link.link_id)] = realm_counts(link.items, realm_map)
+        return {"intake": realm_counts(list(intake or []), realm_map), "candidates": candidates}
+    except Exception:
+        return None
 
 
 def _coerce_director_commission(raw: Any) -> DirectorCommission:
@@ -1584,10 +1685,12 @@ def _build_director_prompt(
     evidence_packet: bool = False,
     now_utc: Any = None,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> str:
     return _director_prompt_and_block(
         top_clusters, history_words_30d, rejection_reason,
-        evidence_packet=evidence_packet, now_utc=now_utc, slate=slate,
+        evidence_packet=evidence_packet, now_utc=now_utc, slate=slate, links=links, extra_group=extra_group,
     )[0]
 
 
@@ -1599,10 +1702,16 @@ def _director_prompt_and_block(
     evidence_packet: bool = False,
     now_utc: Any = None,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> Tuple[str, str]:
-    """The Director prompt and its candidate block exactly as rendered into it."""
+    """The Director prompt and its candidate block exactly as rendered into it.
+
+    Links and the extra group are shown on the packet path only.
+    """
     if evidence_packet:
-        return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)
+        return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc,
+                                                 slate=slate, links=links, extra_group=extra_group)
     cluster_summaries: List[str] = []
     for idx, cluster in enumerate(top_clusters[:5]):
         cid = getattr(cluster, "cluster_id", f"cluster_{idx}")
@@ -1647,6 +1756,9 @@ def _director_prompt_and_block(
     return prompt, clusters_block
 
 
+LINK_SENTENCE = ("A Link line is one more candidate: it joins groups from different realms whose items sit "
+                 "unusually close tonight. To choose it, give its id as selected_cluster_id.")
+
 _SLATE_LINE = (
     "Before the commission, list 8 to 12 candidate words the evidence supports, each with a one-line note on how "
     "it fits the evidence, under the key candidate_words as [{\"word\": \"...\", \"fit\": \"...\"}]. "
@@ -1661,8 +1773,11 @@ def _build_packet_director_prompt(
     now_utc: Any,
     *,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> str:
-    return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)[0]
+    return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc,
+                                             slate=slate, links=links, extra_group=extra_group)[0]
 
 
 def _packet_director_prompt_and_block(
@@ -1672,9 +1787,13 @@ def _packet_director_prompt_and_block(
     now_utc: Any,
     *,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> Tuple[str, str]:
-    packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc)
+    packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc, links=links, extra_group=extra_group)
     history_block = ", ".join(history_words_30d) if history_words_30d else "None"
+    # Only when a link line is rendered: one fixed sentence saying it can be chosen; otherwise today's bytes.
+    link_note = (LINK_SENTENCE + "\n") if any(line.startswith("- Link ") for line in packet.split("\n")) else ""
     retry_banner = ""
     if rejection_reason:
         retry_banner = (
@@ -1694,6 +1813,7 @@ def _packet_director_prompt_and_block(
         f"{retry_banner}\n"
         f"Forbidden 30-day history words: [{history_block}]\n"
         f"Top Candidate Clusters:\n{packet}\n"
+        f"{link_note}"
         "Return JSON with keys: selected_cluster_id (one of the provided cluster IDs), word, gloss, commissioned_thesis, visual_anchor, "
         "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
         + ("\n" + _SLATE_LINE if slate else "")
@@ -1775,6 +1895,41 @@ def _deterministic_fallback_commission(
     )
 
 
+_LINK_ID_RE = re.compile(r"link_\d+")
+_MAPPED_ATTR = "_chosen_id_mapped"
+_LINKS_SHOWN_ATTR = "_links_shown"
+
+
+def links_shown(commission: Any, links: Optional[Sequence[Any]]) -> Optional[List[Any]]:
+    """The night's links when an attempt of the Director loop showed them; None otherwise (as with links off)."""
+    if links is None or getattr(commission, _LINKS_SHOWN_ATTR, False) is not True:
+        return None
+    return list(links)
+
+
+def chosen_id_mapped(commission: Any) -> bool:
+    """True when the Director's id was not offered and, on the last attempt, was mapped to the top group."""
+    return getattr(commission, _MAPPED_ATTR, False) is True
+
+
+def recorded_chosen_mapping(commission: Any, links: Optional[Sequence[Any]]) -> Optional[bool]:
+    """The record's `chosen_mapped`: null unless links (given) or the repair switch checked the choice."""
+    if links is None and not repair_enabled():
+        return None
+    return chosen_id_mapped(commission)
+
+
+def _offered_ids(top_clusters: Sequence[Any], links: Optional[Sequence[Any]], extra_group: Any,
+                 use_packet: bool) -> set:
+    """The candidate ids an attempt showed: the five groups, and on the packet path the links and the extra group."""
+    offered = {str(getattr(c, "cluster_id", f"cluster_{idx}")) for idx, c in enumerate(list(top_clusters)[:5])}
+    if use_packet:
+        offered |= {str(link.link_id) for link in links or ()}
+        if extra_group is not None:
+            offered.add(str(getattr(extra_group, "cluster_id", "")))
+    return offered
+
+
 def _director_config(model: str, temperature: float) -> Dict[str, Any]:
     config: Dict[str, Any] = {"response_mime_type": "application/json"}
     if sampling_controls_supported(model):
@@ -1795,10 +1950,20 @@ def commission_daily_zeitgeist(
     evidence_packet: bool = False,
     now_utc: Any = None,
     run_models: Optional[RunModels] = None,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
+    check_shown_ids: bool = True,
 ) -> DirectorCommission:
-    """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3)."""
+    """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3).
+
+    `links` (the night's links, given only with the links switch on) and `extra_group` are shown on the
+    packet path only. With links or the repair switch on, a reply whose id the attempt did not show (a link id
+    included) is accepted at once and mapped to the top group; the check never retries. `check_shown_ids=False`
+    turns the shown-candidate check off (photo recovery's revision, whose caller refuses another story).
+    """
     owner = validate_owner_interjection(owner_override or {})
     constrained = owner.get("enabled") and any(owner.get(k) for k in ("override_word", "override_phrase", "personal_note"))
+    repair = repair_enabled()
     history_list = [str(w).strip() for w in (history_words_30d or ()) if str(w).strip()]
     total_attempts = max(1, int(max_retries) + 1)
     last_rejection_reason: Optional[str] = None
@@ -1806,6 +1971,10 @@ def commission_daily_zeitgeist(
     echo_rejections = 0
     packet_phase_over = False
     packet_attempts = 0
+    def shown_mark(commission: DirectorCommission) -> DirectorCommission:
+        # Whether any attempt of the loop showed the night's links (a packet attempt, links given).
+        setattr(commission, _LINKS_SHOWN_ATTR, links is not None and packet_attempts > 0)
+        return commission
 
     if llm_callable is not None or genai_client is not None:
         planned_packet = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
@@ -1841,6 +2010,8 @@ def commission_daily_zeitgeist(
                             rejection_reason=last_rejection_reason,
                             evidence_packet=True,
                             now_utc=now_utc,
+                            links=links,
+                            extra_group=extra_group,
                         )
                         if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
                             slate_prompt, slate_block = _director_prompt_and_block(
@@ -1850,6 +2021,8 @@ def commission_daily_zeitgeist(
                                 evidence_packet=True,
                                 now_utc=now_utc,
                                 slate=True,
+                                links=links,
+                                extra_group=extra_group,
                             )
                     except Exception:
                         packet_phase_over = True
@@ -1915,13 +2088,23 @@ def commission_daily_zeitgeist(
                           or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
                         is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
 
+                mapped = chosen_checked = False
+                # A night with no groups offers nothing to check against: as today, no id check.
+                if is_valid and check_shown_ids and top_clusters and (repair or links is not None):
+                    chosen_id = str(commission.selected_cluster_id).strip()
+                    offered = _offered_ids(top_clusters, links, extra_group, use_packet)
+                    # With the repair switch every id is checked; with only links on, a link id.
+                    checked = repair or _LINK_ID_RE.fullmatch(chosen_id) is not None
+                    mapped = checked and chosen_id not in offered
+                    chosen_checked = True
+
                 if use_packet and is_valid:
                     try:
                         echo_reason = echo_violation(
                             [commission.word, commission.gloss, commission.commissioned_thesis,
                              commission.visual_anchor, *commission.unsplash_queries,
                              commission.imagen_commission_prompt],
-                            top_clusters[:5],
+                            shown_groups(top_clusters[:5], links, extra_group),
                         )
                     except Exception:
                         echo_reason = None
@@ -1930,6 +2113,14 @@ def commission_daily_zeitgeist(
                         echo_rejections += 1
 
                 if is_valid:
+                    if mapped:
+                        # An id that was not shown: the reply is accepted at once, as today's code accepts it, and
+                        # mapped to the top group, whose fields today's code publishes. The check never retries.
+                        commission.selected_cluster_id = str(getattr(top_clusters[0], "cluster_id", "cluster_0"))
+                        setattr(commission, _MAPPED_ATTR, True)
+                    elif chosen_checked:
+                        # Stored stripped, so the own-group check and photo recovery find it.
+                        commission.selected_cluster_id = chosen_id
                     commission.attempts_used = attempts_made
                     commission.fallback_used = False
                     commission.packet_used = use_packet
@@ -1937,7 +2128,7 @@ def commission_daily_zeitgeist(
                     commission.slate_count = slate_count
                     _keep_director_evidence(commission, slate_words, slate_block if slate_sent else block,
                                             slate_prompt if slate_sent else prompt)
-                    return commission
+                    return shown_mark(commission)
 
                 last_rejection_reason = reason
                 gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
@@ -1957,7 +2148,7 @@ def commission_daily_zeitgeist(
         fallback = replace(fallback, word=word, gloss=gloss, commissioned_thesis=owner.get("personal_note") or gloss,
             visual_anchor=anchor, unsplash_queries=[f"{word.lower()} material study", f"{word.lower()} quiet architecture", f"{word.lower()} natural light"],
             imagen_commission_prompt=anchor + ", no text overlay", flux_3_commission_prompts=[], fallback_used=True)
-    return fallback
+    return shown_mark(fallback)
 
 
 if __name__ == "__main__":
