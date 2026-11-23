@@ -39,7 +39,7 @@ EXPECTED_KEYS = {
     "attempts_used", "groups", "evidence_text", "chosen_cluster_id", "chosen_rank", "candidate_words",
     "word", "gloss", "thesis", "commission_sha256", "prompt_sha256", "revised_by_photo_recovery",
     "main_pass", "intake_hash", "cutoffs_source", "arm", "repeat", "tests", "links", "realm_counts",
-    "chosen_mapped",
+    "chosen_mapped", "reflector_candidate",
 }
 GROUP_KEYS = {
     "cluster_id", "rank", "commission_score", "velocity", "orbit_resonance", "s_intra",
@@ -563,3 +563,12 @@ def test_the_record_says_whether_the_chosen_candidate_was_mapped(value) -> None:
     record = _build(chosen_mapped=value)
     assert record["chosen_mapped"] is value
     assert _build()["chosen_mapped"] is None
+
+
+
+def test_the_reflector_candidate_is_null_unless_given_and_kept_as_plain_values() -> None:
+    assert _build()["reflector_candidate"] is None
+    found = {"pointer_run_id": "daily_run:2026-11-21:777:1", "matched_cluster_id": "cluster_7", "overlap": 0.75,
+             "already_shown": False, "offered": True}
+    record = _build(reflector_candidate=found)
+    assert record["reflector_candidate"] == found and record["reflector_candidate"] is not found

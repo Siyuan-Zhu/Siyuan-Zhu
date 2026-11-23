@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
@@ -96,11 +96,13 @@ def centre(cluster: Any) -> Optional[List[float]]:
     return [float(value) for value in mean / norm]
 
 
-def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_model: Any) -> Dict[str, Any]:
+def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_model: Any,
+                     extra_group: Any = None) -> Dict[str, Any]:
     """The standing group and the chosen candidate as the reflector needs them: block, centre, item hashes.
 
     `standing` is the first standing group that is not the chosen one; `chosen` is the cluster among the
-    first five whose id is `chosen_cluster_id`. Either is None when there is none. Pure.
+    first five whose id is `chosen_cluster_id`, or the extra group offered to the Director when it is that one.
+    Either is None when there is none. Pure.
     """
     from . import run_record
     from .understanding import _render_cluster
@@ -113,6 +115,8 @@ def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_
 
     standing = next((cluster for cluster in standing_groups(ranked) if cluster_id(cluster) != chosen_id), None)
     chosen = next((cluster for cluster in ranked[:run_record.MAX_GROUPS] if cluster_id(cluster) == chosen_id), None)
+    if chosen is None and extra_group is not None and chosen_id is not None and cluster_id(extra_group) == chosen_id:
+        chosen = extra_group
     standing_entry = None
     if standing is not None:
         standing_entry = {
@@ -132,6 +136,7 @@ def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_
 
 def store_reflector_inputs(
     store: Any, run_id: str, clusters: Sequence[Any], chosen_cluster_id: Any, embedding_model: Any,
+    extra_group: Any = None,
 ) -> bool:
     """Store `reflector_inputs` under tests["reflector_inputs"] of a stored record; True when it was stored.
 
@@ -141,7 +146,7 @@ def store_reflector_inputs(
     from . import run_record
 
     try:
-        inputs = reflector_inputs(clusters, chosen_cluster_id, embedding_model)
+        inputs = reflector_inputs(clusters, chosen_cluster_id, embedding_model, extra_group)
         return bool(run_record.add_test_numbers(store, run_id, INPUTS_KEY, inputs))
     except (KeyboardInterrupt, SystemExit):
         raise
@@ -261,3 +266,154 @@ def verdict(
     if plants_ok and agreement:
         status = "pointer" if real_answers[0] == NONE_ANSWER else "named"
     return {"plants_ok": plants_ok, "agreement": agreement, "status": status}
+
+
+# ---- the next night: the pointed group is offered to the Director ----
+
+CANDIDATE_ENV = "ZEITGEIST_REFLECTOR_CANDIDATE"
+# The edition's lookup runs before the Director call, so it is held to this budget.
+CANDIDATE_BUDGET_SECONDS = 20.0
+POINTER_KINDS = ("daily_run", "private_run")
+POINTER_MAX_AGE_HOURS = 36
+POINTER_LOAD_LIMIT = 200
+MIN_OVERLAP = 0.5
+LOOKUP_THREAD_NAME = "reflector-candidate-lookup"
+# What the record says of the lookup: it finished, its budget ran out, or it raised.
+LOOKUP_OK, LOOKUP_TIMEOUT, LOOKUP_FAILED = "ok", "timeout", "failed"
+# The setting's result on a record; a trial's (tests["reflector_trial"]) is never read.
+KEY = "reflector"
+
+
+def candidate_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """The switch, and the keyword repair: without it a word about the extra group would be published with
+    the top group's keywords, so the candidate is never offered."""
+    from .understanding import repair_enabled
+
+    env = os.environ if environ is None else environ
+    return env.get(CANDIDATE_ENV) == "1" and repair_enabled(env)
+
+
+def _pointer_hashes(result: Any) -> Optional[List[str]]:
+    hashes = result.get("pointer_item_hashes") if isinstance(result, Mapping) else None
+    if not isinstance(hashes, list) or not hashes:
+        return None
+    if not all(isinstance(value, str) and value for value in hashes):
+        return None
+    return list(dict.fromkeys(hashes))
+
+
+# A private run record supplies a pointer only from the single private run (no arm) or the current arm.
+POINTER_ARMS = (None, "current")
+
+
+def _may_supply_pointer(record: Mapping[str, Any], result: Mapping[str, Any]) -> bool:
+    """Whether this record's result may steer a public edition.
+
+    The edition's own records, and private runs of the engine the edition runs (the single private run and the
+    current arm). Another comparison arm reads the night with other models or another prompt (previous is Flash
+    on the old embedding model), so its pointer says nothing about the engine that publishes. And a reflector that
+    answered on the Director's own model is a second reading by the same model, which the design rules out:
+    same_model must be stored and false.
+    """
+    kind = record.get("kind")
+    if kind == "private_run":
+        if record.get("arm") not in POINTER_ARMS:
+            return False
+    elif kind != "daily_run" or record.get("arm") is not None:
+        # The edition writes its records without an arm; a daily record that carries one is not the edition's.
+        return False
+    return result.get("same_model") is False
+
+
+def _find_pointer(store: Any, now: datetime, max_age_hours: float) -> Optional[Dict[str, Any]]:
+    """The newest pointer in the window, or None; raises when a store read raises."""
+    from . import run_record
+
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    window = timedelta(hours=float(max_age_hours))
+    found = []
+    # One read of the newest records of every kind; the kinds are filtered here.
+    for record in store.load_run_records(limit=POINTER_LOAD_LIMIT) or ():
+        if not isinstance(record, dict) or record.get("kind") not in POINTER_KINDS:
+            continue
+        tests, run_id = record.get("tests"), record.get("run_id")
+        if not isinstance(tests, dict) or not isinstance(run_id, str):
+            continue
+        result = tests.get(KEY)
+        if not isinstance(result, Mapping) or result.get("status") != "pointer":
+            continue
+        if not _may_supply_pointer(record, result):
+            continue
+        hashes = _pointer_hashes(result)
+        moment = run_record._written_at(record)
+        if hashes is None or moment is None or not timedelta(0) <= now - moment <= window:
+            continue
+        found.append((moment, run_id, hashes))
+    if not found:
+        return None
+    found.sort(key=lambda entry: entry[1])
+    found.sort(key=lambda entry: entry[0], reverse=True)
+    return {"run_id": found[0][1], "item_hashes": found[0][2]}
+
+
+def match_pointer(pointer: Mapping[str, Any], clusters: Sequence[Any]) -> tuple:
+    """The ranked cluster holding the largest share of the pointer's items, and that share.
+
+    A match needs at least half of them; ties go to the higher rank. Without a match the cluster is None.
+    """
+    hashes = set(pointer.get("item_hashes") or ())
+    best, best_share = None, 0.0
+    if not hashes:
+        return None, 0.0
+    for cluster in list(clusters or ()):
+        present = {str(_get_item_field(item, "url_hash") or "") for item in _items(cluster)}
+        share = len(hashes & present) / len(hashes)
+        if share > best_share:
+            best, best_share = cluster, share
+    return (best if best_share >= MIN_OVERLAP else None), float(best_share)
+
+
+def _no_candidate(lookup: str = LOOKUP_OK) -> Dict[str, Any]:
+    return {"pointer_run_id": None, "matched_cluster_id": None, "overlap": None, "already_shown": False,
+            "offered": False, "group": None, "lookup": lookup}
+
+
+def candidate_for_night(store: Any, clusters: Sequence[Any], now: datetime) -> Dict[str, Any]:
+    """The newest pointer matched to tonight's ranked groups. Never raises; prints and logs nothing.
+
+    `already_shown` is true when the match is one of the first five groups; then nothing extra is offered.
+    Otherwise a match is offered, and `group` is that cluster. `lookup` is "ok" when it finished, whatever it
+    found, and "failed" when anything raised (a store read included); then nothing is offered.
+    """
+    from . import run_record
+
+    try:
+        pointer = _find_pointer(store, now, POINTER_MAX_AGE_HOURS)
+        if pointer is None:
+            return _no_candidate()
+        ranked = list(clusters or ())
+        group, overlap = match_pointer(pointer, ranked)
+        found = dict(_no_candidate(), pointer_run_id=pointer["run_id"], overlap=overlap)
+        if group is None:
+            return found
+        rank = next(index for index, cluster in enumerate(ranked) if cluster is group)
+        shown = rank < run_record.MAX_GROUPS
+        found.update(matched_cluster_id=str(getattr(group, "cluster_id", "")), already_shown=shown,
+                     offered=not shown, group=None if shown else group)
+        return found
+    except Exception:
+        return _no_candidate(LOOKUP_FAILED)
+
+
+def candidate_record(found: Optional[Mapping[str, Any]], shown: bool = False) -> Optional[Dict[str, Any]]:
+    """What the run record keeps of the night's candidate: everything but the group itself, and `shown`.
+
+    `offered` says a group was passed to the Director; `shown` that a packet attempt rendered it (not on an
+    owner-word night or an older-prompt round).
+    """
+    if found is None:
+        return None
+    kept = {key: value for key, value in found.items() if key != "group"}
+    kept["shown"] = bool(shown) and kept.get("offered") is True
+    return kept

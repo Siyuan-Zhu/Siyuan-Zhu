@@ -933,8 +933,7 @@ def test_the_photo_path_runs_for_at_most_the_first_two_arms(monkeypatch, capsys)
     (["--arms", "previous,,current"], 2),
     (["--arms", "previous,current,previous,current,previous", "--repeats", "3"], 4),
     (["--arms", "previous,previous", "--repeats", "1"], 5),
-    (["--arms", "current_reflector", "--repeats", "1"], 3),
-], ids=["zero", "four", "word", "unknown", "empty-part", "over-twelve", "duplicate", "reflector"])
+], ids=["zero", "four", "word", "unknown", "empty-part", "over-twelve", "duplicate"])
 def test_a_refused_dispatch_ends_with_one_numeric_line_before_any_call(monkeypatch, capsys, argv, refusal):
     _photo_world(monkeypatch)
     opened = []
@@ -1421,12 +1420,28 @@ def test_each_arm_and_repeat_is_checked_after_its_record(monkeypatch, capsys):
 # ---- the links arm (links plan, Task 3) ----
 
 
-def test_the_links_arm_is_runnable_and_the_reflector_arm_is_known_but_not():
+def test_the_links_and_reflector_arms_are_runnable():
     assert private_run.ARMS["current_links"] == private_run.Arm(mc.HYDROGEN, mc.HYDROGEN, em.EMBED_2, packet=True,
                                                                links=True)
     assert private_run.ARMS["current"].links is False and private_run.ARMS["previous"].links is False
-    assert private_run.ARMS["current_reflector"].runnable is False
+    assert private_run.ARMS["current_reflector"] == private_run.Arm(mc.HYDROGEN, mc.HYDROGEN, em.EMBED_2,
+                                                                   packet=True, reflector=True)
+    assert not any(arm.reflector for name, arm in private_run.ARMS.items() if name != "current_reflector")
     assert private_run.parse_arms("current,current_links", "1") == (["current", "current_links"], 1, 0)
+    assert private_run.parse_arms("current,current_reflector", "1") == (["current", "current_reflector"], 1, 0)
+
+
+def test_an_arm_not_built_is_still_refused_before_any_call(monkeypatch, capsys):
+    # No arm is unbuilt today; the refusal stays for the next one.
+    _photo_world(monkeypatch)
+    table = dict(private_run.ARMS)
+    table["current_links"] = private_run.Arm(mc.HYDROGEN, mc.HYDROGEN, em.EMBED_2, packet=True, runnable=False)
+    monkeypatch.setattr(private_run, "ARMS", table)
+    opened = []
+    monkeypatch.setattr(private_run, "_store", lambda: opened.append(1))
+    monkeypatch.setattr(private_run, "_genai_client", lambda: opened.append(2))
+    assert private_run.main(["--arms", "current_links", "--repeats", "1"]) == 3
+    assert capsys.readouterr().out.splitlines() == ["[private_run] arms_refused=3"] and opened == []
 
 
 class LinksArmStore(ArmStore):
@@ -1753,3 +1768,155 @@ def test_each_arm_and_repeat_stores_its_inputs_after_its_record(monkeypatch, cap
         inputs = _inputs(record)
         assert inputs["chosen"]["cluster_id"] == record["chosen_cluster_id"]
         assert inputs["embedding_model"] == record["models"]["embedding"]
+
+
+
+# ---- the reflector's pointed group in the private run and the current_reflector arm (Part B) ----
+
+
+@pytest.fixture(autouse=True)
+def _candidate_switch_off_unless_set(monkeypatch):
+    for name in ("ZEITGEIST_REFLECTOR_CANDIDATE", "ZEITGEIST_CHOSEN_GROUP_FIELDS"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _offer_last(monkeypatch, calls):
+    def lookup(store, clusters, now):
+        calls.append(([c.cluster_id for c in clusters], now))
+        group = clusters[-1]
+        return {"pointer_run_id": "daily_run:x", "matched_cluster_id": str(group.cluster_id), "overlap": 1.0,
+                "already_shown": False, "offered": True, "group": group, "lookup": "ok"}
+
+    monkeypatch.setattr(reflector, "candidate_for_night", lookup)
+
+
+def _cluster_lines(prompt):
+    return [line for line in prompt.split("\n") if line.startswith("- Cluster ")]
+
+
+def test_the_private_run_offers_the_pointed_group_as_the_edition_does(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    baseline_store = RecordingStore()
+    baseline, baseline_director = _run(baseline_store, reply=_slate_reply())
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    calls = []
+    _offer_last(monkeypatch, calls)
+    store = RecordingStore()
+    result, director = _run(store, reply=_slate_reply())
+    assert result.lines == baseline.lines and result.exit_code == baseline.exit_code == 0
+    [(ids, now)] = calls
+    assert now == NOW and len(ids) > 5
+    on_lines, off_lines = _cluster_lines(director.prompts[0]), _cluster_lines(baseline_director.prompts[0])
+    assert on_lines[:-1] == off_lines and on_lines[-1].startswith("- Cluster %s:" % ids[-1])
+    [(_, record)] = store.records
+    assert record["reflector_candidate"] == {"pointer_run_id": "daily_run:x", "matched_cluster_id": ids[-1],
+                                             "overlap": 1.0, "already_shown": False, "offered": True,
+                                             "lookup": "ok", "shown": True}
+    assert baseline_store.records[0][1]["reflector_candidate"] is None
+
+
+@pytest.mark.parametrize("candidate, repair", [(None, "1"), ("1", None), ("0", "1")])
+def test_with_the_candidate_or_the_repair_off_the_private_run_looks_nothing_up(monkeypatch, candidate, repair):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    for name, value in (("ZEITGEIST_REFLECTOR_CANDIDATE", candidate), ("ZEITGEIST_CHOSEN_GROUP_FIELDS", repair)):
+        if value is not None:
+            monkeypatch.setenv(name, value)
+    calls = []
+    _offer_last(monkeypatch, calls)
+    store = RecordingStore()
+    result, _ = _run(store, reply=_slate_reply())
+    assert calls == [] and result.exit_code == 0
+    assert store.records[0][1]["reflector_candidate"] is None
+    assert [read[0] for read in store.reads] == ["load_ingestion_cache", "load_pulse_feed_history"]
+
+
+def test_a_store_without_run_records_offers_nothing_and_keeps_the_run(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    baseline, baseline_director = _run(RecordingStore(), reply=_slate_reply())
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    store = RecordingStore()
+    result, director = _run(store, reply=_slate_reply())
+    assert result.lines == baseline.lines and director.prompts == baseline_director.prompts
+    assert store.records[0][1]["reflector_candidate"]["offered"] is False
+    # The test store has no run records to read: the lookup raised inside and says so.
+    assert store.records[0][1]["reflector_candidate"]["lookup"] == "failed"
+
+
+def _reflector_arms(monkeypatch, capsys, names="current,current_reflector"):
+    client = ArmClient(_slate_reply())
+    code, lines, everything, store, _ = _arms_main(monkeypatch, capsys, ["--arms", names, "--repeats", "2"],
+                                                   client=client)
+    records = {run_id: record for run_id, record in store.records}
+    return code, lines, everything, records, client
+
+
+def test_the_reflector_arm_is_the_current_arm_plus_the_pointed_group(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    calls = []
+    _offer_last(monkeypatch, calls)
+    code, lines, everything, records, client = _reflector_arms(monkeypatch, capsys)
+    assert code == 0
+    _assert_arms_public(lines)
+    assert not any(text in everything for text in PRIVATE)
+    # Looked up for the reflector arm's two repeats only, on the ranked groups.
+    assert len(calls) == 2 and calls[0][0] == calls[1][0]
+    current, reflected = client.prompts[0:2], client.prompts[2:4]
+    for plain, offered in zip(current, reflected):
+        assert _cluster_lines(offered)[:-1] == _cluster_lines(plain)
+        assert _cluster_lines(offered)[-1].startswith("- Cluster %s:" % calls[0][0][-1])
+    for repeat in (1, 2):
+        assert records["private_run:2026-11-21:local:1:current:%d" % repeat]["reflector_candidate"] is None
+        assert records["private_run:2026-11-21:local:1:current_reflector:%d" % repeat]["reflector_candidate"][
+            "offered"] is True
+
+
+def test_the_reflector_arm_offers_the_pointed_group_whatever_the_editions_switches_say(monkeypatch, capsys):
+    # The arm definition alone decides, as for the links arm: with both variables unset it still looks up and offers.
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    calls = []
+    _offer_last(monkeypatch, calls)
+    code, lines, _, records, client = _reflector_arms(monkeypatch, capsys)
+    assert code == 0 and len(calls) == 2
+    for plain, offered in zip(client.prompts[0:2], client.prompts[2:4]):
+        assert _cluster_lines(offered)[:-1] == _cluster_lines(plain)
+        assert _cluster_lines(offered)[-1].startswith("- Cluster %s:" % calls[0][0][-1])
+    for repeat in (1, 2):
+        assert records["private_run:2026-11-21:local:1:current:%d" % repeat]["reflector_candidate"] is None
+        assert records["private_run:2026-11-21:local:1:current_reflector:%d" % repeat]["reflector_candidate"][
+            "offered"] is True
+        assert records["private_run:2026-11-21:local:1:current_reflector:%d" % repeat]["reflector_candidate"][
+            "shown"] is True
+
+
+def test_with_both_switches_on_the_current_arm_still_offers_nothing(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    calls = []
+    _offer_last(monkeypatch, calls)
+    code, _, _, records, client = _reflector_arms(monkeypatch, capsys, names="previous,current,current_links")
+    assert code == 0 and calls == []
+    assert all(record["reflector_candidate"] is None for record in records.values())
+    assert not any(_cluster_lines(prompt)[5:] for prompt in client.prompts)
+
+
+def test_with_no_match_the_reflector_arm_runs_as_current_and_says_offered_false(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    code, lines, _, records, client = _reflector_arms(monkeypatch, capsys)
+    assert code == 0
+    assert client.prompts[0:2] == client.prompts[2:4]
+    reflected = [record for run_id, record in records.items() if ":current_reflector:" in run_id]
+    assert len(reflected) == 2 and all(record["reflector_candidate"]["offered"] is False for record in reflected)

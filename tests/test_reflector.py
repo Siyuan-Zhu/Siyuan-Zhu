@@ -410,3 +410,24 @@ def test_missing_runs_give_void():
     assert reflector.verdict([0, 0], [0, 0, 0], ["none"] * 3, [5, 6, 7])["status"] == "void"
     assert reflector.verdict([0] * 3, [0] * 3, ["none"] * 2, [5, 6, 7])["status"] == "void"
     assert reflector.verdict([], [], [], [])["status"] == "void"
+
+
+
+# ---- the reflector's extra group as the chosen group ----
+
+
+def test_the_inputs_take_the_extra_group_offered_to_the_director_as_the_chosen_one():
+    clusters = _night() + [_cluster("cluster_%d" % index, _days(1)) for index in range(4, 7)]
+    extra = clusters[6]
+    inputs = reflector.reflector_inputs(clusters, "cluster_6", "m", extra_group=extra)
+    assert inputs["chosen"] == {"cluster_id": "cluster_6", "block": _render_cluster(extra), "centre": reflector.centre(extra)}
+    assert reflector.reflector_inputs(clusters, "cluster_6", "m")["chosen"] is None
+    assert reflector.reflector_inputs(clusters, "cluster_5", "m", extra_group=extra)["chosen"] is None
+
+
+def test_the_stored_inputs_take_the_extra_group(tmp_path):
+    store = JsonFileStateStore(repo_root=tmp_path)
+    _written_record(store, RUN_ID)
+    clusters = _night() + [_cluster("cluster_%d" % index, _days(1)) for index in range(4, 7)]
+    assert reflector.store_reflector_inputs(store, RUN_ID, clusters, "cluster_6", "m", extra_group=clusters[6])
+    assert store.load_run_record(RUN_ID)["tests"]["reflector_inputs"]["chosen"]["cluster_id"] == "cluster_6"

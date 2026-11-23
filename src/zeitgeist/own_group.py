@@ -92,11 +92,11 @@ def _link_items(link: Any) -> List[Any]:
     return [item for member in getattr(link, "members", None) or () for item in (_field(member, "items") or ())]
 
 
-def _own_and_others(chosen: Optional[str], groups: List[Any], links: Sequence[Any]):
+def _own_and_others(chosen: Optional[str], groups: List[Any], links: Sequence[Any], extra_group: Any = None):
     """The chosen candidate's items and each other shown candidate's; None when it was not shown.
 
     A link's own items are those of all its member groups; the others are the shown groups outside it and
-    every other shown link.
+    every other shown link. The reflector's extra group is measured against the five groups.
     """
     link = next((link for link in links if str(getattr(link, "link_id", None)) == chosen), None)
     if link is not None:
@@ -106,6 +106,8 @@ def _own_and_others(chosen: Optional[str], groups: List[Any], links: Sequence[An
         others += [_link_items(other) for other in links if other is not link]
         return _link_items(link), others
     own = next((group for group in groups if str(_field(group, "cluster_id")) == chosen), None)
+    if own is None and extra_group is not None and str(_field(extra_group, "cluster_id")) == chosen:
+        return list(_field(extra_group, "items") or ()), [list(_field(group, "items") or ()) for group in groups]
     if own is None:
         return None
     return list(_field(own, "items") or ()), [list(_field(group, "items") or ()) for group in groups
@@ -113,14 +115,14 @@ def _own_and_others(chosen: Optional[str], groups: List[Any], links: Sequence[An
 
 
 def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequence[Any], embedding_model: Any,
-             genai_client: Any, links: Optional[Sequence[Any]] = None) -> Dict[str, Any]:
+             genai_client: Any, links: Optional[Sequence[Any]] = None, extra_group: Any = None) -> Dict[str, Any]:
     from . import run_record
     from .collectors import EMBEDDING_DIM, embed_missing_items
     from .spend_guard import SpendBlocked, refused_before_dispatch
 
     groups = list(clusters or ())[:run_record.MAX_GROUPS]
     chosen = None if chosen_cluster_id is None else str(chosen_cluster_id)
-    found = _own_and_others(chosen, groups, list(links or ()))
+    found = _own_and_others(chosen, groups, list(links or ()), extra_group)
     if found is None:
         return _skipped("unknown_candidate")
     own_items, others = found
@@ -159,12 +161,12 @@ def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequenc
 
 def run_own_group_check(
     store: Any, run_id: str, *, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequence[Any],
-    embedding_model: Any, genai_client: Any, links: Optional[Sequence[Any]] = None,
+    embedding_model: Any, genai_client: Any, links: Optional[Sequence[Any]] = None, extra_group: Any = None,
 ) -> bool:
     """Embed "word. gloss", measure it against the night's first five candidates, store it under tests["own_group"].
 
     With links shown, a link word is measured against all its member groups, with every other shown candidate
-    as the others.
+    as the others. The reflector's extra group, when the word is about it, is measured against the five.
 
     True only when numbers were computed and stored. Anything that stops the measure is stored as
     {"status": "skipped", "reason": ...}. Without a stored record nothing is embedded or written.
@@ -177,7 +179,8 @@ def run_own_group_check(
         if not isinstance(record, dict) or not isinstance(record.get("tests"), dict):
             return False
         numbers = _measure(word=word, gloss=gloss, chosen_cluster_id=chosen_cluster_id, clusters=clusters,
-                           embedding_model=embedding_model, genai_client=genai_client, links=links)
+                           embedding_model=embedding_model, genai_client=genai_client, links=links,
+                           extra_group=extra_group)
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:
@@ -191,8 +194,8 @@ def run_own_group_check(
     return bool(stored) and numbers.get("status") == "ok"
 
 
-def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0) -> bool:
-    """Run fn on a daemon thread and wait at most `seconds`; True when it finished in time.
+def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0, *, name: str = "own-group-check") -> bool:
+    """Run fn on a daemon thread named `name` and wait at most `seconds`; True when it finished in time.
 
     When the time is up the thread is abandoned and False is returned. Whatever fn raises stays in
     its thread. An interrupt or an exit raised in the calling thread while it waits propagates.
@@ -208,7 +211,7 @@ def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0) -> bool:
         finally:
             done.set()
 
-    threading.Thread(target=target, name="own-group-check", daemon=True).start()
+    threading.Thread(target=target, name=name, daemon=True).start()
     return done.wait(seconds)
 
 

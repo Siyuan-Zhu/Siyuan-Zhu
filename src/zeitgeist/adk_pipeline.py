@@ -135,11 +135,13 @@ def _print_understanding_line(
     scored_clusters: Sequence[Any],
     commission: "DirectorCommission",
     original: Optional["DirectorCommission"] = None,
+    extra_group: Any = None,
 ) -> None:
     """One diagnostic line per run for the understanding-v1 switch; never raises.
 
-    final_echo is measured on commission (the one published); the attempt counters come from
-    original (the Director's own commission, before any photo-recovery revision).
+    final_echo is measured on commission (the one published), against the five groups and the reflector's
+    extra group when one was offered; the attempt counters come from original (the Director's own
+    commission, before any photo-recovery revision).
     """
     try:
         counters = original if original is not None else commission
@@ -147,7 +149,7 @@ def _print_understanding_line(
         final_echo = echo_violation(
             [commission.word, commission.gloss, commission.commissioned_thesis, commission.visual_anchor,
              *commission.unsplash_queries, commission.imagen_commission_prompt],
-            list(scored_clusters)[:5],
+            list(scored_clusters)[:5] + ([extra_group] if extra_group is not None else []),
         )
         print(
             f"[understanding_v1] top_changed={int(top_changed)} new_top_legacy_rank={int(rank)} "
@@ -918,6 +920,16 @@ class ZeitgeistADKOrchestrator:
         if links_enabled():
             night_links, realm_map = _night_links(store, config, scored_clusters)
             commission_kwargs["links"] = night_links
+        # The group the reflector pointed to, offered as one more candidate on the packet path. With its switch or
+        # the keyword repair off nothing is read and no thread starts. The lookup is held to its own budget, and
+        # any failure or timeout offers nothing, as with the switch off.
+        reflector_candidate: Optional[Dict[str, Any]] = None
+        extra_group = None
+        if understanding_v1 and reflector.candidate_enabled():
+            reflector_candidate = _reflector_candidate(store, scored_clusters)
+            extra_group = reflector_candidate.get("group")
+            if extra_group is not None:
+                commission_kwargs["extra_group"] = extra_group
         commission = commission_daily_zeitgeist(
             scored_clusters,
             history_words_30d=history_words_30d,
@@ -959,7 +971,7 @@ class ZeitgeistADKOrchestrator:
         field_cluster, link_words = top_cluster, None
         if repair_enabled() and top_cluster is not None:
             field_cluster, link_words = _published_candidate(
-                commission.selected_cluster_id, scored_clusters, night_links, top_cluster)
+                commission.selected_cluster_id, scored_clusters, night_links, top_cluster, extra_group=extra_group)
         orbit_res = float(field_cluster.orbit_resonance) if field_cluster is not None else 1.50
         vel_score = float(field_cluster.velocity) if field_cluster is not None else 2.50
         is_breakout = bool(getattr(field_cluster, "breakout_surge", False)) if field_cluster is not None else False
@@ -1071,7 +1083,8 @@ class ZeitgeistADKOrchestrator:
         self.last_published_pulse = published
         if understanding_v1:
             # After photo recovery: measure the commission that will be published.
-            _print_understanding_line(scored_clusters, self.last_commission, original_commission)
+            _print_understanding_line(scored_clusters, self.last_commission, original_commission,
+                                      extra_group=extra_group)
         # Compatibility DTOs describe the one actual publication. The primary
         # clustering/commissioning path above remains authoritative; no second renderer runs.
         lens_by_tier = {"M1": "ai_builders", "M2": "markets_finops", "M3": "global_politics"}
@@ -1130,17 +1143,19 @@ class ZeitgeistADKOrchestrator:
                 "realm_counts": (None if night_links is None else _night_realm_counts(
                     raw_signals, realm_map, scored_clusters, links_shown(original_commission, night_links) or [])),
                 "links_on": night_links is not None,
+                "reflector_candidate": reflector.candidate_record(reflector_candidate,
+                                                                 shown=extra_group_shown(original_commission)),
             }
         if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "genai_client": genai_client,
-                "links": links_shown(original_commission, night_links),
+                "links": links_shown(original_commission, night_links), "extra_group": extra_group,
             }
         if run_record.run_record_enabled() and reflector.reflector_enabled():
             self._reflector_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
-                "clusters": scored_clusters, "commission": commission,
+                "clusters": scored_clusters, "commission": commission, "extra_group": extra_group,
             }
         return analysis, decision, telemetry
 
@@ -1516,6 +1531,7 @@ def _write_daily_run_record(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission,
     links: Optional[Sequence[Any]] = None, realm_counts: Optional[Dict[str, Any]] = None, links_on: bool = False,
+    reflector_candidate: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """The edition's private run record, after its state is saved; True when written. Never raises, prints or logs."""
     try:
@@ -1528,6 +1544,7 @@ def _write_daily_run_record(
             candidate_words=evidence["candidate_words"], chosen_cluster_id=main_commission.selected_cluster_id,
             main_commission=main_commission, prompt_sha256=evidence["prompt_sha256"],
             links=links, realm_counts=realm_counts, chosen_mapped=recorded_chosen_mapping(main_commission, [] if links_on else None),
+            reflector_candidate=reflector_candidate,
         )
         return run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
@@ -1537,7 +1554,7 @@ def _write_daily_run_record(
 def _daily_own_group_check(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, genai_client: Any,
-    links: Optional[Sequence[Any]] = None,
+    links: Optional[Sequence[Any]] = None, extra_group: Any = None,
 ) -> None:
     """The own-group check on the edition's run record. Prints and logs nothing.
 
@@ -1552,13 +1569,13 @@ def _daily_own_group_check(
         word=commission.word, gloss=commission.gloss, chosen_cluster_id=commission.selected_cluster_id,
         clusters=clusters,
         embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
-        genai_client=genai_client, links=links,
+        genai_client=genai_client, links=links, extra_group=extra_group,
     )
 
 
 def _daily_reflector_inputs(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
-    clusters: Sequence[Any], commission: DirectorCommission,
+    clusters: Sequence[Any], commission: DirectorCommission, extra_group: Any = None,
 ) -> None:
     """What the reflector needs from the edition's run, stored on its run record. Prints and logs nothing.
 
@@ -1568,7 +1585,36 @@ def _daily_reflector_inputs(
     reflector.store_reflector_inputs(
         store, run_record.make_run_id("daily_run", date_iso), clusters, commission.selected_cluster_id,
         embedding_run.used if embedding_run is not None else run_models.current("embedding"),
+        extra_group=extra_group,
     )
+
+
+def _reflector_candidate(store: Any, clusters: Sequence[Any]) -> Dict[str, Any]:
+    """The night's candidate from the reflector's newest pointer, looked up within its budget.
+
+    Before the Director call, so it can never cost the edition: a timeout or any failure offers nothing, and
+    the candidate's `lookup` says which ("timeout" or "failed"). An interrupt or an exit in the waiting
+    thread propagates. Prints and logs nothing.
+    """
+    found: Dict[str, Any] = {}
+    ranked = list(clusters or ())
+
+    def look() -> None:
+        found["candidate"] = reflector.candidate_for_night(store, ranked, datetime.now(timezone.utc))
+
+    try:
+        finished = own_group.run_with_budget(look, reflector.CANDIDATE_BUDGET_SECONDS,
+                                             name=reflector.LOOKUP_THREAD_NAME)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        return reflector._no_candidate(reflector.LOOKUP_FAILED)
+    if not finished:
+        return reflector._no_candidate(reflector.LOOKUP_TIMEOUT)
+    candidate = found.get("candidate")
+    if isinstance(candidate, dict) and set(candidate) == set(reflector._no_candidate()):
+        return candidate
+    return reflector._no_candidate(reflector.LOOKUP_FAILED)
 
 
 def _night_links(store: Any, config: Any, clusters: Sequence[Any]) -> Tuple[List[Any], Any]:
@@ -1604,8 +1650,12 @@ def _shown_link(chosen_id: Any, links: Optional[Sequence[Any]]) -> Any:
 
 def _published_candidate(
     chosen_id: Any, clusters: Sequence[Any], links: Optional[Sequence[Any]], top_cluster: Any,
+    extra_group: Any = None,
 ) -> Tuple[Any, Optional[List[str]]]:
-    """The group whose figures are published, and for a link its merged keywords; the top group when none matches."""
+    """The group whose figures are published, and for a link its merged keywords; the top group when none matches.
+
+    The reflector's extra group, when it was offered and chosen, publishes as a group.
+    """
     try:
         link = _shown_link(chosen_id, links)
         if link is not None and link.members:
@@ -1614,6 +1664,8 @@ def _published_candidate(
         group = next((c for c in list(clusters or [])[:5] if str(getattr(c, "cluster_id", "")) == chosen), None)
         if group is not None:
             return group, None
+        if extra_group is not None and str(getattr(extra_group, "cluster_id", "")) == chosen:
+            return extra_group, None
     except Exception:
         pass
     return top_cluster, None
@@ -1898,6 +1950,12 @@ def _deterministic_fallback_commission(
 _LINK_ID_RE = re.compile(r"link_\d+")
 _MAPPED_ATTR = "_chosen_id_mapped"
 _LINKS_SHOWN_ATTR = "_links_shown"
+_EXTRA_SHOWN_ATTR = "_extra_group_shown"
+
+
+def extra_group_shown(commission: Any) -> bool:
+    """True when a packet attempt of the Director loop rendered the reflector's extra group."""
+    return getattr(commission, _EXTRA_SHOWN_ATTR, False) is True
 
 
 def links_shown(commission: Any, links: Optional[Sequence[Any]]) -> Optional[List[Any]]:
@@ -1908,7 +1966,7 @@ def links_shown(commission: Any, links: Optional[Sequence[Any]]) -> Optional[Lis
 
 
 def chosen_id_mapped(commission: Any) -> bool:
-    """True when the Director's id was not offered and, on the last attempt, was mapped to the top group."""
+    """True when the accepted reply's id was not shown by its attempt and was mapped to the top group."""
     return getattr(commission, _MAPPED_ATTR, False) is True
 
 
@@ -1974,6 +2032,8 @@ def commission_daily_zeitgeist(
     def shown_mark(commission: DirectorCommission) -> DirectorCommission:
         # Whether any attempt of the loop showed the night's links (a packet attempt, links given).
         setattr(commission, _LINKS_SHOWN_ATTR, links is not None and packet_attempts > 0)
+        # And whether one showed the extra group, which only the packet prompt renders.
+        setattr(commission, _EXTRA_SHOWN_ATTR, extra_group is not None and packet_attempts > 0)
         return commission
 
     if llm_callable is not None or genai_client is not None:
