@@ -843,6 +843,8 @@ def test_a_photo_recovery_revision_is_measured_against_the_published_commissions
     # published word and gloss are measured against the one the published commission is about.
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
 
     def recover(commission, *, render, revise, history, photo_required):
         assert commission.selected_cluster_id == "cluster_0"
