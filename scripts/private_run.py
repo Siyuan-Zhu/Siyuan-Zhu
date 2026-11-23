@@ -72,7 +72,8 @@ REFUSE_REPEATS, REFUSE_UNKNOWN, REFUSE_NOT_BUILT, REFUSE_OVER_CAP, REFUSE_DUPLIC
 MAX_REPEATS = 3
 MAX_NAMING_ATTEMPTS = 12
 MAX_PHOTO_ARMS = 2
-# Once this many Director model calls (every try, retries and the Flash round included) are made, no attempt starts.
+# Once this many Director model calls (every try, retries and the Flash round included) are made, no further call
+# is dispatched and no attempt starts.
 MAX_DIRECTOR_CALLS = 24
 SHOWN_GROUPS = 5
 INTAKE_FIELDS = ("url_hash", "source_id", "tier", "published_at", "title", "summary")
@@ -204,7 +205,7 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             if run_record.run_record_enabled():
                 written = _write_private_record(store, now, date_iso, run_models, grouping, commission, links)
                 lines.append(RECORD_LINE % int(written))
-                if written and own_group.own_group_enabled():
+                if written and director_ok and not run_models.fallback_fired and own_group.own_group_enabled():
                     _check_own_group(store, run_record.make_run_id("private_run", date_iso), grouping, commission,
                                      genai_client, links.links)
             if not director_ok or run_models.fallback_fired:
@@ -392,7 +393,9 @@ class DirectorCounter:
     """The genai client as the Director sees it, counting each generate_content call that was made.
 
     A call the spend guard refused before dispatch was not made and is not counted; any other
-    outcome, a failure included, is. Every other attribute is the client's own.
+    outcome, a failure included, is. Once MAX_DIRECTOR_CALLS calls are made, every further call is
+    refused before dispatch, as the spend guard refuses one: the Director neither retries nor
+    reaches the provider. Every other attribute is the client's own.
     """
 
     def __init__(self, client: Any) -> None:
@@ -401,6 +404,10 @@ class DirectorCounter:
         self.models = self
 
     def generate_content(self, **kwargs: Any) -> Any:
+        if self.calls >= MAX_DIRECTOR_CALLS:
+            refusal = SpendBlocked("Comparison Director call limit reached")
+            refusal.refused_before_dispatch = True
+            raise refusal
         try:
             reply = self._client.models.generate_content(**kwargs)
         except SpendBlocked as error:
@@ -501,9 +508,9 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     )
     run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
     written = run_record.write_run_record(store, run_id, record)
-    if written and own_group.own_group_enabled():
-        _check_own_group(store, run_id, grouping, commission, genai_client, links.links)
     ok = director_ok and not run_models.fallback_fired
+    if written and ok and own_group.own_group_enabled():
+        _check_own_group(store, run_id, grouping, commission, genai_client, links.links)
     if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
         scored: List[Dict[str, Any]] = []
         photo_ok = False
@@ -525,8 +532,11 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
 def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], repeats: int) -> PrivateRun:
     """Every arm and repeat on one frozen intake, writing only run records. Never raises.
 
-    One arm failing does not stop the others; an interrupt or exit stops the dispatch. Once
-    MAX_DIRECTOR_CALLS Director calls are made, every remaining repeat is skipped by number.
+    One arm failing does not stop the others; an interrupt or exit stops the dispatch. So does a
+    SpendBlocked the guard raised after dispatch (an outcome it cannot vouch for), as it stops the
+    edition: the step that met it fails by number and every remaining repeat is skipped by number.
+    Once MAX_DIRECTOR_CALLS Director calls are made, the attempt that wants another call fails and
+    every remaining repeat is skipped by number.
     """
     lines: List[str] = []
     result = PrivateRun(lines, 3)
@@ -551,6 +561,14 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
 
     def capped() -> bool:
         return counter is not None and counter.calls >= MAX_DIRECTOR_CALLS
+
+    def uncertain(error: BaseException) -> bool:
+        return isinstance(error, SpendBlocked) and not refused_before_dispatch(error)
+
+    def skip_rest(index: int, first_repeat: int) -> None:
+        for later in range(index, len(names) + 1):
+            start = first_repeat if later == index else 1
+            lines.extend(ARM_SKIPPED_LINE % (later, repeat) for repeat in range(start, repeats + 1))
 
     # Before any paid call of the dispatch: an arm on the second embedding model needs the stored
     # embedding-2 vectors and an accepted calibration, and is grouped now; it never runs on legacy cutoffs.
@@ -590,6 +608,9 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
             failed = True
             if not isinstance(error, Exception):
                 break
+            if uncertain(error):
+                skip_rest(index, 1)
+                break
             continue
         for repeat in range(1, repeats + 1):
             if capped():
@@ -612,6 +633,10 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
                 lines.append(ARM_FAILED_LINE % (index, repeat, DIRECTOR))
                 failed = True
                 if not isinstance(error, Exception):
+                    stop = True
+                    break
+                if uncertain(error):
+                    skip_rest(index, repeat + 1)
                     stop = True
                     break
     lines.append(RECORDS_LINE % written)

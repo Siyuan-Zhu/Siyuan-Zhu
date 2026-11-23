@@ -6,13 +6,16 @@ Arithmetic on unit vectors, so a word that fits any candidate shows up as a numb
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+import threading
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
 from .methodology import _extract_unit_embedding_f32
 
 SWITCH_ENV = "ZEITGEIST_OWN_GROUP"
+# The wall-clock limit on what the edition runs after publication, so a stalled provider cannot cost the push.
+BUDGET_SECONDS = 45.0
 
 
 def own_group_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
@@ -112,8 +115,8 @@ def _own_and_others(chosen: Optional[str], groups: List[Any], links: Sequence[An
 def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequence[Any], embedding_model: Any,
              genai_client: Any, links: Optional[Sequence[Any]] = None) -> Dict[str, Any]:
     from . import run_record
-    from .collectors import embed_missing_items
-    from .spend_guard import SpendBlocked
+    from .collectors import EMBEDDING_DIM, embed_missing_items
+    from .spend_guard import SpendBlocked, refused_before_dispatch
 
     groups = list(clusters or ())[:run_record.MAX_GROUPS]
     chosen = None if chosen_cluster_id is None else str(chosen_cluster_id)
@@ -124,8 +127,13 @@ def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequenc
     # Checked before the paid call: a candidate the arithmetic cannot use is not worth one.
     if not own_items:
         return _skipped("no_items")
-    if not _unit_vectors(own_items):
+    own_vectors = _unit_vectors(own_items)
+    if not own_vectors:
         return _skipped("no_vector")
+    # The text vector is EMBEDDING_DIM long, so items of another length cannot be measured against it.
+    if any(vector.shape[0] != EMBEDDING_DIM for vector in own_vectors + [v for items in others
+                                                                        for v in _unit_vectors(items)]):
+        return _skipped("dimension")
     model = str(embedding_model or "")
     if not model or model in _NO_SINGLE_MODEL:
         return _skipped("embedding_model")
@@ -139,8 +147,9 @@ def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequenc
             [{"url_hash": KEY, "title": "%s. %s" % (word, gloss)}], {},
             genai_client=genai_client, model=model, require_live=True,
         )
-    except SpendBlocked:
-        return _skipped("refused")
+    except SpendBlocked as error:
+        # Refused before any provider call, or blocked once the call was made.
+        return _skipped("refused" if refused_before_dispatch(error) else "blocked")
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:
@@ -180,3 +189,43 @@ def run_own_group_check(
     except BaseException:
         return False
     return bool(stored) and numbers.get("status") == "ok"
+
+
+def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0) -> bool:
+    """Run fn on a daemon thread and wait at most `seconds`; True when it finished in time.
+
+    When the time is up the thread is abandoned and False is returned. Whatever fn raises stays in
+    its thread. An interrupt or an exit raised in the calling thread while it waits propagates.
+    Prints and logs nothing.
+    """
+    done = threading.Event()
+
+    def target() -> None:
+        try:
+            fn()
+        except BaseException:
+            pass
+        finally:
+            done.set()
+
+    threading.Thread(target=target, name="own-group-check", daemon=True).start()
+    return done.wait(seconds)
+
+
+class ClosableStore:
+    """The store as a budgeted check sees it: once closed, every run-record save is refused."""
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+        self._closed = threading.Event()
+
+    def close(self) -> None:
+        self._closed.set()
+
+    def save_run_record(self, run_id: str, document: Dict[str, Any]) -> None:
+        if self._closed.is_set():
+            raise RuntimeError("own-group budget spent")
+        self._store.save_run_record(run_id, document)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)

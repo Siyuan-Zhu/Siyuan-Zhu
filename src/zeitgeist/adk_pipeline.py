@@ -739,12 +739,17 @@ class ZeitgeistADKOrchestrator:
         # Published, installed and the download confirmed: only now, outside the publication's
         # failure handler, the private run record.
         _write_pending_run_record(store, staged)
-        # Then the own-group check on that record, guarded as the record write is. With its switch
-        # off no inputs were kept and nothing is called.
+        # Then the own-group check on that record, guarded as the record write is and held to a
+        # wall-clock budget, so a stalled provider cannot cost the job's later steps (the README
+        # and the push). With its switch off no inputs were kept and nothing is called.
         try:
             own_group_inputs = staged._own_group_inputs
             if own_group_inputs is not None:
-                _daily_own_group_check(store, **own_group_inputs)
+                checked = own_group.ClosableStore(store)
+                if not own_group.run_with_budget(lambda: _daily_own_group_check(checked, **own_group_inputs),
+                                                 own_group.BUDGET_SECONDS):
+                    # The abandoned check may still finish; it stores nothing.
+                    checked.close()
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
@@ -1108,11 +1113,11 @@ class ZeitgeistADKOrchestrator:
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
                 "links": night_links, "realm_counts": night_realm_counts,
             }
-        if own_group.own_group_enabled():
+        if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
-                "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
-                "genai_client": genai_client, "links": night_links,
+                "clusters": scored_clusters, "commission": commission, "genai_client": genai_client,
+                "links": night_links,
             }
         return analysis, decision, telemetry
 
@@ -1507,16 +1512,20 @@ def _write_daily_run_record(
 
 def _daily_own_group_check(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
-    clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission, genai_client: Any,
+    clusters: Sequence[Any], commission: DirectorCommission, genai_client: Any,
     links: Optional[Sequence[Any]] = None,
 ) -> None:
-    """The own-group check on the edition's run record, with the record's own inputs. Prints and logs nothing.
+    """The own-group check on the edition's run record. Prints and logs nothing.
+
+    The published word and gloss are measured against the candidate the published commission is
+    about. A photo recovery revision keeps the main pass's candidate, so this is also the record's
+    `chosen_cluster_id`.
 
     `run()` calls it inside the same kind of guard as the record write.
     """
     own_group.run_own_group_check(
         store, run_record.make_run_id("daily_run", date_iso),
-        word=commission.word, gloss=commission.gloss, chosen_cluster_id=main_commission.selected_cluster_id,
+        word=commission.word, gloss=commission.gloss, chosen_cluster_id=commission.selected_cluster_id,
         clusters=clusters,
         embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
         genai_client=genai_client, links=links,

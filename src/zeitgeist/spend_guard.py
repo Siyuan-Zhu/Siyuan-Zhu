@@ -61,6 +61,7 @@ class SpendBlocked(RuntimeError):
         "Counted input exceeds verified token ceiling": "input-token-bound",
         "Requested output exceeds verified monetary bound": "output-token-bound",
         "Unregistered paid SDK method": "unregistered-sdk-method",
+        "Comparison Director call limit reached": "comparison-call-limit",
         "Request exceeds verified operation tariff": "operation-tariff-bound",
         "Call would exceed approved monthly cash ceiling": "monthly-cash-bound",
         "Billing policy changed after token counting; retry admission": "billing-policy-changed",
