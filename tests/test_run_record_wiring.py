@@ -861,19 +861,39 @@ def test_a_failing_inputs_step_leaves_the_published_edition(tmp_path, monkeypatc
     assert (out.out, out.err) == (clean_out.out, clean_out.err)
 
 
-def test_an_interrupt_during_the_inputs_step_is_not_a_failed_publication(tmp_path, monkeypatch):
+def test_an_interrupt_or_exit_inside_the_inputs_step_never_reaches_the_edition(tmp_path, monkeypatch):
+    # Raised in the budget's own thread, even an interrupt or an exit stays there.
+    _reflector_switch(monkeypatch, "1")
+    for error in (KeyboardInterrupt(), SystemExit(1)):
+        store, _, result = _reflector_edition(tmp_path / type(error).__name__, monkeypatch, error=error)
+        assert result[0] == "Selvedge"
+        assert store.events[-2:] == ["save_run_record", "reflector_inputs"]
+
+
+def test_an_interrupt_while_the_edition_waits_on_the_inputs_is_not_a_failed_publication(tmp_path, monkeypatch):
+    import _thread
+
     from src.zeitgeist.publication_commit import PublicationMirrorError
 
     _reflector_switch(monkeypatch, "1")
+    release = threading.Event()
     holder = []
+
+    def inputs(store, *args):
+        holder[0].events.append("reflector_inputs")
+        _thread.interrupt_main()
+        release.wait(10)
 
     def make(root, events):
         holder.append(_MemoryRecordStore(root, events))
-        _spy_inputs(monkeypatch, events, KeyboardInterrupt())
+        monkeypatch.setattr(reflector, "store_reflector_inputs", inputs)
         return holder[0]
 
-    with pytest.raises(KeyboardInterrupt) as raised:
-        _edition(tmp_path, monkeypatch, make, switch="1")
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            _edition(tmp_path, monkeypatch, make, switch="1")
+    finally:
+        release.set()
     assert not isinstance(raised.value, PublicationMirrorError)
     [store] = holder
     assert store.events[-2:] == ["save_run_record", "reflector_inputs"]
@@ -903,3 +923,139 @@ def test_a_staged_run_keeps_the_reflector_inputs_only_with_the_switch_on(tmp_pat
     staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
     assert store.records == [] and events == []
     assert (staged._reflector_inputs is not None) is kept
+
+
+# ---- one post-publication budget covers the own-group check, then the reflector's inputs ----
+
+
+def test_a_stalled_own_group_check_leaves_no_reflector_inputs_and_the_edition_clean(tmp_path, monkeypatch, capsys):
+    clean_store, clean, clean_out = _clean_edition(tmp_path, monkeypatch, capsys)
+    _own_group_switch(monkeypatch, "1")
+    _reflector_switch(monkeypatch, "1")
+    monkeypatch.setattr(own_group, "BUDGET_SECONDS", 0.2)
+    release, late = threading.Event(), []
+    real_inputs = reflector.store_reflector_inputs
+
+    def stalled(store, run_id, **kwargs):
+        release.wait(10)
+
+    def inputs(*args):
+        # Reached only once the abandoned check returns; by then the store refuses the save.
+        late.append(real_inputs(*args))
+
+    monkeypatch.setattr(own_group, "run_own_group_check", stalled)
+    monkeypatch.setattr(reflector, "store_reflector_inputs", inputs)
+    started = time.monotonic()
+    store, _, result = _edition(tmp_path / "slow", monkeypatch, _MemoryRecordStore, switch="1")
+    elapsed = time.monotonic() - started
+    out = capsys.readouterr()
+    events_at_return = list(store.events)
+    release.set()
+    deadline = time.monotonic() + 5
+    while not late and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert late == [False]
+    assert elapsed < 5
+    assert result == clean
+    assert events_at_return == clean_store.events == ["publish_bundle:called", "publish_bundle:returned",
+                                                      "save_run_record"]
+    slow_state, slow_flag, slow_journal = _saved_state(store, tmp_path / "slow")
+    clean_state, clean_flag, clean_journal = _saved_state(clean_store, tmp_path / "clean")
+    assert _comparable(slow_state) == _comparable(clean_state)
+    assert (slow_flag, slow_journal) == (clean_flag, clean_journal) == (False, False)
+    assert len(store.records) == 1 and store.records[0][1]["tests"] == {}
+    assert "save_run_record" not in store.events[3:]
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+def test_stalled_inputs_alone_are_held_to_the_same_budget(tmp_path, monkeypatch, capsys):
+    clean_store, clean, clean_out = _clean_edition(tmp_path, monkeypatch, capsys)
+    _reflector_switch(monkeypatch, "1")
+    monkeypatch.setattr(own_group, "BUDGET_SECONDS", 0.2)
+    release, late = threading.Event(), []
+    real_inputs = reflector.store_reflector_inputs
+
+    def inputs(*args):
+        release.wait(10)
+        late.append(real_inputs(*args))
+
+    monkeypatch.setattr(reflector, "store_reflector_inputs", inputs)
+    started = time.monotonic()
+    store, _, result = _edition(tmp_path / "slow", monkeypatch, _MemoryRecordStore, switch="1")
+    elapsed = time.monotonic() - started
+    release.set()
+    deadline = time.monotonic() + 5
+    while not late and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert late == [False] and elapsed < 5 and result == clean
+    assert len(store.records) == 1 and store.records[0][1]["tests"] == {}
+
+
+def test_a_clean_run_stores_both_inside_one_budget(tmp_path, monkeypatch, capsys):
+    clean_store, clean, clean_out = _clean_edition(tmp_path, monkeypatch, capsys)
+    _own_group_switch(monkeypatch, "1")
+    _reflector_switch(monkeypatch, "1")
+    real_check, real_budget = own_group.run_own_group_check, own_group.run_with_budget
+    client, budgets, order = _EmbedClient(), [], []
+    real_inputs = reflector.store_reflector_inputs
+
+    def check(store, run_id, **kwargs):
+        order.append("own_group")
+        return real_check(store, run_id, **{**kwargs, "genai_client": client})
+
+    def inputs(*args):
+        order.append("reflector_inputs")
+        return real_inputs(*args)
+
+    def budget(fn, seconds):
+        budgets.append((seconds, real_budget(fn, seconds)))
+        return budgets[-1][1]
+
+    monkeypatch.setattr(own_group, "run_own_group_check", check)
+    monkeypatch.setattr(reflector, "store_reflector_inputs", inputs)
+    monkeypatch.setattr(own_group, "run_with_budget", budget)
+    store, _, result = _edition(tmp_path / "on", monkeypatch, _MemoryRecordStore, switch="1")
+    out = capsys.readouterr()
+    assert budgets == [(own_group.BUDGET_SECONDS, True)] and own_group.BUDGET_SECONDS == 45.0
+    assert order == ["own_group", "reflector_inputs"]
+    assert result == clean
+    tests = store.records[-1][1]["tests"]
+    assert set(tests) == {"own_group", "reflector_inputs"} and tests["own_group"]["status"] == "ok"
+    assert tests["reflector_inputs"]["chosen"]["cluster_id"] == store.records[0][1]["chosen_cluster_id"]
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+@pytest.mark.parametrize("own, refl, budgets_expected", [("0", "0", 0), ("1", "0", 1), ("0", "1", 1), ("1", "1", 1)])
+def test_one_budget_at_most_and_none_with_both_switches_off(tmp_path, monkeypatch, own, refl, budgets_expected):
+    _own_group_switch(monkeypatch, own)
+    _reflector_switch(monkeypatch, refl)
+    started = []
+
+    class _Thread(threading.Thread):
+        def start(self):
+            started.append(self.name)
+            super().start()
+
+    monkeypatch.setattr(own_group, "threading", SimpleNamespace(Thread=_Thread, Event=threading.Event))
+    store, _, _ = _edition(tmp_path, monkeypatch, _MemoryRecordStore, switch="1")
+    assert len(started) == budgets_expected
+
+
+def test_the_inputs_name_the_published_commissions_candidate(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    _reflector_switch(monkeypatch, "1")
+
+    def recover(commission, *, render, revise, history, photo_required):
+        assert commission.selected_cluster_id == "cluster_0"
+        revised = DirectorCommission(word="Warp", gloss="threads held taut", commissioned_thesis="Synthetic thesis.",
+                                     selected_cluster_id="cluster_1")
+        return revised, render(revised), {"recovered": True}
+
+    staged = _run_photo_recovery(tmp_path, monkeypatch, recover=recover)
+    inputs = staged._reflector_inputs
+    assert "cluster_1" in [str(cluster.cluster_id) for cluster in inputs["clusters"][:5]]
+    calls = []
+    monkeypatch.setattr(reflector, "store_reflector_inputs", lambda *args: calls.append(args))
+    pipeline._daily_reflector_inputs(object(), **inputs)
+    [(_, run_id, _, chosen, _)] = calls
+    assert run_id == "daily_run:2026-11-21:local:1" and chosen == "cluster_1"

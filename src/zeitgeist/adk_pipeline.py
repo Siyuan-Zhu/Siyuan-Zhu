@@ -735,27 +735,28 @@ class ZeitgeistADKOrchestrator:
         # Published, installed and the download confirmed: only now, outside the publication's
         # failure handler, the private run record.
         _write_pending_run_record(store, staged)
-        # Then the own-group check on that record, guarded as the record write is and held to a
-        # wall-clock budget, so a stalled provider cannot cost the job's later steps (the README
-        # and the push). With its switch off no inputs were kept and nothing is called.
+        # Then the own-group check on that record and then what the reflector needs from the run,
+        # guarded as the record write is and held to one wall-clock budget, so a stalled provider
+        # cannot cost the job's later steps (the README and the push). With their switches off no
+        # inputs were kept and nothing is called.
         try:
             own_group_inputs = staged._own_group_inputs
-            if own_group_inputs is not None:
-                checked = own_group.ClosableStore(store)
-                if not own_group.run_with_budget(lambda: _daily_own_group_check(checked, **own_group_inputs),
-                                                 own_group.BUDGET_SECONDS):
-                    # The abandoned check may still finish; it stores nothing.
-                    checked.close()
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException:
-            pass
-        # Then what the reflector needs from the run, on that record, in the same kind of guard. With
-        # its switch off no inputs were kept and nothing is called.
-        try:
             reflector_inputs = staged._reflector_inputs
-            if reflector_inputs is not None:
-                _daily_reflector_inputs(store, **reflector_inputs)
+            if own_group_inputs is not None or reflector_inputs is not None:
+                checked = own_group.ClosableStore(store)
+
+                def after_publication() -> None:
+                    if own_group_inputs is not None:
+                        try:
+                            _daily_own_group_check(checked, **own_group_inputs)
+                        except BaseException:
+                            pass  # Its own thread: a failed check still leaves the reflector's inputs.
+                    if reflector_inputs is not None:
+                        _daily_reflector_inputs(checked, **reflector_inputs)
+
+                if not own_group.run_with_budget(after_publication, own_group.BUDGET_SECONDS):
+                    # The abandoned steps may still finish; they store nothing.
+                    checked.close()
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
@@ -1102,7 +1103,7 @@ class ZeitgeistADKOrchestrator:
         if reflector.reflector_enabled():
             self._reflector_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
-                "clusters": scored_clusters, "main_commission": original_commission,
+                "clusters": scored_clusters, "commission": commission,
             }
         return analysis, decision, telemetry
 
@@ -1516,14 +1517,15 @@ def _daily_own_group_check(
 
 def _daily_reflector_inputs(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
-    clusters: Sequence[Any], main_commission: DirectorCommission,
+    clusters: Sequence[Any], commission: DirectorCommission,
 ) -> None:
     """What the reflector needs from the edition's run, stored on its run record. Prints and logs nothing.
 
-    `run()` calls it after the own-group check, inside the same kind of guard as the record write.
+    The chosen group is the one the published commission is about, as for the own-group check.
+    `run()` calls it after the own-group check, inside the same budget and the same kind of guard.
     """
     reflector.store_reflector_inputs(
-        store, run_record.make_run_id("daily_run", date_iso), clusters, main_commission.selected_cluster_id,
+        store, run_record.make_run_id("daily_run", date_iso), clusters, commission.selected_cluster_id,
         embedding_run.used if embedding_run is not None else run_models.current("embedding"),
     )
 
