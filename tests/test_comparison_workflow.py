@@ -83,12 +83,23 @@ def test_condition_permissions_concurrency_timeout_and_setup_match_the_private_r
     # The same job header but its timeout: a comparison makes up to 12 naming attempts, two photo
     # paths and one re-embedding, so it gets 25 minutes where the private run has 15.
     assert "    timeout-minutes: 15\n" in _job_header(private)
-    assert _job_header(text) == _job_header(private).replace("    timeout-minutes: 15\n", "    timeout-minutes: 25\n")
+    # It also checks who triggered it, as owner_repair.yml does: a re-run by someone else is refused.
+    assert _job_header(text) == _job_header(private).replace(
+        "    timeout-minutes: 15\n", "    timeout-minutes: 25\n").replace(
+        "github.actor == 'Siyuan-Zhu' &&", "github.actor == 'Siyuan-Zhu' && github.triggering_actor == 'Siyuan-Zhu' &&")
     assert text.count("timeout-minutes:") == 1
     assert "contents: write" not in text and "contents: read" in text
     assert "github.actor == 'Siyuan-Zhu'" in _job_header(text)
     for banned in ("upload-artifact", "publish_readme", "git push", "git commit"):
         assert banned not in text, banned
+
+
+def test_the_job_checks_the_triggering_actor_beside_the_actor_as_owner_repair_does():
+    header = _job_header(_text())
+    owner_repair = (ROOT / ".github/workflows/owner_repair.yml").read_text(encoding="utf-8")
+    pair = "github.actor == 'Siyuan-Zhu' && github.triggering_actor == 'Siyuan-Zhu' &&"
+    assert pair in owner_repair
+    assert pair in header and header.count("github.triggering_actor") == 1
 
 
 def test_the_env_block_is_the_private_runs_plus_the_four_inputs():
