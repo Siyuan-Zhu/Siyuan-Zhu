@@ -1363,3 +1363,21 @@ def test_the_pending_record_write_reports_whether_it_wrote(tmp_path, monkeypatch
     assert pipeline._write_pending_run_record(_MemoryRecordStore(tmp_path, []), staged) is True
     assert pipeline._write_pending_run_record(_FailingSaveStore(tmp_path, []), staged) is False
     assert pipeline._write_pending_run_record(_MemoryRecordStore(tmp_path, []), object()) is False
+
+
+def test_a_chosen_link_stores_no_chosen_group_for_the_reflector(tmp_path, monkeypatch):
+    # A link is not one of the five groups: the reflector has no control block for it.
+    _links_switch(monkeypatch, "1")
+    _reflector_switch(monkeypatch, "1")
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    client.replies = [_reply(selected_cluster_id="link_1", candidate_words=SLATE)]
+    store = _MemoryRecordStore(tmp_path, events)
+    orchestrator = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    orchestrator.run("2026-11-21", "blueprint", offline_demo=True)
+    run_id, record = store.records[-1]
+    assert run_id == "daily_run:2026-11-21:local:1" and record["chosen_cluster_id"] == "link_1"
+    inputs = record["tests"]["reflector_inputs"]
+    assert inputs["chosen"] is None

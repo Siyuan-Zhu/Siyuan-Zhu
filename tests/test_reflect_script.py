@@ -811,3 +811,13 @@ def test_main_keeps_whatever_reflect_prints_or_logs_out_of_the_process_output(mo
     code, lines, everything = _main(monkeypatch, capsys, [], Store(tmp_path), Client())
     assert code == 0
     assert everything == "[reflector] status=1 plants_ok=1 agreement=1 arithmetic_named=0 calls=7\n"
+
+
+def test_a_record_whose_director_chose_a_link_reports_no_control(tmp_path):
+    store, client = Store(tmp_path), Client()
+    record = _record(inputs=_inputs(chosen=False))
+    record["chosen_cluster_id"] = "link_1"
+    run_id = store.put(record)
+    assert _reflect(store, client)["status"] == "no_control"
+    _no_paid_call(client)
+    assert _stored(store, run_id)["status"] == "no_control"
