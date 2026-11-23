@@ -168,3 +168,41 @@ def test_an_unpinned_flash_model_version_freezes_with_or_without_an_overage(prom
     api, calls = client(guard, [response(prompt, 300, 200, version='synthetic-unpinned-version'),
                                 response(COUNTED, 10, 10, version=flash_version(guard))])
     freezes_and_refuses_the_next_call(guard, api, calls, reason='Gemini response model version not pinned')
+
+
+def recorded_rate_receipt(recorded_input, recorded_output, prompt, output):
+    """A hold charged at recorded rates that differ from the policy's approved 0.75 and 3.75 per million."""
+    context = {'admitted_input_tokens': COUNTED, 'max_output_tokens': 1500,
+               'input_token_usd_per_million': recorded_input, 'output_token_usd_per_million': recorded_output}
+    hold = (Decimal(COUNTED) * Decimal(recorded_input) + Decimal(1500) * Decimal(recorded_output)) / 1000000
+    reservation = {'operation': FLASH_OPERATION, 'request_context': context, 'max_gross_usd': str(hold)}
+    reply = {'responseId': 'synthetic-response-1', 'modelVersion': 'synthetic-flash-version',
+             'usageMetadata': {'promptTokenCount': prompt, 'candidatesTokenCount': output,
+                               'totalTokenCount': prompt + output}}
+
+    def receipt():
+        return auto.gemini_usage_receipt('r' * 32, reservation, reply, credential_fingerprint='f' * 64,
+            observed_at='2026-11-22T11:23:00+00:00', request_sha256='a' * 64,
+            policy=flash_policy(max_input_tokens=65536))
+    return hold, receipt
+
+
+def test_an_overage_that_fits_the_hold_at_its_recorded_rates_settles_at_those_rates():
+    # Recorded input rate above the policy's, recorded output rate below it.
+    hold, receipt = recorded_rate_receipt('1.00', '3.00', COUNTED + 1, 1400)
+    at_recorded = (Decimal(COUNTED + 1) * Decimal('1.00') + Decimal(1400) * Decimal('3.00')) / 1000000
+    at_policy = (Decimal(COUNTED + 1) * Decimal('0.75') + Decimal(1400) * Decimal('3.75')) / 1000000
+    assert at_recorded <= hold < at_policy
+    settled = receipt()
+    assert settled['prompt_tokens_over_admitted'] == 1
+    assert Decimal(settled['accounted_gross_usd']) == at_recorded
+
+
+def test_an_overage_that_fits_the_hold_only_at_the_policy_rates_freezes():
+    # Recorded input rate above the policy's: the billed cost fits the hold at 0.75 but not at 1.50.
+    hold, receipt = recorded_rate_receipt('1.50', '3.75', COUNTED + 1, 1500)
+    at_recorded = (Decimal(COUNTED + 1) * Decimal('1.50') + Decimal(1500) * Decimal('3.75')) / 1000000
+    at_policy = (Decimal(COUNTED + 1) * Decimal('0.75') + Decimal(1500) * Decimal('3.75')) / 1000000
+    assert at_policy <= hold < at_recorded
+    with pytest.raises(SpendBlocked, match=FREEZE):
+        receipt()
