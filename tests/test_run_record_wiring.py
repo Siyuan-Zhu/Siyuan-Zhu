@@ -1046,6 +1046,8 @@ def test_one_budget_at_most_and_none_with_both_switches_off(tmp_path, monkeypatc
 def test_the_inputs_name_the_published_commissions_candidate(tmp_path, monkeypatch):
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     _reflector_switch(monkeypatch, "1")
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
 
     def recover(commission, *, render, revise, history, photo_required):
         assert commission.selected_cluster_id == "cluster_0"

@@ -1465,6 +1465,8 @@ def _inputs(record):
 
 def test_reflector_on_stores_the_inputs_after_the_record_and_keeps_the_lines(monkeypatch, capsys):
     _photo_world(monkeypatch)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     baseline, _ = _own_group_run(OwnGroupStore())
     monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
