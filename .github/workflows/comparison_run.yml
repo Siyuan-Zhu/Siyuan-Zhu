@@ -4,20 +4,31 @@ name: Comparison Run
 # Publishes nothing: no commit, no push, no README, no artifact. Its state writes: one private run record per arm
 # and repeat, the spend ledger refresh through maintain_spend_control.py --apply, and the spend holds its paid calls
 # write. The arm list and the repeat count reach the script only through the environment, and the script checks them
-# against its fixed list. The log carries numbers and public model names only.
+# against its fixed list. With reflect set to "true" the reflector then runs on the newest record of the named arm and
+# stores its numbers on that record. The log carries numbers and public model names only.
 on:
   workflow_dispatch:
     inputs:
       arms:
-        description: "Comma-separated arms from the fixed list"
+        description: "Comma-separated arms from the fixed list; empty runs no arms"
         type: string
-        required: true
-        default: "previous,current"
+        required: false
+        default: ""
       repeats:
         description: "Naming attempts per arm, 1 to 3"
         type: string
         required: false
         default: "3"
+      reflect:
+        description: "Run the reflector after the arms: true or false"
+        type: string
+        required: false
+        default: "false"
+      reflect_arm:
+        description: "The arm whose newest record the reflector reads"
+        type: string
+        required: false
+        default: "current"
 
 concurrency:
   group: readme-state-writer
@@ -75,6 +86,8 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
           COMPARISON_ARMS: ${{ inputs.arms }}
           COMPARISON_REPEATS: ${{ inputs.repeats }}
+          REFLECT: ${{ inputs.reflect }}
+          REFLECT_ARM: ${{ inputs.reflect_arm }}
         shell: python
         run: |
           import os
@@ -84,5 +97,11 @@ jobs:
           code = subprocess.run(maintenance).returncode
           if code != 0:
               sys.exit(code)
-          command = [sys.executable, "scripts/private_run.py", "--arms", os.environ.get("COMPARISON_ARMS", ""), "--repeats", os.environ.get("COMPARISON_REPEATS", "")]
-          sys.exit(subprocess.run(command).returncode)
+          if os.environ.get("COMPARISON_ARMS", "").strip():
+              command = [sys.executable, "scripts/private_run.py", "--arms", os.environ.get("COMPARISON_ARMS", ""), "--repeats", os.environ.get("COMPARISON_REPEATS", "")]
+              code = subprocess.run(command).returncode
+          if os.environ.get("REFLECT", "") == "true":
+              reflect = [sys.executable, "scripts/reflect.py", "--kind", "private_run", "--arm", os.environ.get("REFLECT_ARM", "")]
+              reflect_code = subprocess.run(reflect).returncode
+              code = code or reflect_code
+          sys.exit(code)
