@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -77,7 +78,9 @@ def test_the_page_names_no_arm_and_no_model():
         assert f"Engine {letter}" in page
     for name in ARM_NAMES + MODEL_NAMES + ("flash", "hydrogen", "embedding", "packet", "legacy"):
         assert name not in page.lower(), name
-    assert "Synthwordpr1" in page and "Synthwordcu3" in page and "Slateword21" in page
+    assert "Synthwordpr1" in page and "Synthwordcu3" in page
+    # Candidate words exist only on the packet slate prompt, so they would tell the arms apart.
+    assert "Slateword" not in page and "candidate words" not in page.lower()
 
 
 def test_the_page_escapes_record_text():
@@ -159,3 +162,39 @@ def test_main_with_no_arm_records_writes_nothing(monkeypatch, capsys, tmp_path):
 
 def test_the_default_output_directory_is_the_private_compare_folder():
     assert cmp.DEFAULT_OUT_DIR == Path("~/egm-k1-private/compare").expanduser()
+
+
+FOOT_NOTE = "An engine may show fewer attempts when a call limit or a fallback was reached."
+
+
+def _columns(page):
+    return re.findall(r'<div class="engine">.*?</div>', page)
+
+
+def _shape(column):
+    """A column with every record value blanked: what is left is the kind of thing it shows."""
+    column = re.sub(r"<h2>Engine [A-Z]</h2>", "<h2>Engine ?</h2>", column)
+    column = re.sub(r'(<p class="(?:word|gloss|thesis)">).*?(</p>)', r"\1?\2", column)
+    column = re.sub(r"(rank: )[^<]*", r"\1?", column)
+    column = re.sub(r"(same candidate: )(?:yes|no)", r"\1?", column)
+    return column
+
+
+def test_an_arm_without_candidate_words_looks_the_same_in_kind_as_one_with_them():
+    records = _records()
+    for record in records:
+        if record["arm"] == "previous":
+            record["candidate_words"] = []
+    page = cmp.render_html(cmp.build_comparison(records, seed=7))
+    first, second = _columns(page)
+    assert _shape(first) == _shape(second)
+    assert "Slateword" not in page
+    comparison = cmp.build_comparison(records, seed=7)
+    letter = next(letter for letter, arm in comparison["key"].items() if arm == "current")
+    assert comparison["arms"][letter]["repeats"][0]["candidate_words"] == ["Slateword10", "Slateword11", "Slateword12"]
+
+
+def test_the_page_ends_with_the_fixed_note_on_fewer_attempts():
+    page = cmp.render_html(cmp.build_comparison(_records(), seed=1))
+    assert page.count(FOOT_NOTE) == 1
+    assert page.index(FOOT_NOTE) > page.rindex('<div class="engine">')
