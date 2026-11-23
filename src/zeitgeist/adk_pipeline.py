@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
+import hashlib
 import inspect
 import json
 import logging
@@ -68,6 +69,7 @@ from .visual_router import (
 from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_controls_supported
 from . import embedding_migration
 from . import judge_calibration
+from . import run_record
 from .embedding_migration import EmbeddingRun
 from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
@@ -605,6 +607,8 @@ class ZeitgeistADKOrchestrator:
         self.svg_path = repo_root / "assets" / "daily_pulse.svg"
         self.last_commission: Optional[DirectorCommission] = None
         self.last_published_pulse: Optional[PublishedPulse] = None
+        # The private run record's inputs; `run()` writes the record only once the edition is published.
+        self._run_record_inputs: Optional[Dict[str, Any]] = None
 
     def run(
         self,
@@ -698,7 +702,7 @@ class ZeitgeistADKOrchestrator:
             self.last_published_pulse = replace(
                 staged.last_published_pulse, mood_votes=state["visitor_mood_tally"]
             )
-            return (
+            result = (
                 analysis,
                 replace(decision, local_svg_path=str(self.svg_path)),
                 telemetry,
@@ -723,6 +727,10 @@ class ZeitgeistADKOrchestrator:
             raise
         finally:
             workspace.close()
+        # Published, installed and the download confirmed: only now, outside the publication's
+        # failure handler, the private run record.
+        _write_pending_run_record(store, staged)
+        return result
 
     def _run_staged(
         self,
@@ -1051,6 +1059,11 @@ class ZeitgeistADKOrchestrator:
         )
 
         self._persist_state(analysis, decision, telemetry, commission=commission, published=published)
+        if run_record.run_record_enabled():
+            self._run_record_inputs = {
+                "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
+                "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
+            }
         return analysis, decision, telemetry
 
     def _persist_state(
@@ -1338,11 +1351,12 @@ def _strip_code_fence(text: str) -> str:
     return cleaned
 
 
-def _take_candidate_slate(raw: Any) -> Tuple[Any, int]:
-    """Pop candidate_words from a director reply; return (reply, count). Never raises.
+def _take_candidate_slate(raw: Any) -> Tuple[Any, int, List[Dict[str, str]]]:
+    """Pop candidate_words from a director reply; return (reply, count, words). Never raises.
 
     The count is the number of well-formed entries, and only when there are 8 to 12 of
-    them; otherwise 0. The words themselves are dropped here and go nowhere else.
+    them; otherwise 0. The words are the well-formed entries; they go only to the private
+    run record, kept beside the commission and never on it (`_keep_director_evidence`).
     """
     try:
         payload = raw.text if hasattr(raw, "text") and isinstance(raw.text, str) else raw
@@ -1351,20 +1365,92 @@ def _take_candidate_slate(raw: Any) -> Tuple[Any, int]:
         elif isinstance(payload, dict):
             data = dict(payload)
         else:
-            return raw, 0
+            return raw, 0, []
         if not isinstance(data, dict):
-            return raw, 0
+            return raw, 0, []
     except Exception:
-        return raw, 0
+        return raw, 0, []
     slate = data.pop("candidate_words", None)
-    count = 0
+    words: List[Dict[str, str]] = []
     if isinstance(slate, list):
-        count = sum(
-            1 for entry in slate
+        words = [
+            {"word": entry["word"], "fit": entry["fit"]} for entry in slate
             if isinstance(entry, dict)
             and all(isinstance(entry.get(k), str) and entry.get(k).strip() for k in ("word", "fit"))
+        ]
+    count = len(words)
+    return data, count if 8 <= count <= 12 else 0, words
+
+
+_DIRECTOR_EVIDENCE_ATTR = "_director_evidence"
+
+
+def _keep_director_evidence(
+    commission: Any, candidate_words: Sequence[Dict[str, str]], evidence_text: Optional[str], prompt: str,
+) -> None:
+    """Keep what the Director was shown and listed beside the commission, never as a dataclass field.
+
+    `to_dict` is `asdict` and lands in the public state, so these stay a plain attribute. Never raises.
+    With the run-record switch off it does nothing.
+    """
+    if not run_record.run_record_enabled():
+        return
+    try:
+        setattr(commission, _DIRECTOR_EVIDENCE_ATTR, {
+            "candidate_words": [dict(entry) for entry in candidate_words],
+            "evidence_text": evidence_text,
+            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        })
+    except Exception:
+        pass
+
+
+def director_evidence(commission: Any) -> Dict[str, Any]:
+    """The candidate words, the candidate block and the prompt digest of the accepted Director reply."""
+    kept = getattr(commission, _DIRECTOR_EVIDENCE_ATTR, None) if commission is not None else None
+    if not isinstance(kept, dict):
+        return {"candidate_words": [], "evidence_text": None, "prompt_sha256": None}
+    return {
+        "candidate_words": [dict(entry) for entry in kept.get("candidate_words") or ()],
+        "evidence_text": kept.get("evidence_text"),
+        "prompt_sha256": kept.get("prompt_sha256"),
+    }
+
+
+def _write_pending_run_record(store: Any, staged: Any) -> None:
+    """Write the record a staged run kept, if any. Prints and logs nothing.
+
+    Any failure is swallowed, except an interrupt or an exit, which are raised again; by then
+    the edition is published, so neither passes through the publication's failure handler.
+    """
+    try:
+        inputs = getattr(staged, "_run_record_inputs", None)
+        if inputs is not None:
+            _write_daily_run_record(store, **inputs)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        pass
+
+
+def _write_daily_run_record(
+    store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
+    clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission,
+) -> None:
+    """The edition's private run record, after its state is saved. Never raises, prints or logs."""
+    try:
+        evidence = director_evidence(main_commission)
+        record = run_record.build_run_record(
+            kind="daily_run", date_iso=date_iso, now_utc=datetime.now(timezone.utc), environ=os.environ,
+            run_models=run_models,
+            embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
+            clusters=clusters, evidence_text=evidence["evidence_text"], commission=commission,
+            candidate_words=evidence["candidate_words"], chosen_cluster_id=main_commission.selected_cluster_id,
+            main_commission=main_commission, prompt_sha256=evidence["prompt_sha256"],
         )
-    return data, count if 8 <= count <= 12 else 0
+        run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
+    except Exception:
+        pass
 
 
 def _coerce_director_commission(raw: Any) -> DirectorCommission:
@@ -1420,8 +1506,24 @@ def _build_director_prompt(
     now_utc: Any = None,
     slate: bool = False,
 ) -> str:
+    return _director_prompt_and_block(
+        top_clusters, history_words_30d, rejection_reason,
+        evidence_packet=evidence_packet, now_utc=now_utc, slate=slate,
+    )[0]
+
+
+def _director_prompt_and_block(
+    top_clusters: Sequence[Any],
+    history_words_30d: Sequence[str],
+    rejection_reason: Optional[str] = None,
+    *,
+    evidence_packet: bool = False,
+    now_utc: Any = None,
+    slate: bool = False,
+) -> Tuple[str, str]:
+    """The Director prompt and its candidate block exactly as rendered into it."""
     if evidence_packet:
-        return _build_packet_director_prompt(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)
+        return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)
     cluster_summaries: List[str] = []
     for idx, cluster in enumerate(top_clusters[:5]):
         cid = getattr(cluster, "cluster_id", f"cluster_{idx}")
@@ -1450,7 +1552,7 @@ def _build_director_prompt(
             "history_words_30d and do NOT include any non-Latin script characters.\n"
         )
 
-    return (
+    prompt = (
         "You are the Editorial Director for the Daily Zeitgeist & Personal Orbit Pulse.\n"
         "Select the most compelling topical cluster and commission a single 1-2 word "
         "English or established European loanword (Latin script ONLY) that captures its thesis.\n"
@@ -1463,6 +1565,7 @@ def _build_director_prompt(
         "Return JSON with keys: selected_cluster_id (one of the provided cluster IDs), word, gloss, commissioned_thesis, visual_anchor, "
         "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
     )
+    return prompt, clusters_block
 
 
 _SLATE_LINE = (
@@ -1480,6 +1583,17 @@ def _build_packet_director_prompt(
     *,
     slate: bool = False,
 ) -> str:
+    return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)[0]
+
+
+def _packet_director_prompt_and_block(
+    top_clusters: Sequence[Any],
+    history_words_30d: Sequence[str],
+    rejection_reason: Optional[str],
+    now_utc: Any,
+    *,
+    slate: bool = False,
+) -> Tuple[str, str]:
     packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc)
     history_block = ", ".join(history_words_30d) if history_words_30d else "None"
     retry_banner = ""
@@ -1489,7 +1603,7 @@ def _build_packet_director_prompt(
             "You MUST correct this exact violation immediately. Do NOT repeat any word in "
             "history_words_30d and do NOT include any non-Latin script characters.\n"
         )
-    return (
+    prompt = (
         "You are the Editorial Director for the Daily Zeitgeist & Personal Orbit Pulse.\n"
         "Select the topical cluster most telling of the day's climate and commission a single 1-2 word "
         "English or established European loanword (Latin script ONLY) that captures its thesis.\n"
@@ -1505,6 +1619,7 @@ def _build_packet_director_prompt(
         "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
         + ("\n" + _SLATE_LINE if slate else "")
     )
+    return prompt, packet
 
 
 def _deterministic_fallback_commission(
@@ -1638,9 +1753,10 @@ def commission_daily_zeitgeist(
                         gloss_rejected = False
                 prompt = None
                 slate_prompt = None
+                block = slate_block = None
                 if use_packet:
                     try:
-                        prompt = _build_director_prompt(
+                        prompt, block = _director_prompt_and_block(
                             top_clusters=top_clusters[:5],
                             history_words_30d=history_list,
                             rejection_reason=last_rejection_reason,
@@ -1648,7 +1764,7 @@ def commission_daily_zeitgeist(
                             now_utc=now_utc,
                         )
                         if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
-                            slate_prompt = _build_director_prompt(
+                            slate_prompt, slate_block = _director_prompt_and_block(
                                 top_clusters=top_clusters[:5],
                                 history_words_30d=history_list,
                                 rejection_reason=last_rejection_reason,
@@ -1662,7 +1778,7 @@ def commission_daily_zeitgeist(
                 attempts_made += 1
                 packet_attempts += use_packet
                 if prompt is None:
-                    prompt = _build_director_prompt(
+                    prompt, block = _director_prompt_and_block(
                         top_clusters=top_clusters[:5],
                         history_words_30d=history_list,
                         rejection_reason=last_rejection_reason,
@@ -1697,8 +1813,9 @@ def commission_daily_zeitgeist(
                                     {"temperature": temperature, "response_mime_type": "application/json"}),
                         )
                     slate_count = 0
+                    slate_words: List[Dict[str, str]] = []
                     if slate_sent:
-                        raw_resp, slate_count = _take_candidate_slate(raw_resp)
+                        raw_resp, slate_count, slate_words = _take_candidate_slate(raw_resp)
                     commission = _coerce_director_commission(raw_resp)
                 except SpendBlocked:
                     raise
@@ -1739,6 +1856,8 @@ def commission_daily_zeitgeist(
                     commission.packet_used = use_packet
                     commission.echo_rejections = echo_rejections
                     commission.slate_count = slate_count
+                    _keep_director_evidence(commission, slate_words, slate_block if slate_sent else block,
+                                            slate_prompt if slate_sent else prompt)
                     return commission
 
                 last_rejection_reason = reason

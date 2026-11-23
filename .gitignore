@@ -23,3 +23,6 @@ work/
 # Private calibration documents (JSON backend), never published.
 data/embedding_calibration.json
 data/judge_calibration.json
+
+# Private run records (JSON backend), never published.
+data/run_records/
