@@ -39,9 +39,14 @@ from .collectors import (
 )
 from .understanding import (
     echo_violation,
+    link_candidates,
+    links_enabled,
     public_keywords,
     ranking_stats,
+    realm_counts,
     render_evidence_packet,
+    shown_groups,
+    source_realm_map,
     understanding_v1_enabled,
 )
 from .methodology import (
@@ -884,6 +889,14 @@ class ZeitgeistADKOrchestrator:
         commission_kwargs: Dict[str, Any] = (
             {"evidence_packet": True, "now_utc": reference_time} if understanding_v1 else {}
         )
+        # Links between groups in different realms, offered on the packet path only. With the switch
+        # off nothing is read and the Director call is today's.
+        night_links: Optional[List[Any]] = None
+        night_realm_counts: Optional[Dict[str, Any]] = None
+        if links_enabled():
+            night_links, realm_map = _night_links(store, config, scored_clusters)
+            night_realm_counts = _night_realm_counts(raw_signals, realm_map, scored_clusters, night_links)
+            commission_kwargs["links"] = night_links
         commission = commission_daily_zeitgeist(
             scored_clusters,
             history_words_30d=history_words_30d,
@@ -1075,12 +1088,13 @@ class ZeitgeistADKOrchestrator:
             self._run_record_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
+                "links": night_links, "realm_counts": night_realm_counts,
             }
         if own_group.own_group_enabled():
             self._own_group_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
-                "genai_client": genai_client,
+                "genai_client": genai_client, "links": night_links,
             }
         return analysis, decision, telemetry
 
@@ -1454,6 +1468,7 @@ def _write_pending_run_record(store: Any, staged: Any) -> None:
 def _write_daily_run_record(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission,
+    links: Optional[Sequence[Any]] = None, realm_counts: Optional[Dict[str, Any]] = None,
 ) -> None:
     """The edition's private run record, after its state is saved. Never raises, prints or logs."""
     try:
@@ -1465,6 +1480,7 @@ def _write_daily_run_record(
             clusters=clusters, evidence_text=evidence["evidence_text"], commission=commission,
             candidate_words=evidence["candidate_words"], chosen_cluster_id=main_commission.selected_cluster_id,
             main_commission=main_commission, prompt_sha256=evidence["prompt_sha256"],
+            links=links, realm_counts=realm_counts,
         )
         run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
@@ -1474,6 +1490,7 @@ def _write_daily_run_record(
 def _daily_own_group_check(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission, genai_client: Any,
+    links: Optional[Sequence[Any]] = None,
 ) -> None:
     """The own-group check on the edition's run record, with the record's own inputs. Prints and logs nothing.
 
@@ -1484,8 +1501,47 @@ def _daily_own_group_check(
         word=commission.word, gloss=commission.gloss, chosen_cluster_id=main_commission.selected_cluster_id,
         clusters=clusters,
         embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
-        genai_client=genai_client,
+        genai_client=genai_client, links=links,
     )
+
+
+def _night_links(store: Any, config: Any, clusters: Sequence[Any]) -> Tuple[List[Any], Any]:
+    """The night's links and its realm map, from the feeds, the private realm map and the roster.
+
+    No private map, an unreadable one or a failing read: the defaults. Never raises, prints or logs.
+    """
+    try:
+        private = store.load_calibration("orbit_realms")
+    except Exception:
+        private = None
+    try:
+        roster = store.load_orbit_roster()
+    except Exception:
+        roster = None
+    try:
+        feeds = config.get("feeds") if isinstance(config, dict) else None
+        realm_map = source_realm_map(feeds, private, roster)
+    except Exception:
+        return [], None
+    try:
+        links = link_candidates(clusters, realm_map)
+    except Exception:
+        links = []
+    return links, realm_map
+
+
+def _night_realm_counts(
+    intake: Sequence[Any], realm_map: Any, clusters: Sequence[Any], links: Optional[Sequence[Any]],
+) -> Optional[Dict[str, Any]]:
+    """Items by realm: the whole intake, and each shown candidate (the five groups and each link). Never raises."""
+    try:
+        candidates = {str(getattr(c, "cluster_id", "")): realm_counts(list(getattr(c, "items", None) or []), realm_map)
+                      for c in list(clusters or [])[:5]}
+        for link in links or ():
+            candidates[str(link.link_id)] = realm_counts(link.items, realm_map)
+        return {"intake": realm_counts(list(intake or []), realm_map), "candidates": candidates}
+    except Exception:
+        return None
 
 
 def _coerce_director_commission(raw: Any) -> DirectorCommission:
@@ -1540,10 +1596,12 @@ def _build_director_prompt(
     evidence_packet: bool = False,
     now_utc: Any = None,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> str:
     return _director_prompt_and_block(
         top_clusters, history_words_30d, rejection_reason,
-        evidence_packet=evidence_packet, now_utc=now_utc, slate=slate,
+        evidence_packet=evidence_packet, now_utc=now_utc, slate=slate, links=links, extra_group=extra_group,
     )[0]
 
 
@@ -1555,10 +1613,16 @@ def _director_prompt_and_block(
     evidence_packet: bool = False,
     now_utc: Any = None,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> Tuple[str, str]:
-    """The Director prompt and its candidate block exactly as rendered into it."""
+    """The Director prompt and its candidate block exactly as rendered into it.
+
+    Links and the extra group are shown on the packet path only.
+    """
     if evidence_packet:
-        return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)
+        return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc,
+                                                 slate=slate, links=links, extra_group=extra_group)
     cluster_summaries: List[str] = []
     for idx, cluster in enumerate(top_clusters[:5]):
         cid = getattr(cluster, "cluster_id", f"cluster_{idx}")
@@ -1617,8 +1681,11 @@ def _build_packet_director_prompt(
     now_utc: Any,
     *,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> str:
-    return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc, slate=slate)[0]
+    return _packet_director_prompt_and_block(top_clusters, history_words_30d, rejection_reason, now_utc,
+                                             slate=slate, links=links, extra_group=extra_group)[0]
 
 
 def _packet_director_prompt_and_block(
@@ -1628,8 +1695,10 @@ def _packet_director_prompt_and_block(
     now_utc: Any,
     *,
     slate: bool = False,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> Tuple[str, str]:
-    packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc)
+    packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc, links=links, extra_group=extra_group)
     history_block = ", ".join(history_words_30d) if history_words_30d else "None"
     retry_banner = ""
     if rejection_reason:
@@ -1731,6 +1800,10 @@ def _deterministic_fallback_commission(
     )
 
 
+_LINK_ID_RE = re.compile(r"link_\d+")
+NOT_OFFERED_REASON = "The selected candidate id was not offered; choose one of the provided cluster IDs."
+
+
 def _director_config(model: str, temperature: float) -> Dict[str, Any]:
     config: Dict[str, Any] = {"response_mime_type": "application/json"}
     if sampling_controls_supported(model):
@@ -1751,8 +1824,14 @@ def commission_daily_zeitgeist(
     evidence_packet: bool = False,
     now_utc: Any = None,
     run_models: Optional[RunModels] = None,
+    links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
 ) -> DirectorCommission:
-    """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3)."""
+    """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3).
+
+    `links` (the night's links, given only with the links switch on) and `extra_group` are shown on the
+    packet path only; a link id is valid only on an attempt that showed that link.
+    """
     owner = validate_owner_interjection(owner_override or {})
     constrained = owner.get("enabled") and any(owner.get(k) for k in ("override_word", "override_phrase", "personal_note"))
     history_list = [str(w).strip() for w in (history_words_30d or ()) if str(w).strip()]
@@ -1797,6 +1876,8 @@ def commission_daily_zeitgeist(
                             rejection_reason=last_rejection_reason,
                             evidence_packet=True,
                             now_utc=now_utc,
+                            links=links,
+                            extra_group=extra_group,
                         )
                         if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
                             slate_prompt, slate_block = _director_prompt_and_block(
@@ -1806,6 +1887,8 @@ def commission_daily_zeitgeist(
                                 evidence_packet=True,
                                 now_utc=now_utc,
                                 slate=True,
+                                links=links,
+                                extra_group=extra_group,
                             )
                     except Exception:
                         packet_phase_over = True
@@ -1871,13 +1954,19 @@ def commission_daily_zeitgeist(
                           or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
                         is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
 
+                if is_valid and links is not None:
+                    chosen_id = str(commission.selected_cluster_id).strip()
+                    shown_link_ids = {str(link.link_id) for link in links} if use_packet else set()
+                    if _LINK_ID_RE.fullmatch(chosen_id) and chosen_id not in shown_link_ids:
+                        is_valid, reason = False, NOT_OFFERED_REASON
+
                 if use_packet and is_valid:
                     try:
                         echo_reason = echo_violation(
                             [commission.word, commission.gloss, commission.commissioned_thesis,
                              commission.visual_anchor, *commission.unsplash_queries,
                              commission.imagen_commission_prompt],
-                            top_clusters[:5],
+                            shown_groups(top_clusters[:5], links, extra_group),
                         )
                     except Exception:
                         echo_reason = None

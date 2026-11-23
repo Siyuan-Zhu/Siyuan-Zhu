@@ -85,19 +85,42 @@ def _field(item: Any, key: str) -> Any:
     return getattr(item, key, None)
 
 
+def _link_items(link: Any) -> List[Any]:
+    return [item for member in getattr(link, "members", None) or () for item in (_field(member, "items") or ())]
+
+
+def _own_and_others(chosen: Optional[str], groups: List[Any], links: Sequence[Any]):
+    """The chosen candidate's items and each other shown candidate's; None when it was not shown.
+
+    A link's own items are those of all its member groups; the others are the shown groups outside it and
+    every other shown link.
+    """
+    link = next((link for link in links if str(getattr(link, "link_id", None)) == chosen), None)
+    if link is not None:
+        member_ids = {str(_field(member, "cluster_id")) for member in getattr(link, "members", None) or ()}
+        others = [list(_field(group, "items") or ()) for group in groups
+                  if str(_field(group, "cluster_id")) not in member_ids]
+        others += [_link_items(other) for other in links if other is not link]
+        return _link_items(link), others
+    own = next((group for group in groups if str(_field(group, "cluster_id")) == chosen), None)
+    if own is None:
+        return None
+    return list(_field(own, "items") or ()), [list(_field(group, "items") or ()) for group in groups
+                                               if group is not own]
+
+
 def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequence[Any], embedding_model: Any,
-             genai_client: Any) -> Dict[str, Any]:
+             genai_client: Any, links: Optional[Sequence[Any]] = None) -> Dict[str, Any]:
     from . import run_record
     from .collectors import embed_missing_items
     from .spend_guard import SpendBlocked
 
     groups = list(clusters or ())[:run_record.MAX_GROUPS]
     chosen = None if chosen_cluster_id is None else str(chosen_cluster_id)
-    own = next((group for group in groups if str(_field(group, "cluster_id")) == chosen), None)
-    if own is None:
+    found = _own_and_others(chosen, groups, list(links or ()))
+    if found is None:
         return _skipped("unknown_candidate")
-    own_items = list(_field(own, "items") or ())
-    others = [list(_field(group, "items") or ()) for group in groups if group is not own]
+    own_items, others = found
     # Checked before the paid call: a candidate the arithmetic cannot use is not worth one.
     if not own_items:
         return _skipped("no_items")
@@ -127,9 +150,12 @@ def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequenc
 
 def run_own_group_check(
     store: Any, run_id: str, *, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequence[Any],
-    embedding_model: Any, genai_client: Any,
+    embedding_model: Any, genai_client: Any, links: Optional[Sequence[Any]] = None,
 ) -> bool:
     """Embed "word. gloss", measure it against the night's first five candidates, store it under tests["own_group"].
+
+    With links shown, a link word is measured against all its member groups, with every other shown candidate
+    as the others.
 
     True only when numbers were computed and stored. Anything that stops the measure is stored as
     {"status": "skipped", "reason": ...}. Without a stored record nothing is embedded or written.
@@ -142,7 +168,7 @@ def run_own_group_check(
         if not isinstance(record, dict) or not isinstance(record.get("tests"), dict):
             return False
         numbers = _measure(word=word, gloss=gloss, chosen_cluster_id=chosen_cluster_id, clusters=clusters,
-                           embedding_model=embedding_model, genai_client=genai_client)
+                           embedding_model=embedding_model, genai_client=genai_client, links=links)
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:

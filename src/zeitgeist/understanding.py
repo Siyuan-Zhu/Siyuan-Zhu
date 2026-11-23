@@ -1,13 +1,14 @@
-"""Understanding v1 helpers: typical-titles packet, handle blanking, echo check.
+"""Understanding v1 helpers: typical-titles packet, handle blanking, echo check, realms and links.
 
-Pure functions only: no I/O, no logging. The only environment read is in
-`understanding_v1_enabled`.
+Pure functions only: no I/O, no logging. The only environment reads are in
+`understanding_v1_enabled` and `links_enabled`.
 """
 
 from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -18,9 +19,10 @@ from .methodology import (
     _is_personal_orbit_item,
     legacy_top_cluster,
 )
-from .undercurrents import source_realms_from_feeds
+from .undercurrents import find_undercurrents, source_realms_from_feeds
 
 SWITCH_ENV = "ZEITGEIST_UNDERSTANDING_V1"
+LINKS_ENV = "ZEITGEIST_LINKS"
 
 MAX_CLUSTERS = 5
 TITLE_CHARS = 120
@@ -37,6 +39,11 @@ _CLUSTER_ID_RE = re.compile(r"\bcluster[ _#-]?\d+\b", re.IGNORECASE)
 def understanding_v1_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
     env = os.environ if environ is None else environ
     return env.get(SWITCH_ENV) == "1"
+
+
+def links_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if environ is None else environ
+    return env.get(LINKS_ENV) == "1"
 
 
 def item_handles(item: Any) -> List[str]:
@@ -129,14 +136,18 @@ def _cut(text: str, limit: int) -> str:
     return text[:limit].rstrip()
 
 
-def _render_cluster(cluster: Any) -> str:
-    items = list(getattr(cluster, "items", None) or [])
-    keywords = public_keywords(list(getattr(cluster, "cluster_keywords", None) or []), cluster)
+def _typical_titles(cluster: Any) -> List[str]:
     titles: List[str] = []
-    for it in typical_items(items):
+    for it in typical_items(list(getattr(cluster, "items", None) or [])):
         title = _cut(_clean(_get_item_field(it, "title", ""), item_handles(it)), TITLE_CHARS)
         if title:
             titles.append(title)
+    return titles
+
+
+def _render_cluster(cluster: Any) -> str:
+    keywords = public_keywords(list(getattr(cluster, "cluster_keywords", None) or []), cluster)
+    titles = _typical_titles(cluster)
     return (
         "- Cluster {cid}: commission_score={cs:.2f}, velocity={v:.2f}, orbit_resonance={o:.2f}, "
         "keywords={kw}, sample_titles={titles}"
@@ -150,7 +161,11 @@ def _render_cluster(cluster: Any) -> str:
     )
 
 
-def render_evidence_packet(clusters: Sequence[Any], now_utc: Any = None) -> str:
+def render_evidence_packet(
+    clusters: Sequence[Any], now_utc: Any = None, *, links: Optional[Sequence[Any]] = None,
+    extra_group: Any = None,
+) -> str:
+    """The five groups, then each link as one line, then the extra group; with neither, today's packet."""
     clusters = list(clusters or [])[:MAX_CLUSTERS]
     if not clusters:
         return "- No clusters provided"
@@ -160,6 +175,16 @@ def render_evidence_packet(clusters: Sequence[Any], now_utc: Any = None) -> str:
             lines.append(_render_cluster(c))
         except Exception:
             lines.append(f"- Cluster {getattr(c, 'cluster_id', '')}: unavailable")
+    for link in links or ():
+        try:
+            lines.append(_render_link(link))
+        except Exception:
+            lines.append(f"- Link {getattr(link, 'link_id', '')}: unavailable")
+    if extra_group is not None:
+        try:
+            lines.append(_render_cluster(extra_group))
+        except Exception:
+            lines.append(f"- Cluster {getattr(extra_group, 'cluster_id', '')}: unavailable")
     return "\n".join(lines)
 
 
@@ -357,3 +382,103 @@ def realm_counts(items: Sequence[Any], realm_map: Mapping[str, str]) -> dict:
         key = realm if realm is not None else "none"
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+# ---- links: groups in different realms that sit unusually close on the night ----
+
+MAX_LINKS = 2
+LINK_KEYWORDS = 8
+LINK_TITLES = 4
+
+
+@dataclass(frozen=True)
+class LinkCandidate:
+    """One link offered to the Director: its member groups in rank order and the layer's figures."""
+
+    link_id: str
+    member_ids: Tuple[str, ...]
+    realms: Tuple[str, ...]
+    source_count: int
+    mean_link_similarity: float
+    members: Tuple[Any, ...]
+
+    @property
+    def items(self) -> List[Any]:
+        return [it for member in self.members for it in (getattr(member, "items", None) or [])]
+
+
+def link_candidates(clusters: Sequence[Any], realm_map: Mapping[str, str]) -> List[LinkCandidate]:
+    """The layer's first two currents over all of the night's groups, as links `link_1`, `link_2`."""
+    clusters = list(clusters or [])
+    rank = {}
+    for position, cluster in enumerate(clusters):
+        rank.setdefault(str(getattr(cluster, "cluster_id", "")), position)
+    found: List[LinkCandidate] = []
+    for number, current in enumerate(find_undercurrents(clusters, realm_map)[:MAX_LINKS], 1):
+        positions = sorted(rank[cid] for cid in current.cluster_ids)
+        members = tuple(clusters[p] for p in positions)
+        found.append(LinkCandidate(
+            link_id=f"link_{number}",
+            member_ids=tuple(str(getattr(m, "cluster_id", "")) for m in members),
+            realms=tuple(current.realms),
+            source_count=int(current.source_count),
+            mean_link_similarity=float(current.mean_link_similarity),
+            members=members,
+        ))
+    return found
+
+
+def link_keywords(link: Any) -> List[str]:
+    """Members in rank order, each member's public keywords, duplicates dropped regardless of case; first eight."""
+    seen: set = set()
+    kept: List[str] = []
+    for member in link.members:
+        for kw in public_keywords(list(getattr(member, "cluster_keywords", None) or []), member):
+            key = str(kw).strip().casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(kw)
+    return kept[:LINK_KEYWORDS]
+
+
+def link_titles(link: Any) -> List[str]:
+    """One typical title from each member in rank order, round and round, until there are four."""
+    per_member = [_typical_titles(member) for member in link.members]
+    titles: List[str] = []
+    for depth in range(max((len(t) for t in per_member), default=0)):
+        for member_titles in per_member:
+            if depth < len(member_titles) and len(titles) < LINK_TITLES:
+                titles.append(member_titles[depth])
+    return titles
+
+
+def _render_link(link: Any) -> str:
+    return (
+        "- Link {lid}: groups={groups}, realms={realms}, sources={sources}, similarity={sim:.2f}, "
+        "keywords={kw}, sample_titles={titles}"
+    ).format(
+        lid=link.link_id,
+        groups=list(link.member_ids),
+        realms=list(link.realms),
+        sources=int(link.source_count),
+        sim=float(link.mean_link_similarity),
+        kw=link_keywords(link),
+        titles=link_titles(link),
+    )
+
+
+def shown_groups(
+    clusters: Sequence[Any], links: Optional[Sequence[Any]] = None, extra_group: Any = None,
+) -> List[Any]:
+    """Every group whose items the Director was shown: the five, each link's members, the extra group."""
+    shown: List[Any] = list(clusters or [])[:MAX_CLUSTERS]
+    seen = {id(c) for c in shown}
+    extra = [m for link in links or () for m in getattr(link, "members", ())]
+    if extra_group is not None:
+        extra.append(extra_group)
+    for group in extra:
+        if id(group) not in seen:
+            seen.add(id(group))
+            shown.append(group)
+    return shown

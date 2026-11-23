@@ -14,6 +14,9 @@ With --arms it runs comparison arms instead: each named arm (a fixed set of mode
 path) names the same frozen intake --repeats times, and one private run record is written per
 arm and repeat. In that mode the store refuses every write but the run record, no judge
 calibration is measured, and vectors from another embedding model are made again in memory only.
+
+With ZEITGEIST_LINKS=1 the private run shows the Director the night's links as the edition does; the
+current_links arm always does, whatever that switch says.
 """
 from __future__ import annotations
 
@@ -46,7 +49,7 @@ from src.zeitgeist.model_choice import (  # noqa: E402
     EMBED_001, EMBED_2, FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
 )
 from src.zeitgeist.spend_guard import SpendBlocked, refused_before_dispatch  # noqa: E402
-from src.zeitgeist.understanding import understanding_v1_enabled  # noqa: E402
+from src.zeitgeist.understanding import links_enabled, understanding_v1_enabled  # noqa: E402
 
 DIRECTOR_LINE = "[private_run] director_ok=%d attempts=%d packet=%d fallback=%d items=%d clusters=%d"
 PHOTO_LINE = "[private_run] photo_ok=%d candidates=%d safe=%d best_meaning=%.3f best_composite=%.3f"
@@ -84,13 +87,15 @@ class Arm:
     embedding: str
     packet: bool
     runnable: bool = True
+    # The night's links shown to the Director, built as the edition builds them with ZEITGEIST_LINKS on.
+    links: bool = False
 
 
 ARMS: Mapping[str, Arm] = MappingProxyType({
     "previous": Arm(FLASH, FLASH, EMBED_001, packet=False),
     "current": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True),
-    # Known, but their parts are not built yet.
-    "current_links": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, runnable=False),
+    "current_links": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, links=True),
+    # Known, but its part is not built yet.
     "current_reflector": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, runnable=False),
 })
 
@@ -183,6 +188,10 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             stage = DIRECTOR
             # The same switch the edition reads decides whether the Stage 0 packet is sent.
             packet = {"evidence_packet": True, "now_utc": now} if understanding_v1_enabled() else {}
+            # And the same links switch whether the night's links are shown with it.
+            links = _links_for(links_enabled(), store, _orbit_config, rows, clusters)
+            if links.links is not None:
+                packet["links"] = links.links
             commission = pipeline.commission_daily_zeitgeist(
                 clusters, history_words_30d=_history_words(entries, date_iso), genai_client=genai_client,
                 owner_override={}, model_name=run_models.current("director"), run_models=run_models, **packet,
@@ -193,11 +202,11 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             lines.append(DIRECTOR_LINE % (int(director_ok), commission.attempts_used, int(commission.packet_used),
                                           int(run_models.fallback_fired), len(items), len(clusters)))
             if run_record.run_record_enabled():
-                written = _write_private_record(store, now, date_iso, run_models, grouping, commission)
+                written = _write_private_record(store, now, date_iso, run_models, grouping, commission, links)
                 lines.append(RECORD_LINE % int(written))
                 if written and own_group.own_group_enabled():
                     _check_own_group(store, run_record.make_run_id("private_run", date_iso), grouping, commission,
-                                     genai_client)
+                                     genai_client, links.links)
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -228,8 +237,33 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
     return result
 
 
+@dataclass
+class NightLinks:
+    """The links shown to the Director and the realm counts the record keeps; both None with links off."""
+
+    links: Optional[List[Any]] = None
+    realm_counts: Optional[Dict[str, Any]] = None
+
+
+def _orbit_config() -> Dict[str, Any]:
+    """The orbit configuration the edition reads, for its feed categories; empty when unreadable."""
+    try:
+        config = pipeline.load_orbit_config(ROOT / "config" / "orbit_sources.json")
+        return config if isinstance(config, dict) else {}
+    except Exception:
+        return {}
+
+
+def _links_for(enabled: bool, store: Any, config: Any, rows: Sequence[Any], clusters: Sequence[Any]) -> NightLinks:
+    """The night's links exactly as the edition builds them; nothing is read when they are off. Never raises."""
+    if not enabled:
+        return NightLinks()
+    links, realm_map = pipeline._night_links(store, config() if callable(config) else config, clusters)
+    return NightLinks(links, pipeline._night_realm_counts(rows, realm_map, clusters, links))
+
+
 def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: RunModels,
-                          grouping: Grouping, commission: Any) -> bool:
+                          grouping: Grouping, commission: Any, links: Optional[NightLinks] = None) -> bool:
     """The private run record after the Director step; True when it was written. Prints and logs nothing.
 
     Any failure is swallowed (False), except an interrupt or an exit, which end the run as any interrupt does.
@@ -242,6 +276,8 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
             evidence_text=evidence["evidence_text"], commission=commission,
             candidate_words=evidence["candidate_words"], chosen_cluster_id=commission.selected_cluster_id,
             prompt_sha256=evidence["prompt_sha256"], cutoffs_source=grouping.cutoffs_source,
+            links=links.links if links is not None else None,
+            realm_counts=links.realm_counts if links is not None else None,
         )
         return run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
     except (KeyboardInterrupt, SystemExit):
@@ -250,12 +286,13 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
         return False
 
 
-def _check_own_group(store: Any, run_id: str, grouping: Grouping, commission: Any, genai_client: Any) -> bool:
+def _check_own_group(store: Any, run_id: str, grouping: Grouping, commission: Any, genai_client: Any,
+                     links: Optional[Sequence[Any]] = None) -> bool:
     """The own-group check on a written record; never raises but an interrupt or an exit, prints nothing."""
     return own_group.run_own_group_check(
         store, run_id, word=getattr(commission, "word", None), gloss=getattr(commission, "gloss", None),
         chosen_cluster_id=commission.selected_cluster_id, clusters=grouping.clusters,
-        embedding_model=grouping.embedding_model, genai_client=genai_client,
+        embedding_model=grouping.embedding_model, genai_client=genai_client, links=links,
     )
 
 
@@ -430,7 +467,7 @@ def _reembedded_grouping(store: ArmStore, rows: List[Any], arm: Arm, genai_clien
 
 def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int, grouping: Grouping,
                 digest: str, history_entries: List[Any], genai_client: Any, now: datetime,
-                lines: List[str]) -> Tuple[bool, bool]:
+                lines: List[str], rows: Sequence[Any] = (), config: Any = None) -> Tuple[bool, bool]:
     """One naming attempt of one arm, then its record, then (first repeat only) its photo path.
 
     Returns (ok, record written). Raises on any failure; the caller prints the numeric line.
@@ -440,8 +477,12 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     clusters = grouping.clusters
     order = candidate_order(min(SHOWN_GROUPS, len(clusters)), digest, repeat)
     shown = [clusters[position] for position in order] + list(clusters[len(order):])
+    # Built from the ranked groups, as the edition builds them; the order shuffle moves only the five.
+    links = _links_for(arm.links, store, config, rows, clusters)
     with activate(run_models):
         packet = {"evidence_packet": True, "now_utc": now} if arm.packet else {}
+        if links.links is not None:
+            packet["links"] = links.links
         commission = pipeline.commission_daily_zeitgeist(
             shown, history_words_30d=_history_words(history_entries, date_iso), genai_client=genai_client,
             owner_override={}, model_name=run_models.current("director"), run_models=run_models, **packet,
@@ -456,11 +497,12 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
         commission=commission, candidate_words=evidence["candidate_words"],
         chosen_cluster_id=commission.selected_cluster_id, prompt_sha256=evidence["prompt_sha256"],
         intake_hash=digest, arm=name, repeat=repeat, cutoffs_source=grouping.cutoffs_source,
+        links=links.links, realm_counts=links.realm_counts,
     )
     run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
     written = run_record.write_run_record(store, run_id, record)
     if written and own_group.own_group_enabled():
-        _check_own_group(store, run_id, grouping, commission, genai_client)
+        _check_own_group(store, run_id, grouping, commission, genai_client, links.links)
     ok = director_ok and not run_models.fallback_fired
     if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
         scored: List[Dict[str, Any]] = []
@@ -502,6 +544,7 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
     written = 0
     stop = False
     stores = [ArmStore(store) for _ in names]
+    config = _orbit_config() if any(ARMS[name].links for name in names) else None
     # The Director sees a counting client; embeddings use the client itself.
     counter = DirectorCounter(genai_client) if genai_client is not None else None
     director_client = counter if counter is not None else genai_client
@@ -557,7 +600,8 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
             try:
                 ok, wrote = _arm_repeat(arm_store, index=index, name=name, arm=arm, repeat=repeat,
                                         grouping=grouping, digest=digest, history_entries=entries,
-                                        genai_client=director_client, now=now, lines=lines)
+                                        genai_client=director_client, now=now, lines=lines, rows=rows,
+                                        config=config)
                 written += int(wrote)
                 if arm_store.refused != refused_before:
                     lines.append(ARM_FAILED_LINE % (index, repeat, DIRECTOR))

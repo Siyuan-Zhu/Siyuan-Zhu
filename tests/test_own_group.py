@@ -352,3 +352,47 @@ def test_a_missing_word_or_gloss_is_skipped_without_a_call():
         ok, store, client = _check(**over)
         assert ok is False and client.requests == []
         assert _stored(store) == {"status": "skipped", "reason": "no_text"}
+
+
+
+# ---- a link word (links plan, Task 3) ----
+
+
+def _shown_link(link_id, *members):
+    return SimpleNamespace(link_id=link_id, member_ids=tuple(m.cluster_id for m in members), members=tuple(members))
+
+
+def test_a_link_word_is_measured_against_all_its_members_with_every_other_shown_candidate_as_the_others():
+    clusters = _night(7)
+    link_1 = _shown_link("link_1", clusters[1], clusters[5])
+    link_2 = _shown_link("link_2", clusters[6])
+    vector = [0.0] * 768
+    vector[1], vector[5] = 0.6, 0.8
+    ok, store, client = _check(client=EmbedClient(vector=vector), chosen_cluster_id="link_1", clusters=clusters,
+                               links=[link_1, link_2])
+    assert ok is True and len(client.requests) == 1
+    own = clusters[1].items + clusters[5].items
+    others = [clusters[i].items for i in (0, 2, 3, 4)] + [clusters[6].items]
+    expected = own_group.own_group_numbers(vector, own, others)
+    stored = _stored(store)
+    assert stored["status"] == "ok" and stored["n_own"] == 6 and len(stored["others"]) == 5
+    assert stored["own"] == pytest.approx(expected["own"], abs=1e-3)
+    assert stored["others"] == pytest.approx(expected["others"], abs=1e-3)
+    assert stored["margin"] == pytest.approx(expected["margin"], abs=1e-3)
+
+
+def test_a_group_word_is_measured_as_before_when_links_were_shown():
+    clusters = _night(7)
+    links = [_shown_link("link_1", clusters[1], clusters[5])]
+    _, with_links, _ = _check(clusters=clusters, links=links)
+    _, without, _ = _check(clusters=clusters)
+    assert _stored(with_links) == _stored(without)
+
+
+def test_a_link_id_that_was_not_shown_is_skipped_without_a_call():
+    ok, store, client = _check(chosen_cluster_id="link_2",
+                               links=[_shown_link("link_1", *_night(2))])
+    assert ok is False and client.requests == []
+    assert _stored(store) == {"status": "skipped", "reason": "unknown_candidate"}
+    ok, store, client = _check(chosen_cluster_id="link_1")
+    assert ok is False and client.requests == []

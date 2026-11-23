@@ -570,3 +570,123 @@ def test_the_private_and_comparison_workflows_pass_the_own_group_switch(name):
 
 def test_the_provider_canary_does_not_pass_the_own_group_switch():
     assert "ZEITGEIST_OWN_GROUP" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
+
+
+
+# ---- links (links plan, Task 3): with no link the prompt is today's; the record carries the night's links ----
+
+from src.zeitgeist.understanding import LinkCandidate  # noqa: E402
+
+
+def _links_switch(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_LINKS", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_LINKS", value)
+
+
+@pytest.mark.parametrize("name", ["packet", "packet_slate_retry"])
+def test_with_links_on_and_none_found_the_packet_prompt_is_unchanged_to_the_character(name):
+    (make, *args), kwargs = CASES[name]
+    prompt, block = pipeline._director_prompt_and_block(make(), *args, **kwargs, links=[])
+    assert _sha(prompt) == GOLDEN[name]
+    assert _sha(pipeline._build_director_prompt(make(), *args, **kwargs, links=[])) == GOLDEN[name]
+    packet_args = (make(), args[0], args[1] if len(args) > 1 else None, NOW)
+    assert _sha(pipeline._build_packet_director_prompt(*packet_args, slate=kwargs.get("slate", False),
+                                                       links=[])) == GOLDEN[name]
+
+
+def test_with_links_on_and_none_found_the_director_is_sent_todays_prompt():
+    plain, plain_client = _packet_commission([_reply(candidate_words=SLATE)])
+    client = _Client([_reply(candidate_words=SLATE)])
+    commission_daily_zeitgeist(
+        _clusters(), HISTORY, genai_client=client, model_name=mc.HYDROGEN, run_models=_hydrogen(),
+        evidence_packet=True, now_utc=NOW, links=[],
+    )
+    assert client.prompts == plain_client.prompts
+
+
+def _one_link(clusters, realm_map):
+    members = tuple(clusters[:3])
+    return [LinkCandidate("link_1", tuple(str(c.cluster_id) for c in members), ("civic", "markets", "tech"), 4,
+                          0.91, members)]
+
+
+@pytest.mark.parametrize("value", [None, "0"])
+def test_links_off_records_null_links_and_realm_counts(tmp_path, monkeypatch, value):
+    _links_switch(monkeypatch, value)
+    store, _, _ = _edition(tmp_path, monkeypatch, switch="1")
+    [(_, record)] = store.records
+    assert record["links"] is None and record["realm_counts"] is None
+
+
+def test_links_on_with_none_found_sends_todays_prompt_and_records_an_empty_list(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    off_store, _, off = _edition(tmp_path / "off", monkeypatch, switch="1")
+    _links_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", lambda clusters, realm_map: [])
+    store, _, on = _edition(tmp_path / "on", monkeypatch, switch="1")
+    [(_, off_record)] = off_store.records
+    [(_, record)] = store.records
+    # The prompt the Director answered is today's to the character.
+    assert on == off and record["prompt_sha256"] == off_record["prompt_sha256"]
+    assert record["evidence_text"] == off_record["evidence_text"]
+    assert record["links"] == []
+    assert set(record["realm_counts"]) == {"intake", "candidates"}
+    assert sum(record["realm_counts"]["intake"].values()) > 0
+    assert set(record["realm_counts"]["candidates"]) == {g["cluster_id"] for g in record["groups"]}
+
+
+def test_links_on_shows_the_links_to_the_director_and_records_them(tmp_path, monkeypatch, capsys):
+    _links_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    store, client, _ = _edition(tmp_path, monkeypatch, switch="1")
+    out = capsys.readouterr()
+    assert "\n- Link link_1: groups=" in client.prompts[-1]
+    [(_, record)] = store.records
+    member_ids = [g["cluster_id"] for g in record["groups"]][:3]
+    assert record["links"] == [{"link_id": "link_1", "member_ids": member_ids,
+                                "realms": ["civic", "markets", "tech"], "source_count": 4,
+                                "mean_link_similarity": 0.91}]
+    assert "link_1" in record["realm_counts"]["candidates"]
+    assert "- Link link_1" in record["evidence_text"]
+    assert "Link" not in out.out + out.err
+
+
+def test_links_on_gives_the_own_group_check_the_links(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, "1")
+    _own_group_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    _, calls, _ = _spied_edition(tmp_path, monkeypatch)
+    [(_, kwargs)] = calls
+    assert [link.link_id for link in kwargs["links"]] == ["link_1"]
+
+
+def test_links_off_gives_the_own_group_check_no_links(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    _own_group_switch(monkeypatch, "1")
+    _, calls, _ = _spied_edition(tmp_path, monkeypatch)
+    [(_, kwargs)] = calls
+    assert kwargs.get("links") is None
+
+
+LINKS_LINE = "ZEITGEIST_LINKS: " + DOLLAR + "{{ vars.ZEITGEIST_LINKS || '0' }}"
+
+
+def test_the_daily_workflow_passes_the_links_switch_to_the_edition_job_only():
+    text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
+    edition = _job_lines(text, "synthesize-pulse")
+    assert edition[edition.index(OWN_GROUP_LINE) + 1] == LINKS_LINE
+    assert LINKS_LINE not in _job_lines(text, "profile-preflight")
+    assert [line.strip() for line in text.splitlines()].count(LINKS_LINE) == 1
+
+
+@pytest.mark.parametrize("name", ["private_run.yml", "comparison_run.yml"])
+def test_the_private_and_comparison_workflows_pass_the_links_switch(name):
+    lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
+    assert lines.count(LINKS_LINE) == 1
+    assert lines[lines.index(OWN_GROUP_LINE) + 1] == LINKS_LINE
+
+
+def test_the_provider_canary_does_not_pass_the_links_switch():
+    assert "ZEITGEIST_LINKS" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()

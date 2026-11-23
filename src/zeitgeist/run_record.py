@@ -35,7 +35,9 @@ SWITCH_NAMES = (
     "ZEITGEIST_LINKS",
     "ZEITGEIST_CHOSEN_GROUP_FIELDS",
     "ZEITGEIST_OWN_NIGHT",
+    "ZEITGEIST_OWN_GROUP",
     "ZEITGEIST_REFLECTOR",
+    "ZEITGEIST_REFLECTOR_MODEL",
     "ZEITGEIST_REFLECTOR_CANDIDATE",
 )
 
@@ -118,6 +120,16 @@ def _group(rank: int, cluster: Any) -> Dict[str, Any]:
     }
 
 
+def _link(link: Any) -> Dict[str, Any]:
+    return {
+        "link_id": str(_field(link, "link_id")),
+        "member_ids": [str(member) for member in _field(link, "member_ids") or ()],
+        "realms": [str(realm) for realm in _field(link, "realms") or ()],
+        "source_count": int(_field(link, "source_count") or 0),
+        "mean_link_similarity": _number(_field(link, "mean_link_similarity")),
+    }
+
+
 def _commission_sha256(commission: Any) -> Optional[str]:
     if commission is None:
         return None
@@ -151,11 +163,14 @@ def build_run_record(
     main_commission: Any = None,
     prompt_sha256: Optional[str] = None,
     cutoffs_source: Optional[str] = None,
+    links: Optional[Sequence[Any]] = None,
+    realm_counts: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The record as plain values.
 
     `commission` is the published one (word, gloss, thesis, digest). `main_commission` is the
     Director's main pass when photo recovery revised it; the prompt path and attempts come from it.
+    `links` and `realm_counts` are null unless the links switch gave them.
     """
     main = commission if main_commission is None else main_commission
     groups = [_group(rank, cluster) for rank, cluster in enumerate(list(clusters or ())[:MAX_GROUPS], 1)]
@@ -197,6 +212,8 @@ def build_run_record(
         "arm": arm,
         "repeat": repeat,
         "tests": dict(extra or {}),
+        "links": None if links is None else [_link(link) for link in links],
+        "realm_counts": None if realm_counts is None else dict(realm_counts),
     }
     return _plain(record)
 
