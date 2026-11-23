@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
@@ -261,3 +261,130 @@ def verdict(
     if plants_ok and agreement:
         status = "pointer" if real_answers[0] == NONE_ANSWER else "named"
     return {"plants_ok": plants_ok, "agreement": agreement, "status": status}
+
+
+# ---- the next night: the pointed group is offered to the Director ----
+
+CANDIDATE_ENV = "ZEITGEIST_REFLECTOR_CANDIDATE"
+# The edition's lookup runs before the Director call, so it is held to this budget.
+CANDIDATE_BUDGET_SECONDS = 20.0
+POINTER_KINDS = ("daily_run", "private_run")
+POINTER_MAX_AGE_HOURS = 36
+POINTER_LOAD_LIMIT = 200
+MIN_OVERLAP = 0.5
+# The setting's result on a record; a trial's (tests["reflector_trial"]) is never read.
+KEY = "reflector"
+
+
+def candidate_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """The switch, and the keyword repair: without it a word about the extra group would be published with
+    the top group's keywords, so the candidate is never offered."""
+    from .understanding import repair_enabled
+
+    env = os.environ if environ is None else environ
+    return env.get(CANDIDATE_ENV) == "1" and repair_enabled(env)
+
+
+def _pointer_hashes(result: Any) -> Optional[List[str]]:
+    hashes = result.get("pointer_item_hashes") if isinstance(result, Mapping) else None
+    if not isinstance(hashes, list) or not hashes:
+        return None
+    if not all(isinstance(value, str) and value for value in hashes):
+        return None
+    return list(dict.fromkeys(hashes))
+
+
+def newest_pointer(store: Any, now: datetime, *, max_age_hours: float = POINTER_MAX_AGE_HOURS) -> Optional[Dict[str, Any]]:
+    """The newest pointer of a daily or private run record written in the window; None when there is none.
+
+    Only tests["reflector"] with status "pointer" counts, never tests["reflector_trial"]. The window is
+    read from the record's own written_at. Never raises; prints and logs nothing.
+    """
+    from . import run_record
+
+    try:
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        window = timedelta(hours=float(max_age_hours))
+        found = []
+        for kind in POINTER_KINDS:
+            try:
+                records = store.load_run_records(kind=kind, limit=POINTER_LOAD_LIMIT)
+            except Exception:
+                continue
+            for record in records or ():
+                if not isinstance(record, dict) or record.get("kind") != kind:
+                    continue
+                tests, run_id = record.get("tests"), record.get("run_id")
+                if not isinstance(tests, dict) or not isinstance(run_id, str):
+                    continue
+                result = tests.get(KEY)
+                if not isinstance(result, Mapping) or result.get("status") != "pointer":
+                    continue
+                hashes = _pointer_hashes(result)
+                moment = run_record._written_at(record)
+                if hashes is None or moment is None or not timedelta(0) <= now - moment <= window:
+                    continue
+                found.append((moment, run_id, hashes))
+        if not found:
+            return None
+        found.sort(key=lambda entry: entry[1])
+        found.sort(key=lambda entry: entry[0], reverse=True)
+        return {"run_id": found[0][1], "item_hashes": found[0][2]}
+    except Exception:
+        return None
+
+
+def match_pointer(pointer: Mapping[str, Any], clusters: Sequence[Any]) -> tuple:
+    """The ranked cluster holding the largest share of the pointer's items, and that share.
+
+    A match needs at least half of them; ties go to the higher rank. Without a match the cluster is None.
+    """
+    hashes = set(pointer.get("item_hashes") or ())
+    best, best_share = None, 0.0
+    if not hashes:
+        return None, 0.0
+    for cluster in list(clusters or ()):
+        present = {str(_get_item_field(item, "url_hash") or "") for item in _items(cluster)}
+        share = len(hashes & present) / len(hashes)
+        if share > best_share:
+            best, best_share = cluster, share
+    return (best if best_share >= MIN_OVERLAP else None), float(best_share)
+
+
+def _no_candidate() -> Dict[str, Any]:
+    return {"pointer_run_id": None, "matched_cluster_id": None, "overlap": None, "already_shown": False,
+            "offered": False, "group": None}
+
+
+def candidate_for_night(store: Any, clusters: Sequence[Any], now: datetime) -> Dict[str, Any]:
+    """The newest pointer matched to tonight's ranked groups. Never raises; prints and logs nothing.
+
+    `already_shown` is true when the match is one of the first five groups; then nothing extra is offered.
+    Otherwise a match is offered, and `group` is that cluster.
+    """
+    from . import run_record
+
+    try:
+        pointer = newest_pointer(store, now)
+        if pointer is None:
+            return _no_candidate()
+        ranked = list(clusters or ())
+        group, overlap = match_pointer(pointer, ranked)
+        found = dict(_no_candidate(), pointer_run_id=pointer["run_id"], overlap=overlap)
+        if group is None:
+            return found
+        rank = next(index for index, cluster in enumerate(ranked) if cluster is group)
+        shown = rank < run_record.MAX_GROUPS
+        found.update(matched_cluster_id=str(getattr(group, "cluster_id", "")), already_shown=shown,
+                     offered=not shown, group=None if shown else group)
+        return found
+    except Exception:
+        return _no_candidate()
+
+
+def candidate_record(found: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """What the run record keeps of the night's candidate: everything but the group itself."""
+    if found is None:
+        return None
+    return {key: value for key, value in found.items() if key != "group"}
