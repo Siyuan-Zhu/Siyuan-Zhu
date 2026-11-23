@@ -70,6 +70,7 @@ from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_control
 from . import embedding_migration
 from . import judge_calibration
 from . import own_group, run_record
+from . import reflector
 from .embedding_migration import EmbeddingRun
 from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
@@ -611,6 +612,8 @@ class ZeitgeistADKOrchestrator:
         self._run_record_inputs: Optional[Dict[str, Any]] = None
         # The own-group check's inputs, kept only with its switch on; `run()` uses them after the record.
         self._own_group_inputs: Optional[Dict[str, Any]] = None
+        # The reflector's inputs, kept only with its switch on; `run()` stores them after the own-group check.
+        self._reflector_inputs: Optional[Dict[str, Any]] = None
 
     def run(
         self,
@@ -738,6 +741,16 @@ class ZeitgeistADKOrchestrator:
             own_group_inputs = staged._own_group_inputs
             if own_group_inputs is not None:
                 _daily_own_group_check(store, **own_group_inputs)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            pass
+        # Then what the reflector needs from the run, on that record, in the same kind of guard. With
+        # its switch off no inputs were kept and nothing is called.
+        try:
+            reflector_inputs = staged._reflector_inputs
+            if reflector_inputs is not None:
+                _daily_reflector_inputs(store, **reflector_inputs)
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
@@ -1081,6 +1094,11 @@ class ZeitgeistADKOrchestrator:
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
                 "genai_client": genai_client,
+            }
+        if reflector.reflector_enabled():
+            self._reflector_inputs = {
+                "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
+                "clusters": scored_clusters, "main_commission": original_commission,
             }
         return analysis, decision, telemetry
 
@@ -1485,6 +1503,20 @@ def _daily_own_group_check(
         clusters=clusters,
         embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
         genai_client=genai_client,
+    )
+
+
+def _daily_reflector_inputs(
+    store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
+    clusters: Sequence[Any], main_commission: DirectorCommission,
+) -> None:
+    """What the reflector needs from the edition's run, stored on its run record. Prints and logs nothing.
+
+    `run()` calls it after the own-group check, inside the same kind of guard as the record write.
+    """
+    reflector.store_reflector_inputs(
+        store, run_record.make_run_id("daily_run", date_iso), clusters, main_commission.selected_cluster_id,
+        embedding_run.used if embedding_run is not None else run_models.current("embedding"),
     )
 
 

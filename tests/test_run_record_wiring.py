@@ -570,3 +570,165 @@ def test_the_private_and_comparison_workflows_pass_the_own_group_switch(name):
 
 def test_the_provider_canary_does_not_pass_the_own_group_switch():
     assert "ZEITGEIST_OWN_GROUP" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
+
+
+# ---- the reflector's inputs are stored after the record and the own-group check (SIY-210) ----
+
+from src.zeitgeist import reflector  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reflector_switch_off_unless_set(monkeypatch):
+    """A shell that exports ZEITGEIST_REFLECTOR must not change these tests; those that want it set it."""
+    monkeypatch.delenv("ZEITGEIST_REFLECTOR", raising=False)
+
+
+def _reflector_switch(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_REFLECTOR", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_REFLECTOR", value)
+
+
+def _spy_inputs(monkeypatch, events, error=None):
+    calls = []
+
+    def spy(store, run_id, clusters, chosen_cluster_id, embedding_model):
+        events.append("reflector_inputs")
+        calls.append((run_id, clusters, chosen_cluster_id, embedding_model))
+        if error is not None:
+            raise error
+
+    monkeypatch.setattr(reflector, "store_reflector_inputs", spy)
+    return calls
+
+
+def _reflector_edition(tmp_path, monkeypatch, *, error=None, own_group_error=None):
+    holder = []
+
+    def make(root, events):
+        holder.append(_MemoryRecordStore(root, events))
+        _spy_check(monkeypatch, events, own_group_error)
+        holder.append(_spy_inputs(monkeypatch, events, error))
+        return holder[0]
+
+    _, _, result = _edition(tmp_path, monkeypatch, make, switch="1")
+    return holder[0], holder[1], result
+
+
+def test_reflector_on_stores_the_inputs_once_after_the_record_and_the_own_group_check(tmp_path, monkeypatch,
+                                                                                      capsys):
+    _own_group_switch(monkeypatch, "1")
+    _reflector_switch(monkeypatch, "1")
+    store, calls, result = _reflector_edition(tmp_path, monkeypatch)
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record",
+                            "own_group_check", "reflector_inputs"]
+    [(run_id, clusters, chosen, model)] = calls
+    [(record_id, record)] = store.records
+    assert run_id == record_id == "daily_run:2026-11-21:local:1"
+    assert chosen == record["chosen_cluster_id"] == "cluster_0"
+    assert [str(c.cluster_id) for c in clusters][:5] == [g["cluster_id"] for g in record["groups"]]
+    assert model == record["models"]["embedding"]
+    assert capsys.readouterr().out.count(record["gloss"]) == 0
+
+
+def test_reflector_on_alone_stores_the_inputs_on_the_record_and_keeps_the_edition(tmp_path, monkeypatch, capsys):
+    _reflector_switch(monkeypatch, "0")
+    off_store, _, off = _edition(tmp_path / "off", monkeypatch, _MemoryRecordStore, switch="1")
+    off_out = capsys.readouterr()
+    _reflector_switch(monkeypatch, "1")
+    on_store, _, on = _edition(tmp_path / "on", monkeypatch, _MemoryRecordStore, switch="1")
+    on_out = capsys.readouterr()
+    assert on == off
+    assert on_store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record",
+                               "load_run_record", "save_run_record"]
+    first, saved = on_store.records[0][1], on_store.records[-1][1]
+    assert set(saved["tests"]) == {"reflector_inputs"}
+    inputs = saved["tests"]["reflector_inputs"]
+    assert set(inputs) == {"standing", "chosen", "embedding_model"}
+    assert inputs["chosen"]["cluster_id"] == first["chosen_cluster_id"]
+    assert inputs["embedding_model"] == first["models"]["embedding"]
+    assert {k: v for k, v in saved.items() if k != "tests"} == {k: v for k, v in first.items() if k != "tests"}
+    assert _published_state(on_store, tmp_path / "on") == _published_state(off_store, tmp_path / "off")
+    assert (on_out.out, on_out.err) == (off_out.out, off_out.err)
+
+
+@pytest.mark.parametrize("value", [None, "0", "true"])
+def test_reflector_off_makes_no_new_call(tmp_path, monkeypatch, value):
+    _reflector_switch(monkeypatch, value)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("reflector inputs stored with the switch off")
+
+    monkeypatch.setattr(reflector, "store_reflector_inputs", forbidden)
+    monkeypatch.setattr(reflector, "reflector_inputs", forbidden)
+    monkeypatch.setattr(pipeline, "_daily_reflector_inputs", forbidden, raising=False)
+    store, _, _ = _edition(tmp_path, monkeypatch, _MemoryRecordStore, switch="1")
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+    assert len(store.records) == 1 and store.records[0][1]["tests"] == {}
+
+
+def test_a_failing_own_group_check_still_stores_the_inputs_after_it(tmp_path, monkeypatch):
+    _own_group_switch(monkeypatch, "1")
+    _reflector_switch(monkeypatch, "1")
+    store, calls, _ = _reflector_edition(tmp_path, monkeypatch, own_group_error=RuntimeError("Zqsecret failure"))
+    assert store.events[-3:] == ["save_run_record", "own_group_check", "reflector_inputs"] and len(calls) == 1
+
+
+@pytest.mark.parametrize("error", [RuntimeError("Zqsecret failure"), _Halt("Zqsecret halt")])
+def test_a_failing_inputs_step_leaves_the_published_edition(tmp_path, monkeypatch, capsys, error):
+    _reflector_switch(monkeypatch, "0")
+    clean_store, _, clean = _edition(tmp_path / "clean", monkeypatch, _MemoryRecordStore, switch="1")
+    clean_out = capsys.readouterr()
+    _reflector_switch(monkeypatch, "1")
+    store, _, result = _reflector_edition(tmp_path / "failing", monkeypatch, error=error)
+    out = capsys.readouterr()
+    assert result == clean
+    assert store.events[-2:] == ["save_run_record", "reflector_inputs"]
+    assert _published_state(store, tmp_path / "failing") == _published_state(clean_store, tmp_path / "clean")
+    assert _published_state(store, tmp_path / "failing")[1:] == (False, False)
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+def test_an_interrupt_during_the_inputs_step_is_not_a_failed_publication(tmp_path, monkeypatch):
+    from src.zeitgeist.publication_commit import PublicationMirrorError
+
+    _reflector_switch(monkeypatch, "1")
+    holder = []
+
+    def make(root, events):
+        holder.append(_MemoryRecordStore(root, events))
+        _spy_inputs(monkeypatch, events, KeyboardInterrupt())
+        return holder[0]
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        _edition(tmp_path, monkeypatch, make, switch="1")
+    assert not isinstance(raised.value, PublicationMirrorError)
+    [store] = holder
+    assert store.events[-2:] == ["save_run_record", "reflector_inputs"]
+    assert _published_state(store, tmp_path) == ("Selvedge", False, False)
+
+
+def test_a_failed_publication_stores_no_inputs(tmp_path, monkeypatch):
+    _reflector_switch(monkeypatch, "1")
+    holder = []
+
+    def make(root, events):
+        holder.append(_MemoryRecordStore(root, events))
+        _spy_inputs(monkeypatch, events)
+        return holder[0]
+
+    with pytest.raises(RuntimeError, match="synthetic publication failure"):
+        _edition(tmp_path, monkeypatch, make, switch="1", publish_fails=True)
+    assert holder[0].events == ["publish_bundle:called"]
+
+
+@pytest.mark.parametrize("value, kept", [(None, False), ("0", False), ("1", True)])
+def test_a_staged_run_keeps_the_reflector_inputs_only_with_the_switch_on(tmp_path, monkeypatch, value, kept):
+    _reflector_switch(monkeypatch, value)
+    _, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    store = _RecordingStore(tmp_path, events)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
+    assert store.records == [] and events == []
+    assert (staged._reflector_inputs is not None) is kept

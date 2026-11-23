@@ -1315,3 +1315,126 @@ def test_each_arm_and_repeat_is_checked_after_its_record(monkeypatch, capsys):
     assert list(finals) == [f"private_run:2026-11-21:local:1:{arm}:{repeat}"
                             for arm in ("previous", "current") for repeat in (1, 2)]
     assert all(_own_group(record)["status"] == "ok" for record in finals.values())
+
+
+# ---- the reflector's inputs after the record and the own-group check (SIY-210) ----
+
+
+from src.zeitgeist import reflector  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reflector_switch_off_unless_set(monkeypatch):
+    """A shell that exports ZEITGEIST_REFLECTOR must not change these tests; those that want it set it."""
+    monkeypatch.delenv("ZEITGEIST_REFLECTOR", raising=False)
+
+
+def _inputs(record):
+    return record["tests"].get("reflector_inputs")
+
+
+def test_reflector_on_stores_the_inputs_after_the_record_and_keeps_the_lines(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    baseline, _ = _own_group_run(OwnGroupStore())
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
+    store = OwnGroupStore()
+    result, client = _own_group_run(store)
+    assert (result.lines, result.exit_code) == (baseline.lines, baseline.exit_code)
+    _assert_public_with_record(result.lines)
+    assert client.embeds == []
+    assert store.calls == ["save_run_record", "load_run_record", "save_run_record"]
+    first, last = store.records[0][1], store.records[-1][1]
+    assert store.records[0][0] == store.records[-1][0] == "private_run:2026-11-21:local:1"
+    inputs = _inputs(last)
+    # The synthetic window is one day long, so no group stands.
+    assert inputs["standing"] is None
+    assert inputs["chosen"]["cluster_id"] == first["chosen_cluster_id"] == "cluster_0"
+    assert inputs["embedding_model"] == em.EMBED_001
+    assert {k: v for k, v in last.items() if k != "tests"} == {k: v for k, v in first.items() if k != "tests"}
+    out = capsys.readouterr()
+    assert not any(text in out.out + out.err for text in PRIVATE)
+
+
+def test_with_the_own_group_check_on_the_inputs_come_after_it(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
+    store = OwnGroupStore()
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and len(client.embeds) == 1
+    assert store.calls == ["save_run_record", "load_run_record", "load_run_record", "save_run_record",
+                           "load_run_record", "save_run_record"]
+    final = store.records[-1][1]
+    assert set(final["tests"]) == {"own_group", "reflector_inputs"}
+    assert final["tests"]["own_group"]["status"] == "ok"
+
+
+@pytest.mark.parametrize("value", [None, "0"])
+def test_reflector_off_makes_no_extra_store_call(monkeypatch, value):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    if value is not None:
+        monkeypatch.setenv("ZEITGEIST_REFLECTOR", value)
+    monkeypatch.setattr(reflector, "store_reflector_inputs",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("called with the switch off")))
+    store = OwnGroupStore()
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and client.embeds == []
+    assert store.calls == ["save_run_record"] and _inputs(store.records[0][1]) is None
+
+
+def test_reflector_on_with_the_record_off_makes_no_call(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
+    store = OwnGroupStore()
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and client.embeds == [] and store.calls == []
+
+
+def test_an_unwritten_record_gets_no_inputs(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
+    store = OwnGroupStore(raise_on_save=True)
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and client.embeds == []
+    assert store.calls == ["save_run_record"]
+
+
+def test_a_failing_inputs_step_keeps_the_lines_and_exit_code(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    baseline, _ = _own_group_run(OwnGroupStore())
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
+    monkeypatch.setattr(reflector, "reflector_inputs",
+                        lambda *a, **k: (_ for _ in ()).throw(_Halt("Zqsecret halt")))
+    store = OwnGroupStore()
+    result, _ = _own_group_run(store)
+    assert (result.lines, result.exit_code) == (baseline.lines, baseline.exit_code)
+    assert _inputs(store.records[-1][1]) is None
+
+
+def test_each_arm_and_repeat_stores_its_inputs_after_its_record(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    code_off, lines_off, _, store_off, client_off = _own_group_arms(monkeypatch, capsys)
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
+    code, lines, everything, store, client = _own_group_arms(monkeypatch, capsys)
+    assert (code, lines) == (code_off, lines_off) and code == 0
+    _assert_arms_public(lines)
+    assert not any(text in everything for text in PRIVATE)
+    assert client.embeds == client_off.embeds
+    assert store_off.calls == ["save_run_record"] * 4
+    assert store.calls == ["save_run_record", "load_run_record", "save_run_record"] * 4
+    finals = {}
+    for run_id, record in store.records:
+        finals[run_id] = record
+    assert list(finals) == [f"private_run:2026-11-21:local:1:{arm}:{repeat}"
+                            for arm in ("previous", "current") for repeat in (1, 2)]
+    for record in finals.values():
+        inputs = _inputs(record)
+        assert inputs["chosen"]["cluster_id"] == record["chosen_cluster_id"]
+        assert inputs["embedding_model"] == record["models"]["embedding"]
