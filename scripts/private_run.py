@@ -68,7 +68,8 @@ REFUSE_REPEATS, REFUSE_UNKNOWN, REFUSE_NOT_BUILT, REFUSE_OVER_CAP, REFUSE_DUPLIC
 MAX_REPEATS = 3
 MAX_NAMING_ATTEMPTS = 12
 MAX_PHOTO_ARMS = 2
-# Once this many Director model calls (every try, retries and the Flash round included) are made, no attempt starts.
+# Once this many Director model calls (every try, retries and the Flash round included) are made, no further call
+# is dispatched and no attempt starts.
 MAX_DIRECTOR_CALLS = 24
 SHOWN_GROUPS = 5
 INTAKE_FIELDS = ("url_hash", "source_id", "tier", "published_at", "title", "summary")
@@ -342,7 +343,9 @@ class DirectorCounter:
     """The genai client as the Director sees it, counting each generate_content call that was made.
 
     A call the spend guard refused before dispatch was not made and is not counted; any other
-    outcome, a failure included, is. Every other attribute is the client's own.
+    outcome, a failure included, is. Once MAX_DIRECTOR_CALLS calls are made, every further call is
+    refused before dispatch, as the spend guard refuses one: the Director neither retries nor
+    reaches the provider. Every other attribute is the client's own.
     """
 
     def __init__(self, client: Any) -> None:
@@ -351,6 +354,10 @@ class DirectorCounter:
         self.models = self
 
     def generate_content(self, **kwargs: Any) -> Any:
+        if self.calls >= MAX_DIRECTOR_CALLS:
+            refusal = SpendBlocked("Comparison Director call limit reached")
+            refusal.refused_before_dispatch = True
+            raise refusal
         try:
             reply = self._client.models.generate_content(**kwargs)
         except SpendBlocked as error:
@@ -469,7 +476,8 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
     """Every arm and repeat on one frozen intake, writing only run records. Never raises.
 
     One arm failing does not stop the others; an interrupt or exit stops the dispatch. Once
-    MAX_DIRECTOR_CALLS Director calls are made, every remaining repeat is skipped by number.
+    MAX_DIRECTOR_CALLS Director calls are made, the attempt that wants another call fails and every
+    remaining repeat is skipped by number.
     """
     lines: List[str] = []
     result = PrivateRun(lines, 3)

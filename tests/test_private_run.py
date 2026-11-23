@@ -17,7 +17,7 @@ from scripts import private_run
 from src.zeitgeist import model_choice as mc
 from src.zeitgeist import visual_router as vr
 from src.zeitgeist.collectors import pack_f16_base64
-from src.zeitgeist.spend_guard import SpendBlocked
+from src.zeitgeist.spend_guard import SpendBlocked, refused_before_dispatch
 from tests.test_understanding_pipeline import _reply
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1057,12 +1057,16 @@ def test_a_comparison_starts_no_attempt_after_24_director_calls(monkeypatch, cap
     _assert_arms_public(lines)
     assert code == 3
     # Every try counts: the previous arm makes 3 per attempt, the current arm 5 on Hydrogen and 3 on Flash.
-    assert client.calls == [mc.FLASH] * 9 + ([mc.HYDROGEN] * 5 + [mc.FLASH] * 3) * 2
+    # The twenty-fifth call, the last Flash try of the current arm's second attempt, is refused before dispatch.
+    assert client.calls == [mc.FLASH] * 9 + [mc.HYDROGEN] * 5 + [mc.FLASH] * 3 + [mc.HYDROGEN] * 5 + [mc.FLASH] * 2
+    assert len(client.calls) == 24
+    assert "[private_run] arm=2 repeat=2 failed_stage=3" in lines
     assert "[private_run] arm=2 repeat=3 skipped=1" in lines
+    assert not any(line.startswith("[private_run] arm=2 repeat=2 director_ok") for line in lines)
     assert not any(line.startswith("[private_run] arm=2 repeat=3 director_ok") for line in lines)
     assert [(record["arm"], record["repeat"]) for _, record in store.records] == [
-        ("previous", 1), ("previous", 2), ("previous", 3), ("current", 1), ("current", 2)]
-    assert lines[-1] == "[private_run] records_written=5"
+        ("previous", 1), ("previous", 2), ("previous", 3), ("current", 1)]
+    assert lines[-1] == "[private_run] records_written=4"
 
 
 def test_an_arm_reached_after_the_cap_is_skipped_without_embedding(monkeypatch, capsys):
@@ -1092,6 +1096,18 @@ def test_the_director_counter_counts_every_made_call_but_not_a_refusal_before_di
     assert counter.calls == 3
     counter.models.embed_content(model=em.EMBED_001, contents=["Zqtitle00"], config={})
     assert counter.calls == 3 and client.embeds == [(em.EMBED_001, 1)]
+
+
+def test_the_director_counter_refuses_the_twenty_fifth_call_before_dispatch():
+    client = ArmClient(lambda model: _slate_reply())
+    counter = private_run.DirectorCounter(client)
+    for _ in range(private_run.MAX_DIRECTOR_CALLS):
+        counter.models.generate_content(model=mc.FLASH, contents="x", config={})
+    assert counter.calls == 24 and len(client.calls) == 24
+    with pytest.raises(SpendBlocked) as caught:
+        counter.models.generate_content(model=mc.HYDROGEN, contents="x", config={})
+    assert refused_before_dispatch(caught.value) is True
+    assert counter.calls == 24 and len(client.calls) == 24
 
 
 # ---- the switch-on run says by number whether its record was written ----
