@@ -267,9 +267,17 @@ def test_a_night_with_one_candidate_stores_empty_others_and_a_null_margin():
     assert stored["status"] == "ok" and stored["others"] == [] and stored["margin"] is None
 
 
-def test_item_vectors_of_another_length_are_skipped():
+def test_item_vectors_of_another_length_are_skipped_without_a_call():
     ok, store, client = _check(clusters=_night(dim=32))
-    assert ok is False and len(client.requests) == 1
+    assert ok is False and client.requests == []
+    assert _stored(store) == {"status": "skipped", "reason": "dimension"}
+
+
+def test_another_candidates_vectors_of_another_length_are_skipped_without_a_call():
+    clusters = _night()
+    clusters[3] = _cluster(3, 3, 13, dim=32)
+    ok, store, client = _check(clusters=clusters)
+    assert ok is False and client.requests == []
     assert _stored(store) == {"status": "skipped", "reason": "dimension"}
 
 
@@ -293,11 +301,11 @@ def _refusal(pre):
     return error
 
 
-@pytest.mark.parametrize("pre", [True, False])
-def test_a_refused_call_is_stored_as_skipped(pre, capsys):
+@pytest.mark.parametrize("pre, reason", [(True, "refused"), (False, "blocked")])
+def test_a_refused_or_blocked_call_is_stored_as_skipped(pre, reason, capsys):
     ok, store, client = _check(client=EmbedClient(error=_refusal(pre)))
     assert ok is False and len(client.requests) == 1
-    assert _stored(store) == {"status": "skipped", "reason": "refused"}
+    assert _stored(store) == {"status": "skipped", "reason": reason}
     out = capsys.readouterr()
     assert out.out == out.err == ""
 

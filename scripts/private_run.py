@@ -195,7 +195,7 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             if run_record.run_record_enabled():
                 written = _write_private_record(store, now, date_iso, run_models, grouping, commission)
                 lines.append(RECORD_LINE % int(written))
-                if written and own_group.own_group_enabled():
+                if written and director_ok and not run_models.fallback_fired and own_group.own_group_enabled():
                     _check_own_group(store, run_record.make_run_id("private_run", date_iso), grouping, commission,
                                      genai_client)
             if not director_ok or run_models.fallback_fired:
@@ -459,9 +459,9 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     )
     run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
     written = run_record.write_run_record(store, run_id, record)
-    if written and own_group.own_group_enabled():
-        _check_own_group(store, run_id, grouping, commission, genai_client)
     ok = director_ok and not run_models.fallback_fired
+    if written and ok and own_group.own_group_enabled():
+        _check_own_group(store, run_id, grouping, commission, genai_client)
     if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
         scored: List[Dict[str, Any]] = []
         photo_ok = False

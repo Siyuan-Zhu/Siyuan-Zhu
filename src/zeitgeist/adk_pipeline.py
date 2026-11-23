@@ -1081,7 +1081,7 @@ class ZeitgeistADKOrchestrator:
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
             }
-        if own_group.own_group_enabled():
+        if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,

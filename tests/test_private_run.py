@@ -1315,3 +1315,32 @@ def test_each_arm_and_repeat_is_checked_after_its_record(monkeypatch, capsys):
     assert list(finals) == [f"private_run:2026-11-21:local:1:{arm}:{repeat}"
                             for arm in ("previous", "current") for repeat in (1, 2)]
     assert all(_own_group(record)["status"] == "ok" for record in finals.values())
+
+
+@pytest.mark.parametrize("case", ["director_failed", "fallback_fired"])
+def test_no_check_is_paid_for_when_the_run_cannot_succeed(monkeypatch, case):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    reply = {"director_failed": "not json",
+             "fallback_fired": lambda model: _refusal() if model == mc.HYDROGEN else _slate_reply()}[case]
+    store = OwnGroupStore()
+    client = EmbeddingDirector(reply)
+    result = private_run.run_private(store, genai_client=client, now=NOW, run_models=_models())
+    assert result.exit_code == 3
+    assert "[run_record] written=1" in result.lines
+    assert client.embeds == [] and store.calls == ["save_run_record"]
+    assert _own_group(store.records[0][1]) is None
+
+
+def test_an_arm_whose_director_failed_is_not_checked(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    store, client = OwnGroupArmStore(), OwnGroupArmClient("not json")
+    code, lines, _, _, _ = _arms_main(monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "1"],
+                                      store=store, client=client)
+    assert code == 3
+    assert lines[-1] == "[private_run] records_written=2"
+    # Only the previous arm's in-memory re-embedding; no own-group request.
+    assert {model for model, _ in client.embeds} == {em.EMBED_001} and sum(size for _, size in client.embeds) == 8
+    assert store.calls == ["save_run_record"] * 2

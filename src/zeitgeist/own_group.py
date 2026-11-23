@@ -91,8 +91,8 @@ def _field(item: Any, key: str) -> Any:
 def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequence[Any], embedding_model: Any,
              genai_client: Any) -> Dict[str, Any]:
     from . import run_record
-    from .collectors import embed_missing_items
-    from .spend_guard import SpendBlocked
+    from .collectors import EMBEDDING_DIM, embed_missing_items
+    from .spend_guard import SpendBlocked, refused_before_dispatch
 
     groups = list(clusters or ())[:run_record.MAX_GROUPS]
     chosen = None if chosen_cluster_id is None else str(chosen_cluster_id)
@@ -104,8 +104,13 @@ def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequenc
     # Checked before the paid call: a candidate the arithmetic cannot use is not worth one.
     if not own_items:
         return _skipped("no_items")
-    if not _unit_vectors(own_items):
+    own_vectors = _unit_vectors(own_items)
+    if not own_vectors:
         return _skipped("no_vector")
+    # The text vector is EMBEDDING_DIM long, so items of another length cannot be measured against it.
+    if any(vector.shape[0] != EMBEDDING_DIM for vector in own_vectors + [v for items in others
+                                                                        for v in _unit_vectors(items)]):
+        return _skipped("dimension")
     model = str(embedding_model or "")
     if not model or model in _NO_SINGLE_MODEL:
         return _skipped("embedding_model")
@@ -119,8 +124,9 @@ def _measure(*, word: Any, gloss: Any, chosen_cluster_id: Any, clusters: Sequenc
             [{"url_hash": KEY, "title": "%s. %s" % (word, gloss)}], {},
             genai_client=genai_client, model=model, require_live=True,
         )
-    except SpendBlocked:
-        return _skipped("refused")
+    except SpendBlocked as error:
+        # Refused before any provider call, or blocked once the call was made.
+        return _skipped("refused" if refused_before_dispatch(error) else "blocked")
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:

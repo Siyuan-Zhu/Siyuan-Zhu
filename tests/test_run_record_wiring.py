@@ -686,10 +686,11 @@ def test_a_failed_publication_runs_no_check(tmp_path, monkeypatch):
     assert holder[0].events == ["publish_bundle:called"]
 
 
-@pytest.mark.parametrize("value, kept", [(None, False), ("0", False), ("1", True)])
-def test_a_staged_run_keeps_the_check_inputs_only_with_the_switch_on(tmp_path, monkeypatch, value, kept):
+@pytest.mark.parametrize("record, value, kept", [("1", None, False), ("1", "0", False), ("1", "1", True),
+                                                 ("0", "1", False), (None, "1", False)])
+def test_a_staged_run_keeps_the_check_inputs_only_with_both_switches_on(tmp_path, monkeypatch, record, value, kept):
     _own_group_switch(monkeypatch, value)
-    _, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    _, events = _edition_setup(tmp_path, monkeypatch, switch=record)
     store = _RecordingStore(tmp_path, events)
     staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
     staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
