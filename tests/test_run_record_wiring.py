@@ -1059,3 +1059,32 @@ def test_the_inputs_name_the_published_commissions_candidate(tmp_path, monkeypat
     pipeline._daily_reflector_inputs(object(), **inputs)
     [(_, run_id, _, chosen, _)] = calls
     assert run_id == "daily_run:2026-11-21:local:1" and chosen == "cluster_1"
+
+
+# ---- the reflector's switch and model reach the edition, the private run and the comparison ----
+
+REFLECTOR_LINE = "ZEITGEIST_REFLECTOR: " + DOLLAR + "{{ vars.ZEITGEIST_REFLECTOR || '0' }}"
+REFLECTOR_MODEL_LINE = "ZEITGEIST_REFLECTOR_MODEL: " + DOLLAR + "{{ vars.ZEITGEIST_REFLECTOR_MODEL || '' }}"
+
+
+def test_the_daily_workflow_passes_the_reflector_switch_and_model_to_the_edition_job_only():
+    text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
+    edition = _job_lines(text, "synthesize-pulse")
+    at = edition.index(OWN_GROUP_LINE)
+    assert edition[at + 1:at + 3] == [REFLECTOR_LINE, REFLECTOR_MODEL_LINE]
+    preflight = _job_lines(text, "profile-preflight")
+    assert REFLECTOR_LINE not in preflight and REFLECTOR_MODEL_LINE not in preflight
+    stripped = [line.strip() for line in text.splitlines()]
+    assert stripped.count(REFLECTOR_LINE) == 1 and stripped.count(REFLECTOR_MODEL_LINE) == 1
+
+
+@pytest.mark.parametrize("name", ["private_run.yml", "comparison_run.yml"])
+def test_the_private_and_comparison_workflows_pass_the_reflector_switch_and_model(name):
+    lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
+    assert lines.count(REFLECTOR_LINE) == 1 and lines.count(REFLECTOR_MODEL_LINE) == 1
+    at = lines.index(OWN_GROUP_LINE)
+    assert lines[at + 1:at + 3] == [REFLECTOR_LINE, REFLECTOR_MODEL_LINE]
+
+
+def test_the_provider_canary_does_not_pass_the_reflector_switch_or_model():
+    assert "ZEITGEIST_REFLECTOR" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()

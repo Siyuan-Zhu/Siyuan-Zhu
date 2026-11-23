@@ -72,6 +72,8 @@ jobs:
           ZEITGEIST_UNDERSTANDING_V1: ${{ vars.ZEITGEIST_UNDERSTANDING_V1 || '0' }}
           ZEITGEIST_RUN_RECORD: ${{ vars.ZEITGEIST_RUN_RECORD || '0' }}
           ZEITGEIST_OWN_GROUP: ${{ vars.ZEITGEIST_OWN_GROUP || '0' }}
+          ZEITGEIST_REFLECTOR: ${{ vars.ZEITGEIST_REFLECTOR || '0' }}
+          ZEITGEIST_REFLECTOR_MODEL: ${{ vars.ZEITGEIST_REFLECTOR_MODEL || '' }}
           # Owner-approved quality exception expires after this edition; safety remains mandatory.
           ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-06"
           TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}
