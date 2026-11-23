@@ -1277,25 +1277,28 @@ REFLECTOR_LINE = "ZEITGEIST_REFLECTOR: " + DOLLAR + "{{ vars.ZEITGEIST_REFLECTOR
 # The reflector's two lines follow the links switches, which follow the own-group line.
 CHOSEN_FIELDS_LINE = "ZEITGEIST_CHOSEN_GROUP_FIELDS: " + DOLLAR + "{{ vars.ZEITGEIST_CHOSEN_GROUP_FIELDS || '0' }}"
 REFLECTOR_MODEL_LINE = "ZEITGEIST_REFLECTOR_MODEL: " + DOLLAR + "{{ vars.ZEITGEIST_REFLECTOR_MODEL || '' }}"
+CANDIDATE_LINE = "ZEITGEIST_REFLECTOR_CANDIDATE: " + DOLLAR + "{{ vars.ZEITGEIST_REFLECTOR_CANDIDATE || '0' }}"
 
 
 def test_the_daily_workflow_passes_the_reflector_switch_and_model_to_the_edition_job_only():
     text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
     edition = _job_lines(text, "synthesize-pulse")
     at = edition.index(CHOSEN_FIELDS_LINE)
-    assert edition[at + 1:at + 3] == [REFLECTOR_LINE, REFLECTOR_MODEL_LINE]
+    assert edition[at + 1:at + 4] == [REFLECTOR_LINE, REFLECTOR_MODEL_LINE, CANDIDATE_LINE]
     preflight = _job_lines(text, "profile-preflight")
-    assert REFLECTOR_LINE not in preflight and REFLECTOR_MODEL_LINE not in preflight
+    assert REFLECTOR_LINE not in preflight and REFLECTOR_MODEL_LINE not in preflight and CANDIDATE_LINE not in preflight
     stripped = [line.strip() for line in text.splitlines()]
     assert stripped.count(REFLECTOR_LINE) == 1 and stripped.count(REFLECTOR_MODEL_LINE) == 1
+    assert stripped.count(CANDIDATE_LINE) == 1
 
 
 @pytest.mark.parametrize("name", ["private_run.yml", "comparison_run.yml"])
 def test_the_private_and_comparison_workflows_pass_the_reflector_switch_and_model(name):
     lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
     assert lines.count(REFLECTOR_LINE) == 1 and lines.count(REFLECTOR_MODEL_LINE) == 1
+    assert lines.count(CANDIDATE_LINE) == 1
     at = lines.index(CHOSEN_FIELDS_LINE)
-    assert lines[at + 1:at + 3] == [REFLECTOR_LINE, REFLECTOR_MODEL_LINE]
+    assert lines[at + 1:at + 4] == [REFLECTOR_LINE, REFLECTOR_MODEL_LINE, CANDIDATE_LINE]
 
 
 def test_the_provider_canary_does_not_pass_the_reflector_switch_or_model():
