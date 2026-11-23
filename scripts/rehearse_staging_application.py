@@ -59,6 +59,8 @@ COLLECTIONS = (
     "vote_rate_limits",
     "processed_events",
     "ingestion_cache",
+    # The private run record the edition writes when ZEITGEIST_RUN_RECORD=1: owned and removed like the rest.
+    "run_records",
 )
 ZERO_VOTES = {"spot_on": 0, "too_sunny": 0, "too_heavy": 0}
 

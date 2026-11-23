@@ -514,3 +514,19 @@ def test_default_runtime_factory_rejects_target_or_authority_mismatch_before_sto
     with pytest.raises(ValueError):
         app.rehearse(root, PREFIX, private_root=tmp_path / "private")
     assert wire.touched == [] and wire.docs == {}
+
+
+@pytest.mark.parametrize("switch", [None, "0", "1"], ids=["unset", "off", "on"])
+def test_the_rehearsal_leaves_no_run_record_behind(tmp_path, monkeypatch, switch):
+    from scripts.rehearse_staging_application import rehearse
+
+    if switch is None:
+        monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_RUN_RECORD", switch)
+    root, wire, factory = setup(tmp_path, monkeypatch)
+    result = rehearse(root, PREFIX, store_factory=factory, private_root=tmp_path / "private")
+    assert result["status"] == "ok" and result["remaining_document_count"] == 0
+    assert wire.docs == {}
+    wrote_record = any(method == "PATCH" and "run_records" in path for method, path in wire.touched)
+    assert wrote_record is (switch == "1")
