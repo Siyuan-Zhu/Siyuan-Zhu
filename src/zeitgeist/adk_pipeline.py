@@ -1717,6 +1717,9 @@ def _director_prompt_and_block(
     return prompt, clusters_block
 
 
+LINK_SENTENCE = ("A Link line is one more candidate: it joins groups from different realms whose items sit "
+                 "unusually close tonight. To choose it, give its id as selected_cluster_id.")
+
 _SLATE_LINE = (
     "Before the commission, list 8 to 12 candidate words the evidence supports, each with a one-line note on how "
     "it fits the evidence, under the key candidate_words as [{\"word\": \"...\", \"fit\": \"...\"}]. "
@@ -1750,6 +1753,8 @@ def _packet_director_prompt_and_block(
 ) -> Tuple[str, str]:
     packet = render_evidence_packet(list(top_clusters)[:5], now_utc=now_utc, links=links, extra_group=extra_group)
     history_block = ", ".join(history_words_30d) if history_words_30d else "None"
+    # Only when a link line is rendered: one fixed sentence saying it can be chosen; otherwise today's bytes.
+    link_note = (LINK_SENTENCE + "\n") if any(line.startswith("- Link ") for line in packet.split("\n")) else ""
     retry_banner = ""
     if rejection_reason:
         retry_banner = (
@@ -1769,6 +1774,7 @@ def _packet_director_prompt_and_block(
         f"{retry_banner}\n"
         f"Forbidden 30-day history words: [{history_block}]\n"
         f"Top Candidate Clusters:\n{packet}\n"
+        f"{link_note}"
         "Return JSON with keys: selected_cluster_id (one of the provided cluster IDs), word, gloss, commissioned_thesis, visual_anchor, "
         "unsplash_queries (3 strings), imagen_commission_prompt, palette_hex (5 hex strings)."
         + ("\n" + _SLATE_LINE if slate else "")

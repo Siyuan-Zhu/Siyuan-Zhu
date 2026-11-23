@@ -439,7 +439,7 @@ def test_the_packet_prompt_shows_the_links_after_the_groups() -> None:
     links = link_candidates(_night(), _night_map())
     _, prompts = _commission([_reply()], links)
     block = render_evidence_packet(_night(), now_utc="2026-11-21T12:00:00Z", links=links)
-    assert "Top Candidate Clusters:\n" + block + "\nReturn JSON" in prompts[0]
+    assert "Top Candidate Clusters:\n" + block + "\n" + LINK_SENTENCE + "\nReturn JSON" in prompts[0]
 
 
 def test_a_shown_link_id_is_accepted() -> None:
@@ -553,3 +553,44 @@ def test_night_links_never_raises() -> None:
     links, realm_map = pipeline._night_links(None, None, None)
     assert links == [] and realm_map.get("o3_ig_alpha_one") == "culture_and_community"
     assert pipeline._night_links(object(), {"feeds": "bad"}, [object()])[0] == []
+
+
+
+# ---- the Director is told what a link line is, only when one is shown ----
+
+LINK_SENTENCE = ("A Link line is one more candidate: it joins groups from different realms whose items sit "
+                 "unusually close tonight. To choose it, give its id as selected_cluster_id.")
+
+
+def _packet_prompt(links, **kwargs):
+    return pipeline._build_packet_director_prompt(_night(), ["Entropy"], None, "2026-11-21T12:00:00Z", links=links,
+                                                  **kwargs)
+
+
+def test_the_link_sentence_follows_the_candidate_lines_when_a_link_is_shown() -> None:
+    links = link_candidates(_night(), _night_map())
+    for one_or_two in (links[:1], links):
+        prompt = _packet_prompt(one_or_two)
+        block = render_evidence_packet(_night(), now_utc="2026-11-21T12:00:00Z", links=one_or_two)
+        assert prompt.count(LINK_SENTENCE) == 1
+        assert ("Top Candidate Clusters:\n" + block + "\n" + LINK_SENTENCE + "\nReturn JSON with keys") in prompt
+    with_extra = _packet_prompt(links, extra_group=_night()[8])
+    assert ("- Cluster g_lone_3: " in with_extra
+            and with_extra.index("- Cluster g_lone_3: ") < with_extra.index(LINK_SENTENCE))
+    slate = _packet_prompt(links, slate=True)
+    assert slate.count(LINK_SENTENCE) == 1
+
+
+def test_the_link_sentence_is_absent_without_a_link() -> None:
+    for links in (None, []):
+        assert LINK_SENTENCE not in _packet_prompt(links)
+    assert LINK_SENTENCE not in _packet_prompt(None, extra_group=_night()[8])
+    assert LINK_SENTENCE not in pipeline._build_director_prompt(_night(), ["Entropy"])
+
+
+def test_the_kept_candidate_block_is_the_candidate_lines_only() -> None:
+    links = link_candidates(_night(), _night_map())
+    _, block = pipeline._director_prompt_and_block(_night(), ["Entropy"], evidence_packet=True,
+                                                   now_utc="2026-11-21T12:00:00Z", links=links)
+    assert LINK_SENTENCE not in block
+    assert block == render_evidence_packet(_night(), now_utc="2026-11-21T12:00:00Z", links=links)
