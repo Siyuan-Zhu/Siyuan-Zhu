@@ -1908,7 +1908,7 @@ def links_shown(commission: Any, links: Optional[Sequence[Any]]) -> Optional[Lis
 
 
 def chosen_id_mapped(commission: Any) -> bool:
-    """True when the Director's id was not offered and, on the last attempt, was mapped to the top group."""
+    """True when the accepted reply's id was not shown by its attempt and was mapped to the top group."""
     return getattr(commission, _MAPPED_ATTR, False) is True
 
 

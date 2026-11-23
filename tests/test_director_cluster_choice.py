@@ -484,6 +484,18 @@ def test_hydrogen_handing_over_to_flash_inside_an_attempt_and_flash_replying_an_
     _assert_mapped(on)
 
 
+def test_with_links_on_and_repair_off_an_unknown_plain_group_id_is_kept_and_not_mapped(monkeypatch):
+    # Only a link-shaped id is checked when links alone are on; any other id is kept, as with the switches off.
+    groups = _groups()
+    links = [_link(groups)]
+    off, on = _same_as_off([_reply(selected_cluster_id="g_nowhere", word="Firstword")], monkeypatch, repair=False,
+                           links=links, groups=groups)
+    assert on[0] == ("published", "Firstword", False) and on[1] == [mc.HYDROGEN]
+    assert on[3].selected_cluster_id == off[3].selected_cluster_id == "g_nowhere"
+    assert pipeline.chosen_id_mapped(on[3]) is False
+    assert pipeline.recorded_chosen_mapping(on[3], links) is False
+
+
 def test_a_link_id_replied_on_an_older_prompt_attempt_is_accepted_and_mapped(monkeypatch):
     groups = _groups()
     links = [_link(groups)]

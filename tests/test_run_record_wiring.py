@@ -901,7 +901,7 @@ def test_with_neither_links_nor_the_repair_switch_chosen_mapped_is_null(tmp_path
     assert record["chosen_mapped"] is None and record["chosen_cluster_id"] == "cluster_nowhere"
 
 
-def test_with_the_repair_switch_an_unshown_id_on_the_last_attempt_is_recorded_as_mapped(tmp_path, monkeypatch):
+def test_with_the_repair_switch_an_unshown_id_on_the_accepted_attempt_is_recorded_as_mapped(tmp_path, monkeypatch):
     _links_switch(monkeypatch, None)
     monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
     record, client = _mapped_edition(tmp_path, monkeypatch, "cluster_nowhere")
