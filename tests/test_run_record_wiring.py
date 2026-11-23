@@ -919,3 +919,33 @@ def test_a_shown_choice_is_recorded_as_not_mapped(tmp_path, monkeypatch, links, 
         monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", repair)
     record, _ = _mapped_edition(tmp_path, monkeypatch, "cluster_0")
     assert record["chosen_mapped"] is False and record["chosen_cluster_id"] == "cluster_0"
+
+
+
+# ---- the record lists only links that were shown; ids are stored stripped ----
+
+
+def test_links_on_with_the_packet_path_off_records_no_links_as_offered(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, "1")
+    _own_group_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    store = _MemoryRecordStore(tmp_path, events)
+    calls = _spy_check(monkeypatch, events)
+    pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run("2026-11-21", "blueprint", offline_demo=True)
+    [(_, record)] = store.records
+    assert "- Link" not in client.prompts[-1]
+    assert record["links"] is None and record["prompt_path"] == "legacy"
+    assert "link_1" not in record["realm_counts"]["candidates"]
+    assert record["chosen_mapped"] is False
+    [(_, kwargs)] = calls
+    assert kwargs["links"] is None
+
+
+def test_a_padded_id_is_stored_stripped(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    record, client = _mapped_edition(tmp_path, monkeypatch, "  cluster_0 ")
+    assert record["chosen_cluster_id"] == "cluster_0" and record["chosen_rank"] == 1
+    assert record["chosen_mapped"] is False and len(client.prompts) == 1

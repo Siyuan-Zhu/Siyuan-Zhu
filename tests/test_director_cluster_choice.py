@@ -575,3 +575,36 @@ def test_a_revision_about_another_group_behaves_as_with_both_switches_off(tmp_pa
     for seen in (off, on):
         assert seen["run_models"].fallback_fired is False
         assert seen["run_models"].current("judge") == mc.HYDROGEN
+
+
+
+# ---- ids are stored stripped; links are listed only when shown ----
+
+
+def test_a_padded_group_or_link_id_is_stored_stripped(repair_on):
+    groups = _groups()
+    commission, _ = _commission([_reply(selected_cluster_id=" g_2 ")], groups=groups)
+    assert commission.selected_cluster_id == "g_2"
+    links = [_link(groups)]
+    commission, _ = _commission([_reply(selected_cluster_id="link_1\n")], groups=groups, links=links)
+    assert commission.selected_cluster_id == "link_1"
+    assert pipeline._published_candidate(commission.selected_cluster_id, groups, links, groups[0])[0] is groups[1]
+
+
+def test_with_the_switches_off_a_padded_id_is_kept_as_today():
+    commission, _ = _commission([_reply(selected_cluster_id=" g_2 ")])
+    assert commission.selected_cluster_id == " g_2 "
+
+
+def test_links_count_as_shown_only_when_a_packet_attempt_showed_them():
+    groups = _groups()
+    links = [_link(groups)]
+    shown, _ = _commission([_reply()], groups=groups, links=links)
+    assert pipeline.links_shown(shown, links) == links
+    older, prompts = _commission([_reply()], groups=groups, links=links, packet=False)
+    assert "- Link" not in prompts[0] and pipeline.links_shown(older, links) is None
+    fallback, _ = _commission(["not json"], groups=groups, links=links, packet=False)
+    assert fallback.fallback_used is True and pipeline.links_shown(fallback, links) is None
+    none_found, _ = _commission([_reply()], groups=groups, links=[])
+    assert pipeline.links_shown(none_found, []) == []
+    assert pipeline.links_shown(shown, None) is None

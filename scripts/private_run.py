@@ -207,7 +207,7 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
                 lines.append(RECORD_LINE % int(written))
                 if written and director_ok and not run_models.fallback_fired and own_group.own_group_enabled():
                     _check_own_group(store, run_record.make_run_id("private_run", date_iso), grouping, commission,
-                                     genai_client, links.links)
+                                     genai_client, links.shown(commission))
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -240,10 +240,21 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
 
 @dataclass
 class NightLinks:
-    """The links shown to the Director and the realm counts the record keeps; both None with links off."""
+    """The night's links and realm map, built before the Director; None throughout with links off."""
 
     links: Optional[List[Any]] = None
-    realm_counts: Optional[Dict[str, Any]] = None
+    realm_map: Any = None
+    rows: Sequence[Any] = ()
+    clusters: Sequence[Any] = ()
+
+    def shown(self, commission: Any) -> Optional[List[Any]]:
+        """The links an attempt of the Director loop showed; None when none did, as with links off."""
+        return pipeline.links_shown(commission, self.links)
+
+    def realm_counts(self, commission: Any) -> Optional[Dict[str, Any]]:
+        if self.links is None:
+            return None
+        return pipeline._night_realm_counts(self.rows, self.realm_map, self.clusters, self.shown(commission) or [])
 
 
 def _orbit_config() -> Dict[str, Any]:
@@ -260,7 +271,7 @@ def _links_for(enabled: bool, store: Any, config: Any, rows: Sequence[Any], clus
     if not enabled:
         return NightLinks()
     links, realm_map = pipeline._night_links(store, config() if callable(config) else config, clusters)
-    return NightLinks(links, pipeline._night_realm_counts(rows, realm_map, clusters, links))
+    return NightLinks(links, realm_map, rows, clusters)
 
 
 def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: RunModels,
@@ -277,8 +288,8 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
             evidence_text=evidence["evidence_text"], commission=commission,
             candidate_words=evidence["candidate_words"], chosen_cluster_id=commission.selected_cluster_id,
             prompt_sha256=evidence["prompt_sha256"], cutoffs_source=grouping.cutoffs_source,
-            links=links.links if links is not None else None,
-            realm_counts=links.realm_counts if links is not None else None,
+            links=links.shown(commission) if links is not None else None,
+            realm_counts=links.realm_counts(commission) if links is not None else None,
             chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links if links is not None else None),
         )
         return run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
@@ -505,14 +516,14 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
         commission=commission, candidate_words=evidence["candidate_words"],
         chosen_cluster_id=commission.selected_cluster_id, prompt_sha256=evidence["prompt_sha256"],
         intake_hash=digest, arm=name, repeat=repeat, cutoffs_source=grouping.cutoffs_source,
-        links=links.links, realm_counts=links.realm_counts,
+        links=links.shown(commission), realm_counts=links.realm_counts(commission),
         chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links),
     )
     run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
     written = run_record.write_run_record(store, run_id, record)
     ok = director_ok and not run_models.fallback_fired
     if written and ok and own_group.own_group_enabled():
-        _check_own_group(store, run_id, grouping, commission, genai_client, links.links)
+        _check_own_group(store, run_id, grouping, commission, genai_client, links.shown(commission))
     if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
         scored: List[Dict[str, Any]] = []
         photo_ok = False

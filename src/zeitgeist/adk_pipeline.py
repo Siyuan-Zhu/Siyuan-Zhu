@@ -899,10 +899,9 @@ class ZeitgeistADKOrchestrator:
         # Links between groups in different realms, offered on the packet path only. With the switch
         # off nothing is read and the Director call is today's.
         night_links: Optional[List[Any]] = None
-        night_realm_counts: Optional[Dict[str, Any]] = None
+        realm_map: Any = None
         if links_enabled():
             night_links, realm_map = _night_links(store, config, scored_clusters)
-            night_realm_counts = _night_realm_counts(raw_signals, realm_map, scored_clusters, night_links)
             commission_kwargs["links"] = night_links
         commission = commission_daily_zeitgeist(
             scored_clusters,
@@ -1111,13 +1110,17 @@ class ZeitgeistADKOrchestrator:
             self._run_record_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
-                "links": night_links, "realm_counts": night_realm_counts,
+                # Only links an attempt showed are listed; with the packet path off, none (as with links off).
+                "links": links_shown(original_commission, night_links),
+                "realm_counts": (None if night_links is None else _night_realm_counts(
+                    raw_signals, realm_map, scored_clusters, links_shown(original_commission, night_links) or [])),
+                "links_on": night_links is not None,
             }
         if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "genai_client": genai_client,
-                "links": night_links,
+                "links": links_shown(original_commission, night_links),
             }
         return analysis, decision, telemetry
 
@@ -1491,7 +1494,7 @@ def _write_pending_run_record(store: Any, staged: Any) -> None:
 def _write_daily_run_record(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission,
-    links: Optional[Sequence[Any]] = None, realm_counts: Optional[Dict[str, Any]] = None,
+    links: Optional[Sequence[Any]] = None, realm_counts: Optional[Dict[str, Any]] = None, links_on: bool = False,
 ) -> None:
     """The edition's private run record, after its state is saved. Never raises, prints or logs."""
     try:
@@ -1503,7 +1506,7 @@ def _write_daily_run_record(
             clusters=clusters, evidence_text=evidence["evidence_text"], commission=commission,
             candidate_words=evidence["candidate_words"], chosen_cluster_id=main_commission.selected_cluster_id,
             main_commission=main_commission, prompt_sha256=evidence["prompt_sha256"],
-            links=links, realm_counts=realm_counts, chosen_mapped=recorded_chosen_mapping(main_commission, links),
+            links=links, realm_counts=realm_counts, chosen_mapped=recorded_chosen_mapping(main_commission, [] if links_on else None),
         )
         run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
@@ -1859,6 +1862,14 @@ def _deterministic_fallback_commission(
 _LINK_ID_RE = re.compile(r"link_\d+")
 NOT_OFFERED_REASON = "The selected candidate id was not offered; choose one of the provided cluster IDs."
 _MAPPED_ATTR = "_chosen_id_mapped"
+_LINKS_SHOWN_ATTR = "_links_shown"
+
+
+def links_shown(commission: Any, links: Optional[Sequence[Any]]) -> Optional[List[Any]]:
+    """The night's links when an attempt of the Director loop showed them; None otherwise (as with links off)."""
+    if links is None or getattr(commission, _LINKS_SHOWN_ATTR, False) is not True:
+        return None
+    return list(links)
 
 
 def chosen_id_mapped(commission: Any) -> bool:
@@ -1927,6 +1938,11 @@ def commission_daily_zeitgeist(
     # The first reply valid in every respect but its id: if no reply passes, it is published, mapped to the
     # top group, so the shown-candidate check never ends a run worse than today's code would.
     kept: Optional[DirectorCommission] = None
+
+    def shown_mark(commission: DirectorCommission) -> DirectorCommission:
+        # Whether any attempt of the loop showed the night's links (a packet attempt, links given).
+        setattr(commission, _LINKS_SHOWN_ATTR, links is not None and packet_attempts > 0)
+        return commission
 
     if llm_callable is not None or genai_client is not None:
         planned_packet = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
@@ -2040,7 +2056,7 @@ def commission_daily_zeitgeist(
                           or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
                         is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
 
-                not_offered = False
+                not_offered = chosen_checked = False
                 # A night with no groups offers nothing to check against: as today, no id check.
                 if is_valid and check_shown_ids and top_clusters and (repair or links is not None):
                     chosen_id = str(commission.selected_cluster_id).strip()
@@ -2048,6 +2064,7 @@ def commission_daily_zeitgeist(
                     # With the repair switch every id is checked; with only links on, a link id.
                     checked = repair or _LINK_ID_RE.fullmatch(chosen_id) is not None
                     not_offered = checked and chosen_id not in offered
+                    chosen_checked = True
 
                 if use_packet and is_valid:
                     try:
@@ -2075,6 +2092,9 @@ def commission_daily_zeitgeist(
                     is_valid, reason = False, NOT_OFFERED_REASON
 
                 if is_valid:
+                    if chosen_checked:
+                        # Stored stripped, so the own-group check and photo recovery find it.
+                        commission.selected_cluster_id = chosen_id
                     commission.attempts_used = attempts_made
                     commission.fallback_used = False
                     commission.packet_used = use_packet
@@ -2082,7 +2102,7 @@ def commission_daily_zeitgeist(
                     commission.slate_count = slate_count
                     _keep_director_evidence(commission, slate_words, slate_block if slate_sent else block,
                                             slate_prompt if slate_sent else prompt)
-                    return commission
+                    return shown_mark(commission)
 
                 last_rejection_reason = reason
                 gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
@@ -2094,7 +2114,7 @@ def commission_daily_zeitgeist(
         kept.attempts_used = attempts_made
         kept.echo_rejections = echo_rejections
         setattr(kept, _MAPPED_ATTR, True)
-        return kept
+        return shown_mark(kept)
     if gloss_rejected:
         raise ValueError("Director gloss failed bounded validation retries; retain last publication")
     if constrained and (llm_callable is not None or genai_client is not None):
@@ -2110,7 +2130,7 @@ def commission_daily_zeitgeist(
         fallback = replace(fallback, word=word, gloss=gloss, commissioned_thesis=owner.get("personal_note") or gloss,
             visual_anchor=anchor, unsplash_queries=[f"{word.lower()} material study", f"{word.lower()} quiet architecture", f"{word.lower()} natural light"],
             imagen_commission_prompt=anchor + ", no text overlay", flux_3_commission_prompts=[], fallback_used=True)
-    return fallback
+    return shown_mark(fallback)
 
 
 if __name__ == "__main__":

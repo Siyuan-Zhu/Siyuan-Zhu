@@ -1612,3 +1612,19 @@ def test_the_private_run_record_says_whether_the_chosen_candidate_was_mapped(mon
     _run(store, reply=_reply(selected_cluster_id="cluster_nowhere", candidate_words=SLATE))
     [(_, record)] = store.records
     assert record["chosen_mapped"] is True and record["chosen_cluster_id"] == "cluster_0"
+
+
+
+def test_the_private_run_with_the_packet_path_off_records_no_links_as_offered(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_LINKS", "1")
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    monkeypatch.setattr(private_run.pipeline, "link_candidates", _first_two_linked)
+    monkeypatch.setattr(private_run, "_orbit_config", lambda: {"feeds": []})
+    store = LinksRecordingStore()
+    result, director = _run(store, reply=_slate_reply())
+    assert "- Link" not in director.prompts[0]
+    [(_, record)] = store.records
+    assert record["links"] is None and "link_1" not in record["realm_counts"]["candidates"]
+    assert record["chosen_mapped"] is False
