@@ -1084,8 +1084,7 @@ class ZeitgeistADKOrchestrator:
         if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
-                "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
-                "genai_client": genai_client,
+                "clusters": scored_clusters, "commission": commission, "genai_client": genai_client,
             }
         return analysis, decision, telemetry
 
@@ -1478,15 +1477,19 @@ def _write_daily_run_record(
 
 def _daily_own_group_check(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
-    clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission, genai_client: Any,
+    clusters: Sequence[Any], commission: DirectorCommission, genai_client: Any,
 ) -> None:
-    """The own-group check on the edition's run record, with the record's own inputs. Prints and logs nothing.
+    """The own-group check on the edition's run record. Prints and logs nothing.
+
+    The published word and gloss are measured against the candidate the published commission is
+    about. A photo recovery revision keeps the main pass's candidate, so this is also the record's
+    `chosen_cluster_id`.
 
     `run()` calls it inside the same kind of guard as the record write.
     """
     own_group.run_own_group_check(
         store, run_record.make_run_id("daily_run", date_iso),
-        word=commission.word, gloss=commission.gloss, chosen_cluster_id=main_commission.selected_cluster_id,
+        word=commission.word, gloss=commission.gloss, chosen_cluster_id=commission.selected_cluster_id,
         clusters=clusters,
         embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
         genai_client=genai_client,

@@ -715,3 +715,29 @@ def test_the_private_and_comparison_workflows_pass_the_own_group_switch(name):
 
 def test_the_provider_canary_does_not_pass_the_own_group_switch():
     assert "ZEITGEIST_OWN_GROUP" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
+
+
+def test_a_photo_recovery_revision_is_measured_against_the_published_commissions_candidate(tmp_path, monkeypatch):
+    # In the edition, a revision must keep the main pass's candidate (revise_for_photo refuses any other), so
+    # the two ids agree. A revision that named another candidate would be about that candidate, and the
+    # published word and gloss are measured against the one the published commission is about.
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+
+    def recover(commission, *, render, revise, history, photo_required):
+        assert commission.selected_cluster_id == "cluster_0"
+        revised = DirectorCommission(word="Warp", gloss="threads held taut", commissioned_thesis="Synthetic thesis.",
+                                     selected_cluster_id="cluster_1")
+        return revised, render(revised), {"recovered": True}
+
+    staged = _run_photo_recovery(tmp_path, monkeypatch, recover=recover)
+    inputs = staged._own_group_inputs
+    assert staged._run_record_inputs["main_commission"].selected_cluster_id == "cluster_0"
+    assert "cluster_1" in [str(cluster.cluster_id) for cluster in inputs["clusters"][:5]]
+    calls = []
+    monkeypatch.setattr(own_group, "run_own_group_check", lambda store, run_id, **kw: calls.append((run_id, kw)))
+    pipeline._daily_own_group_check(object(), **inputs)
+    [(run_id, kwargs)] = calls
+    assert run_id == "daily_run:2026-11-21:local:1"
+    assert (kwargs["word"], kwargs["gloss"]) == ("Warp", "threads held taut")
+    assert kwargs["chosen_cluster_id"] == "cluster_1"
