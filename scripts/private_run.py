@@ -9,12 +9,20 @@ the photos and blocked no batch for safety, Flash scores them again and Hydrogen
 pass marks are stored. With ZEITGEIST_RUN_RECORD=1 it also writes one private run record
 after the Director step. The photo stage renders into a temporary directory that is removed
 at once. Only numbers and public model names are printed.
+
+With --arms it runs comparison arms instead: each named arm (a fixed set of models and prompt
+path) names the same frozen intake --repeats times, and one private run record is written per
+arm and repeat. In that mode the store refuses every write but the run record, no judge
+calibration is measured, and vectors from another embedding model are made again in memory only.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
+import random
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -22,7 +30,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -33,7 +42,7 @@ from src.zeitgeist import judge_calibration as jc  # noqa: E402
 from src.zeitgeist import run_record  # noqa: E402
 from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import (  # noqa: E402
-    FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
+    EMBED_001, EMBED_2, FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
 )
 from src.zeitgeist.understanding import understanding_v1_enabled  # noqa: E402
 
@@ -45,6 +54,39 @@ CALIBRATION_LINE = ("[judge_calibration] photos=%d flash_pass_meaning=%d flash_p
 # The critic's batch size, as the live photo search uses it.
 CRITIC_BATCH = 9
 SETUP, READ, DIRECTOR, PHOTO = 1, 2, 3, 4
+
+# Comparison arms: one numeric line per arm and repeat, a failure line (repeat 0 is the arm's own window),
+# the count of records written, and the refusal of a dispatch before any call.
+ARM_LINE = "[private_run] arm=%d repeat=%d director_ok=%d attempts=%d packet=%d fallback=%d"
+ARM_FAILED_LINE = "[private_run] arm=%d repeat=%d failed_stage=%d"
+RECORDS_LINE = "[private_run] records_written=%d"
+REFUSED_LINE = "[private_run] arms_refused=%d"
+REFUSE_REPEATS, REFUSE_UNKNOWN, REFUSE_NOT_BUILT, REFUSE_OVER_CAP, REFUSE_DUPLICATE = 1, 2, 3, 4, 5
+MAX_REPEATS = 3
+MAX_NAMING_ATTEMPTS = 12
+MAX_PHOTO_ARMS = 2
+SHOWN_GROUPS = 5
+INTAKE_FIELDS = ("url_hash", "source_id", "tier", "published_at", "title", "summary")
+
+
+@dataclass(frozen=True)
+class Arm:
+    """One arm: the same code with fixed models and prompt path."""
+
+    director: str
+    judge: str
+    embedding: str
+    packet: bool
+    runnable: bool = True
+
+
+ARMS: Mapping[str, Arm] = MappingProxyType({
+    "previous": Arm(FLASH, FLASH, EMBED_001, packet=False),
+    "current": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True),
+    # Known, but their parts are not built yet.
+    "current_links": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, runnable=False),
+    "current_reflector": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, runnable=False),
+})
 
 
 @dataclass
@@ -228,6 +270,190 @@ def measure_judges(store: Any, result: PrivateRun, run_models: RunModels, date_i
     return CALIBRATION_LINE % (len(scored), counts[0], counts[1], marks[0], marks[1], written)
 
 
+def intake_hash(rows: Sequence[Any]) -> str:
+    """sha256 over the sorted (url_hash, source_id, tier, published_at, title, summary) of every row; no vectors."""
+    keyed = sorted([["" if row.get(name) is None else str(row.get(name)) for name in INTAKE_FIELDS]
+                    for row in rows if isinstance(row, dict)])
+    payload = json.dumps(keyed, ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def candidate_order(count: int, digest: str, repeat: int) -> List[int]:
+    """The order the leading groups are shown in: ranked on repeat 1, else a permutation fixed by intake and repeat."""
+    ranked = list(range(count))
+    if repeat <= 1 or count < 2:
+        return ranked
+    order = list(ranked)
+    rng = random.Random("%s:%d" % (digest, repeat))
+    while order == ranked:
+        rng.shuffle(order)
+    return order
+
+
+class ArmWriteRefused(RuntimeError):
+    """An arm tried a store write other than its run record."""
+
+
+class ArmStore:
+    """Reads (load_*) pass through and the run record is saved; every other attribute raises and is counted."""
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+        self.refused = 0
+
+    def save_run_record(self, run_id: str, document: Dict[str, Any]) -> None:
+        self._store.save_run_record(run_id, document)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("load_"):
+            return getattr(self._store, name)
+        self.refused += 1
+        raise ArmWriteRefused("arm store write refused")
+
+
+def parse_arms(arms: str, repeats: Optional[str]) -> Tuple[List[str], int, int]:
+    """(arm names, repeats, refusal code); a refusal code of 0 means the dispatch may run."""
+    text = (repeats or "").strip() or str(MAX_REPEATS)
+    if not text.isdigit() or not 1 <= int(text) <= MAX_REPEATS:
+        return [], 0, REFUSE_REPEATS
+    count = int(text)
+    names = [part.strip() for part in arms.split(",")]
+    if any(name not in ARMS for name in names):
+        return [], 0, REFUSE_UNKNOWN
+    if len(names) * count > MAX_NAMING_ATTEMPTS:
+        return [], 0, REFUSE_OVER_CAP
+    if len(set(names)) != len(names):
+        return [], 0, REFUSE_DUPLICATE
+    if not all(ARMS[name].runnable for name in names):
+        return [], 0, REFUSE_NOT_BUILT
+    return names, count, 0
+
+
+def _arm_clusters(store: ArmStore, rows: List[Any], arm: Arm, genai_client: Any, now: datetime) -> List[Any]:
+    """The arm's groups: rows on another model are embedded again in memory, never saved."""
+    if any(not isinstance(row, dict) or row.get("embedding_model") != arm.embedding for row in rows):
+        keyed = {str(index): row for index, row in enumerate(rows) if isinstance(row, dict)}
+        embedded = pipeline._embed_rows(keyed, {}, genai_client, arm.embedding)
+        if embedded is None:
+            raise ValueError("arm embedding unavailable")
+        rows = list(embedded)
+    items = [item for item in (pipeline._row_to_cached_item(row, index, now.isoformat())
+                               for index, row in enumerate(rows)) if item is not None]
+    return _cluster_stored(store, rows, items, now)
+
+
+def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int, clusters: List[Any],
+                digest: str, history_entries: List[Any], genai_client: Any, now: datetime,
+                lines: List[str]) -> Tuple[bool, bool]:
+    """One naming attempt of one arm, then its record, then (first repeat only) its photo path.
+
+    Returns (ok, record written). Raises on any failure; the caller prints the numeric line.
+    """
+    date_iso = now.strftime("%Y-%m-%d")
+    run_models = RunModels(arm.director, arm.judge, arm.embedding)
+    order = candidate_order(min(SHOWN_GROUPS, len(clusters)), digest, repeat)
+    shown = [clusters[position] for position in order] + list(clusters[len(order):])
+    with activate(run_models):
+        packet = {"evidence_packet": True, "now_utc": now} if arm.packet else {}
+        commission = pipeline.commission_daily_zeitgeist(
+            shown, history_words_30d=_history_words(history_entries, date_iso), genai_client=genai_client,
+            owner_override={}, model_name=run_models.current("director"), run_models=run_models, **packet,
+        )
+    director_ok = not commission.fallback_used
+    lines.append(ARM_LINE % (index, repeat, int(director_ok), commission.attempts_used,
+                             int(commission.packet_used), int(run_models.fallback_fired)))
+    evidence = pipeline.director_evidence(commission)
+    record = run_record.build_run_record(
+        kind="private_run", date_iso=date_iso, now_utc=now, environ=os.environ, run_models=run_models,
+        embedding_model=arm.embedding, clusters=clusters, evidence_text=evidence["evidence_text"],
+        commission=commission, candidate_words=evidence["candidate_words"],
+        chosen_cluster_id=commission.selected_cluster_id, prompt_sha256=evidence["prompt_sha256"],
+        intake_hash=digest, arm=name, repeat=repeat,
+    )
+    written = run_record.write_run_record(
+        store, run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat), record)
+    ok = director_ok and not run_models.fallback_fired
+    if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
+        scored: List[Dict[str, Any]] = []
+        photo_ok = False
+        with activate(run_models), tempfile.TemporaryDirectory() as scratch:
+            try:
+                vr.select_and_render_pulse_assets(
+                    commission=commission, repo_root=Path(scratch), date_str=date_iso,
+                    requested_medium="photo", photo_history_30d=history_entries, judge_model=run_models.current("judge"),
+                    strict_photo_errors=True, scored_candidates_out=scored, safety_blocked_ids=set(),
+                )
+                photo_ok = True
+            except vr.PhotoSelectionUnavailable:
+                photo_ok = False
+        lines.append(_photo_line(scored, photo_ok))
+        ok = not run_models.fallback_fired
+    return ok, written
+
+
+def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], repeats: int) -> PrivateRun:
+    """Every arm and repeat on one frozen intake, writing only run records. Never raises.
+
+    One arm failing does not stop the others; an interrupt or exit stops the dispatch.
+    """
+    lines: List[str] = []
+    result = PrivateRun(lines, 3)
+    try:
+        reads = ArmStore(store)
+        cached = reads.load_ingestion_cache(now)
+        rows = list(cached.values()) if isinstance(cached, dict) else list(cached or ())
+        digest = intake_hash(rows)
+        history = reads.load_pulse_feed_history(days=30)
+        entries = list(history.get("entries", [])) if isinstance(history, dict) else list(history or ())
+    except BaseException:
+        lines.append(FAILED_LINE % READ)
+        return result
+    failed = False
+    written = 0
+    stop = False
+    for index, name in enumerate(names, 1):
+        arm = ARMS[name]
+        arm_store = ArmStore(store)
+        try:
+            with activate(RunModels(arm.director, arm.judge, arm.embedding)):
+                clusters = _arm_clusters(arm_store, rows, arm, genai_client, now)
+            if arm_store.refused:
+                raise ArmWriteRefused("arm store write refused")
+        except BaseException as error:
+            lines.append(ARM_FAILED_LINE % (index, 0, READ))
+            failed = True
+            if not isinstance(error, Exception):
+                break
+            continue
+        for repeat in range(1, repeats + 1):
+            refused_before = arm_store.refused
+            try:
+                ok, wrote = _arm_repeat(arm_store, index=index, name=name, arm=arm, repeat=repeat,
+                                        clusters=clusters, digest=digest, history_entries=entries,
+                                        genai_client=genai_client, now=now, lines=lines)
+                written += int(wrote)
+                if arm_store.refused != refused_before:
+                    lines.append(ARM_FAILED_LINE % (index, repeat, DIRECTOR))
+                    ok = False
+                failed = failed or not ok or not wrote
+            except BaseException as error:
+                # Messages and chained causes are never printed.
+                lines.append(ARM_FAILED_LINE % (index, repeat, DIRECTOR))
+                failed = True
+                if not isinstance(error, Exception):
+                    stop = True
+                    break
+        if stop:
+            break
+    lines.append(RECORDS_LINE % written)
+    result.exit_code = 3 if failed else 0
+    return result
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _store() -> Any:
     from src.state_store import get_state_store
 
@@ -246,7 +472,21 @@ def _genai_client() -> Optional[Any]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--arms", default=None, help="comma-separated comparison arms")
+    parser.add_argument("--repeats", default=None, help="naming attempts per arm, 1 to 3 (default 3)")
+    args = parser.parse_args(argv)
+    arms_mode = bool((args.arms or "").strip())
+    if not arms_mode and (args.repeats or "").strip():
+        parser.error("--repeats needs --arms")
+    names: List[str] = []
+    repeats = 0
+    if arms_mode:
+        # Checked before the store, the client or any call; the line carries only the refusal code.
+        names, repeats, refusal = parse_arms(args.arms, args.repeats)
+        if refusal:
+            print(REFUSED_LINE % refusal)
+            return 3
     # Library prints and log records can carry private text; none of it leaves this process.
     hidden = StringIO()
     logging.disable(logging.CRITICAL)
@@ -255,15 +495,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             try:
                 store = _store()
                 genai_client = _genai_client()
-                run_models = resolve_run_models(pipeline.load_orbit_config(ROOT / "config" / "orbit_sources.json"))
+                if not arms_mode:
+                    run_models = resolve_run_models(pipeline.load_orbit_config(ROOT / "config" / "orbit_sources.json"))
             except BaseException:
                 result = PrivateRun([FAILED_LINE % SETUP], 3)
             else:
-                now = datetime.now(timezone.utc)
-                result = run_private(store, genai_client=genai_client, now=now, run_models=run_models)
-                calibration = measure_judges(store, result, run_models, now.strftime("%Y-%m-%d"))
-                if calibration is not None:
-                    result.lines.append(calibration)
+                now = _now()
+                if arms_mode:
+                    # The judge calibration is not measured: an arm writes nothing but its records.
+                    result = run_arms(store, genai_client=genai_client, now=now, names=names, repeats=repeats)
+                else:
+                    result = run_private(store, genai_client=genai_client, now=now, run_models=run_models)
+                    calibration = measure_judges(store, result, run_models, now.strftime("%Y-%m-%d"))
+                    if calibration is not None:
+                        result.lines.append(calibration)
     finally:
         logging.disable(logging.NOTSET)
     for line in result.lines:

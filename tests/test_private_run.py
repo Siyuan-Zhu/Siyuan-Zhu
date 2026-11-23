@@ -653,3 +653,306 @@ def test_embedding_001_rows_keep_the_legacy_cutoffs_and_read_no_calibration(monk
     result, _ = _run(store)
     assert result.lines == unmarked.lines and result.exit_code == 0
     assert [read[0] for read in store.reads] == ["load_ingestion_cache", "load_pulse_feed_history"]
+
+
+# ---- comparison arms on one frozen intake (SIY-208) ----
+
+
+ARM_FORMATS = [
+    re.compile(r"\[private_run\] arm=\d+ repeat=[1-3] director_ok=[01] attempts=\d+ packet=[01] fallback=[01]"),
+    re.compile(r"\[private_run\] arm=\d+ repeat=[0-3] failed_stage=[1-4]"),
+    re.compile(r"\[private_run\] records_written=\d+"),
+    re.compile(r"\[private_run\] arms_refused=\d+"),
+]
+
+
+def _assert_arms_public(lines, *also_forbidden):
+    assert lines
+    for line in lines:
+        assert any(pattern.fullmatch(line) for pattern in FORMATS + ARM_FORMATS), line
+        assert not any(text in line for text in PRIVATE + also_forbidden), line
+
+
+def _embedding_2_vector(text):
+    """A synthetic embedding-2 vector: the group is read from the synthetic title."""
+    group = int(re.search(r"Zqtitle(\d)", text).group(1))
+    rng = np.random.default_rng(sum(text.encode("utf-8")))
+    vector = np.zeros(768)
+    vector[2 + group] = 1.0
+    vector += rng.normal(0, 0.02, 768)
+    return list(vector / np.linalg.norm(vector))
+
+
+class ArmClient(Director):
+    """The fake Director plus a fake embedding endpoint; records each embedding model and batch size."""
+
+    def __init__(self, reply):
+        super().__init__(reply)
+        self.embeds = []
+
+    def embed_content(self, *, model, contents, config):
+        self.embeds.append((model, len(contents)))
+        texts = [content.parts[0].text if hasattr(content, "parts") else str(content) for content in contents]
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=_embedding_2_vector(text)) for text in texts])
+
+
+class ArmStore(CalibratedStore):
+    """The reads, the calibration read and run records; every other store attribute still fails the test."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("rows", _marked_rows(em.EMBED_001))
+        kwargs.setdefault("calibration", _accepted_calibration())
+        super().__init__(*args, **kwargs)
+        self.records = []
+
+    def save_run_record(self, run_id, document):
+        self.records.append((run_id, document))
+
+
+def _arms_main(monkeypatch, capsys, argv, store=None, client=None):
+    store = ArmStore() if store is None else store
+    client = ArmClient(_slate_reply()) if client is None else client
+    monkeypatch.setattr(private_run, "_store", lambda: store)
+    monkeypatch.setattr(private_run, "_genai_client", lambda: client)
+    monkeypatch.setattr(private_run, "_now", lambda: NOW)
+    code = private_run.main(argv)
+    out = capsys.readouterr()
+    return code, out.out.splitlines(), out.out + out.err, store, client
+
+
+def _spy_shown_groups(monkeypatch):
+    shown = []
+    real = private_run.pipeline.commission_daily_zeitgeist
+
+    def spy(top_clusters, *args, **kwargs):
+        shown.append([cluster.cluster_id for cluster in top_clusters[:5]])
+        return real(top_clusters, *args, **kwargs)
+
+    monkeypatch.setattr(private_run.pipeline, "commission_daily_zeitgeist", spy)
+    return shown
+
+
+def test_two_arms_three_repeats_write_six_records_on_one_intake(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    code, lines, everything, store, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "3"])
+    _assert_arms_public(lines)
+    assert not any(text in everything for text in PRIVATE)
+    assert code == 0
+    assert [line for line in lines if " repeat=" in line] == [
+        "[private_run] arm=1 repeat=1 director_ok=1 attempts=1 packet=0 fallback=0",
+        "[private_run] arm=1 repeat=2 director_ok=1 attempts=1 packet=0 fallback=0",
+        "[private_run] arm=1 repeat=3 director_ok=1 attempts=1 packet=0 fallback=0",
+        "[private_run] arm=2 repeat=1 director_ok=1 attempts=1 packet=1 fallback=0",
+        "[private_run] arm=2 repeat=2 director_ok=1 attempts=1 packet=1 fallback=0",
+        "[private_run] arm=2 repeat=3 director_ok=1 attempts=1 packet=1 fallback=0",
+    ]
+    assert lines[-1] == "[private_run] records_written=6"
+    # The intake is read once, and each arm's Director answers on its own model.
+    assert [read[0] for read in store.reads].count("load_ingestion_cache") == 1
+    assert client.calls == [mc.FLASH] * 3 + [mc.HYDROGEN] * 3
+    # Only the current arm re-embeds, in memory, with its own model.
+    assert {model for model, _ in client.embeds} == {em.EMBED_2}
+    assert sum(size for _, size in client.embeds) == 8
+    ids = [run_id for run_id, _ in store.records]
+    assert ids == [f"private_run:2026-11-21:local:1:{arm}:{repeat}"
+                   for arm in ("previous", "current") for repeat in (1, 2, 3)]
+    records = [record for _, record in store.records]
+    expected_hash = private_run.intake_hash(list(_marked_rows(em.EMBED_001).values()))
+    assert {record["intake_hash"] for record in records} == {expected_hash}
+    assert [(record["arm"], record["repeat"]) for record in records] == [
+        (arm, repeat) for arm in ("previous", "current") for repeat in (1, 2, 3)]
+    for record in records:
+        assert record["kind"] == "private_run"
+    previous, current = records[0], records[3]
+    assert previous["models"]["director"] == previous["models"]["judge"] == mc.FLASH
+    assert previous["models"]["embedding"] == em.EMBED_001 and previous["prompt_path"] == "legacy"
+    assert current["models"]["director"] == current["models"]["judge"] == mc.HYDROGEN
+    assert current["models"]["embedding"] == em.EMBED_2 and current["prompt_path"] == "packet"
+    # The current arm's re-embedded window is grouped with the calibrated embedding-2 cutoffs.
+    assert len(previous["groups"]) == 5 and len(current["groups"]) == 2
+
+
+def test_the_intake_hash_ignores_vectors_and_row_order_and_follows_the_text():
+    rows = list(_marked_rows(em.EMBED_001).values())
+    digest = private_run.intake_hash(rows)
+    assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    revectored = [dict(row, embedding_f16="AAAA", embedding_model=em.EMBED_2) for row in rows]
+    assert private_run.intake_hash(list(reversed(revectored))) == digest
+    retitled = [dict(rows[0], title="Zqtitle00 another story")] + rows[1:]
+    assert private_run.intake_hash(retitled) != digest
+
+
+def test_repeats_show_the_same_five_groups_in_a_different_order(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    shown = _spy_shown_groups(monkeypatch)
+    code, _, _, store, _ = _arms_main(monkeypatch, capsys, ["--arms", "previous", "--repeats", "3"])
+    assert code == 0 and len(shown) == 3
+    ranked = [group["cluster_id"] for group in store.records[0][1]["groups"]]
+    assert shown[0] == ranked
+    assert sorted(shown[1]) == sorted(shown[2]) == sorted(ranked)
+    assert shown[1] != shown[0] and shown[2] != shown[0]
+    # The record keeps the true ranks whatever order the Director saw.
+    assert [[group["cluster_id"] for group in record["groups"]] for _, record in store.records] == [ranked] * 3
+    # The order is fixed by the intake and the repeat number.
+    first = [list(order) for order in shown]
+    again = _spy_shown_groups(monkeypatch)
+    _arms_main(monkeypatch, capsys, ["--arms", "previous", "--repeats", "3"])
+    assert again == first
+
+
+def test_candidate_order_is_a_fixed_permutation_per_intake_and_repeat():
+    assert private_run.candidate_order(5, "a" * 64, 1) == [0, 1, 2, 3, 4]
+    for repeat in (2, 3):
+        order = private_run.candidate_order(5, "a" * 64, repeat)
+        assert sorted(order) == [0, 1, 2, 3, 4] and order != [0, 1, 2, 3, 4]
+        assert order == private_run.candidate_order(5, "a" * 64, repeat)
+    assert private_run.candidate_order(2, "b" * 64, 2) == [1, 0]
+    assert private_run.candidate_order(1, "b" * 64, 3) == [0]
+
+
+def test_a_store_write_other_than_the_record_fails_that_arm_only(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+
+    def writing_plan(store, requested):
+        store.save_calibration(em.CALIBRATION_DOCUMENT, {})
+
+    monkeypatch.setattr(em, "plan_embedding_run", writing_plan)
+    code, lines, _, store, _ = _arms_main(monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "2"])
+    _assert_arms_public(lines)
+    assert code == 3
+    assert "[private_run] arm=2 repeat=0 failed_stage=2" in lines
+    assert not any(line.startswith("[private_run] arm=2 repeat=1 director_ok") for line in lines)
+    assert [line for line in lines if line.startswith("[private_run] arm=1 ")] == [
+        "[private_run] arm=1 repeat=1 director_ok=1 attempts=1 packet=0 fallback=0",
+        "[private_run] arm=1 repeat=2 director_ok=1 attempts=1 packet=0 fallback=0",
+    ]
+    assert [record["arm"] for _, record in store.records] == ["previous", "previous"]
+    assert lines[-1] == "[private_run] records_written=2"
+
+
+def test_the_arm_store_passes_reads_and_the_record_and_refuses_every_other_write():
+    store = ArmStore()
+    arm_store = private_run.ArmStore(store)
+    assert arm_store.load_calibration(em.CALIBRATION_DOCUMENT) == _accepted_calibration()
+    arm_store.save_run_record("private_run:2026-11-21:local:1:previous:1", {"kind": "private_run"})
+    assert store.records == [("private_run:2026-11-21:local:1:previous:1", {"kind": "private_run"})]
+    for name in ("save_calibration", "save_ingestion_cache_day", "save_orbit_roster", "save_pulse_state",
+                 "save_pulse_feed_entry", "delete_run_record", "clear_calibration", "prune_ingestion_cache"):
+        with pytest.raises(private_run.ArmWriteRefused):
+            getattr(arm_store, name)
+    assert arm_store.refused == 8
+
+
+def test_a_failing_arm_does_not_stop_the_next_one(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    reply = lambda model: RuntimeError("Zqsecret provider text") if model == mc.FLASH else _slate_reply()
+    code, lines, everything, store, _ = _arms_main(
+        monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "1"], client=ArmClient(reply))
+    _assert_arms_public(lines)
+    assert "Zqsecret" not in everything
+    assert code == 3
+    assert "[private_run] arm=1 repeat=1 failed_stage=3" in lines
+    assert "[private_run] arm=2 repeat=1 director_ok=1 attempts=1 packet=1 fallback=0" in lines
+    assert [record["arm"] for _, record in store.records] == ["current"]
+
+
+def _spy_photo(monkeypatch):
+    calls = []
+    real = vr.select_and_render_pulse_assets
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(vr, "select_and_render_pulse_assets", spy)
+    return calls
+
+
+def test_the_photo_path_runs_once_per_arm_on_the_first_repeat(monkeypatch, capsys):
+    _, critic = _photo_world(monkeypatch)
+    calls = _spy_photo(monkeypatch)
+    code, lines, _, _, _ = _arms_main(monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "3"])
+    assert code == 0
+    assert [kwargs["judge_model"] for kwargs in calls] == [mc.FLASH, mc.HYDROGEN]
+    assert not any("download_ping_callback" in kwargs for kwargs in calls)
+    photo = [index for index, line in enumerate(lines) if line.startswith("[private_run] photo_ok=")]
+    assert len(photo) == 2
+    assert lines[photo[0] - 1].startswith("[private_run] arm=1 repeat=1 ")
+    assert lines[photo[1] - 1].startswith("[private_run] arm=2 repeat=1 ")
+
+
+def test_the_photo_path_runs_for_at_most_the_first_two_arms(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    calls = _spy_photo(monkeypatch)
+    table = dict(private_run.ARMS)
+    table["current_links"] = private_run.Arm(mc.HYDROGEN, mc.HYDROGEN, em.EMBED_2, packet=True)
+    monkeypatch.setattr(private_run, "ARMS", table)
+    code, lines, _, store, _ = _arms_main(
+        monkeypatch, capsys, ["--arms", "previous,current,current_links", "--repeats", "1"])
+    assert code == 0 and len(store.records) == 3
+    assert len(calls) == 2
+    assert sum(line.startswith("[private_run] photo_ok=") for line in lines) == 2
+
+
+@pytest.mark.parametrize("argv, refusal", [
+    (["--arms", "previous", "--repeats", "0"], 1),
+    (["--arms", "previous", "--repeats", "4"], 1),
+    (["--arms", "previous", "--repeats", "two"], 1),
+    (["--arms", "previous,Zqsecretarm"], 2),
+    (["--arms", "previous,,current"], 2),
+    (["--arms", "previous,current,previous,current,previous", "--repeats", "3"], 4),
+    (["--arms", "previous,previous", "--repeats", "1"], 5),
+    (["--arms", "previous,current_links"], 3),
+    (["--arms", "current_reflector", "--repeats", "1"], 3),
+], ids=["zero", "four", "word", "unknown", "empty-part", "over-twelve", "duplicate", "links", "reflector"])
+def test_a_refused_dispatch_ends_with_one_numeric_line_before_any_call(monkeypatch, capsys, argv, refusal):
+    _photo_world(monkeypatch)
+    opened = []
+    store, client = ArmStore(), ArmClient(_slate_reply())
+    monkeypatch.setattr(private_run, "_store", lambda: opened.append(1) or store)
+    monkeypatch.setattr(private_run, "_genai_client", lambda: opened.append(2) or client)
+    code = private_run.main(argv)
+    out = capsys.readouterr()
+    assert out.out.splitlines() == [f"[private_run] arms_refused={refusal}"]
+    assert code == 3 and opened == [] and store.reads == [] and client.calls == [] and client.embeds == []
+    assert "Zqsecret" not in out.out + out.err
+
+
+def test_arms_never_measure_the_judges(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("measure_judges called in arms mode")
+
+    monkeypatch.setattr(private_run, "measure_judges", refuse)
+    code, lines, _, store, _ = _arms_main(monkeypatch, capsys, ["--arms", "current", "--repeats", "1"])
+    assert code == 0 and len(store.records) == 1
+    assert not any(line.startswith("[judge_calibration]") for line in lines)
+
+
+def test_empty_arms_and_repeats_run_the_single_private_run(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    code_none, lines_none, _ = _main(monkeypatch, capsys, ReadOnlyStore(), Director(_slate_reply()))
+    monkeypatch.setattr(private_run, "_store", lambda: ReadOnlyStore())
+    monkeypatch.setattr(private_run, "_genai_client", lambda: Director(_slate_reply()))
+    code = private_run.main(["--arms", "", "--repeats", ""])
+    assert (code, capsys.readouterr().out.splitlines()) == (code_none, lines_none)
+
+
+def test_repeats_without_arms_is_an_argument_error():
+    with pytest.raises(SystemExit):
+        private_run.main(["--repeats", "2"])
+
+
+def test_a_failed_intake_read_ends_the_dispatch_with_a_numeric_line(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    store = ArmStore(fail=RuntimeError("Zqsecret"))
+    code, lines, everything, store, client = _arms_main(monkeypatch, capsys, ["--arms", "previous,current"],
+                                                        store=store)
+    assert lines == ["[private_run] failed_stage=2"] and code == 3
+    assert client.calls == [] and store.records == [] and "Zqsecret" not in everything
