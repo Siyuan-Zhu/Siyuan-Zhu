@@ -717,6 +717,126 @@ def test_the_provider_canary_does_not_pass_the_own_group_switch():
     assert "ZEITGEIST_OWN_GROUP" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
 
 
+
+# ---- links (links plan, Task 3): with no link the prompt is today's; the record carries the night's links ----
+
+from src.zeitgeist.understanding import LinkCandidate  # noqa: E402
+
+
+def _links_switch(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_LINKS", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_LINKS", value)
+
+
+@pytest.mark.parametrize("name", ["packet", "packet_slate_retry"])
+def test_with_links_on_and_none_found_the_packet_prompt_is_unchanged_to_the_character(name):
+    (make, *args), kwargs = CASES[name]
+    prompt, block = pipeline._director_prompt_and_block(make(), *args, **kwargs, links=[])
+    assert _sha(prompt) == GOLDEN[name]
+    assert _sha(pipeline._build_director_prompt(make(), *args, **kwargs, links=[])) == GOLDEN[name]
+    packet_args = (make(), args[0], args[1] if len(args) > 1 else None, NOW)
+    assert _sha(pipeline._build_packet_director_prompt(*packet_args, slate=kwargs.get("slate", False),
+                                                       links=[])) == GOLDEN[name]
+
+
+def test_with_links_on_and_none_found_the_director_is_sent_todays_prompt():
+    plain, plain_client = _packet_commission([_reply(candidate_words=SLATE)])
+    client = _Client([_reply(candidate_words=SLATE)])
+    commission_daily_zeitgeist(
+        _clusters(), HISTORY, genai_client=client, model_name=mc.HYDROGEN, run_models=_hydrogen(),
+        evidence_packet=True, now_utc=NOW, links=[],
+    )
+    assert client.prompts == plain_client.prompts
+
+
+def _one_link(clusters, realm_map):
+    members = tuple(clusters[:3])
+    return [LinkCandidate("link_1", tuple(str(c.cluster_id) for c in members), ("civic", "markets", "tech"), 4,
+                          0.91, members)]
+
+
+@pytest.mark.parametrize("value", [None, "0"])
+def test_links_off_records_null_links_and_realm_counts(tmp_path, monkeypatch, value):
+    _links_switch(monkeypatch, value)
+    store, _, _ = _edition(tmp_path, monkeypatch, switch="1")
+    [(_, record)] = store.records
+    assert record["links"] is None and record["realm_counts"] is None
+
+
+def test_links_on_with_none_found_sends_todays_prompt_and_records_an_empty_list(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    off_store, _, off = _edition(tmp_path / "off", monkeypatch, switch="1")
+    _links_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", lambda clusters, realm_map: [])
+    store, _, on = _edition(tmp_path / "on", monkeypatch, switch="1")
+    [(_, off_record)] = off_store.records
+    [(_, record)] = store.records
+    # The prompt the Director answered is today's to the character.
+    assert on == off and record["prompt_sha256"] == off_record["prompt_sha256"]
+    assert record["evidence_text"] == off_record["evidence_text"]
+    assert record["links"] == []
+    assert set(record["realm_counts"]) == {"intake", "candidates"}
+    assert sum(record["realm_counts"]["intake"].values()) > 0
+    assert set(record["realm_counts"]["candidates"]) == {g["cluster_id"] for g in record["groups"]}
+
+
+def test_links_on_shows_the_links_to_the_director_and_records_them(tmp_path, monkeypatch, capsys):
+    _links_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    store, client, _ = _edition(tmp_path, monkeypatch, switch="1")
+    out = capsys.readouterr()
+    assert "\n- Link link_1: groups=" in client.prompts[-1]
+    [(_, record)] = store.records
+    member_ids = [g["cluster_id"] for g in record["groups"]][:3]
+    assert record["links"] == [{"link_id": "link_1", "member_ids": member_ids,
+                                "realms": ["civic", "markets", "tech"], "source_count": 4,
+                                "mean_link_similarity": 0.91}]
+    assert "link_1" in record["realm_counts"]["candidates"]
+    assert "- Link link_1" in record["evidence_text"]
+    assert "Link" not in out.out + out.err
+
+
+def test_links_on_gives_the_own_group_check_the_links(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, "1")
+    _own_group_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    _, calls, _ = _spied_edition(tmp_path, monkeypatch)
+    [(_, kwargs)] = calls
+    assert [link.link_id for link in kwargs["links"]] == ["link_1"]
+
+
+def test_links_off_gives_the_own_group_check_no_links(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    _own_group_switch(monkeypatch, "1")
+    _, calls, _ = _spied_edition(tmp_path, monkeypatch)
+    [(_, kwargs)] = calls
+    assert kwargs.get("links") is None
+
+
+LINKS_LINE = "ZEITGEIST_LINKS: " + DOLLAR + "{{ vars.ZEITGEIST_LINKS || '0' }}"
+
+
+def test_the_daily_workflow_passes_the_links_switch_to_the_edition_job_only():
+    text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
+    edition = _job_lines(text, "synthesize-pulse")
+    assert edition[edition.index(OWN_GROUP_LINE) + 1] == LINKS_LINE
+    assert LINKS_LINE not in _job_lines(text, "profile-preflight")
+    assert [line.strip() for line in text.splitlines()].count(LINKS_LINE) == 1
+
+
+@pytest.mark.parametrize("name", ["private_run.yml", "comparison_run.yml"])
+def test_the_private_and_comparison_workflows_pass_the_links_switch(name):
+    lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
+    assert lines.count(LINKS_LINE) == 1
+    assert lines[lines.index(OWN_GROUP_LINE) + 1] == LINKS_LINE
+
+
+def test_the_provider_canary_does_not_pass_the_links_switch():
+    assert "ZEITGEIST_LINKS" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
+
+
 def test_a_photo_recovery_revision_is_measured_against_the_published_commissions_candidate(tmp_path, monkeypatch):
     # In the edition, a revision must keep the main pass's candidate (revise_for_photo refuses any other), so
     # the two ids agree. A revision that named another candidate would be about that candidate, and the
@@ -743,3 +863,89 @@ def test_a_photo_recovery_revision_is_measured_against_the_published_commissions
     assert run_id == "daily_run:2026-11-21:local:1"
     assert (kwargs["word"], kwargs["gloss"]) == ("Warp", "threads held taut")
     assert kwargs["chosen_cluster_id"] == "cluster_1"
+
+
+def test_a_chosen_link_is_measured_by_the_own_group_check_from_the_published_commission(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, "1")
+    _own_group_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    client.replies = [_reply(selected_cluster_id="link_1", candidate_words=SLATE)]
+    store = _MemoryRecordStore(tmp_path, events)
+    calls = _spy_check(monkeypatch, events)
+    orchestrator = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    orchestrator.run("2026-11-21", "blueprint", offline_demo=True)
+    [(_, kwargs)] = calls
+    [(_, record)] = store.records
+    assert kwargs["chosen_cluster_id"] == record["chosen_cluster_id"] == "link_1"
+    assert [link.link_id for link in kwargs["links"]] == ["link_1"]
+
+
+
+# ---- the record says when the chosen candidate was mapped ----
+
+
+def _mapped_edition(tmp_path, monkeypatch, chosen):
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    client.replies = [_reply(selected_cluster_id=chosen, candidate_words=SLATE)]
+    store = _RecordingStore(tmp_path, events)
+    pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run("2026-11-21", "blueprint", offline_demo=True)
+    [(_, record)] = store.records
+    return record, client
+
+
+def test_with_neither_links_nor_the_repair_switch_chosen_mapped_is_null(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    record, _ = _mapped_edition(tmp_path, monkeypatch, "cluster_nowhere")
+    assert record["chosen_mapped"] is None and record["chosen_cluster_id"] == "cluster_nowhere"
+
+
+def test_with_the_repair_switch_an_unshown_id_on_the_last_attempt_is_recorded_as_mapped(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    record, client = _mapped_edition(tmp_path, monkeypatch, "cluster_nowhere")
+    assert record["chosen_mapped"] is True
+    assert record["chosen_cluster_id"] == record["groups"][0]["cluster_id"]
+    assert record["attempts_used"] == len(client.prompts) == 1
+
+
+@pytest.mark.parametrize("links, repair", [("1", None), (None, "1"), ("1", "1")])
+def test_a_shown_choice_is_recorded_as_not_mapped(tmp_path, monkeypatch, links, repair):
+    _links_switch(monkeypatch, links)
+    if repair is None:
+        monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", repair)
+    record, _ = _mapped_edition(tmp_path, monkeypatch, "cluster_0")
+    assert record["chosen_mapped"] is False and record["chosen_cluster_id"] == "cluster_0"
+
+
+
+# ---- the record lists only links that were shown; ids are stored stripped ----
+
+
+def test_links_on_with_the_packet_path_off_records_no_links_as_offered(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, "1")
+    _own_group_switch(monkeypatch, "1")
+    monkeypatch.setattr(pipeline, "link_candidates", _one_link)
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    store = _MemoryRecordStore(tmp_path, events)
+    calls = _spy_check(monkeypatch, events)
+    pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run("2026-11-21", "blueprint", offline_demo=True)
+    [(_, record)] = store.records
+    assert "- Link" not in client.prompts[-1]
+    assert record["links"] is None and record["prompt_path"] == "legacy"
+    assert "link_1" not in record["realm_counts"]["candidates"]
+    assert record["chosen_mapped"] is False
+    [(_, kwargs)] = calls
+    assert kwargs["links"] is None
+
+
+def test_a_padded_id_is_stored_stripped(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    record, client = _mapped_edition(tmp_path, monkeypatch, "  cluster_0 ")
+    assert record["chosen_cluster_id"] == "cluster_0" and record["chosen_rank"] == 1
+    assert record["chosen_mapped"] is False and len(client.prompts) == 1
