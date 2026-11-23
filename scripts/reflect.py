@@ -201,6 +201,9 @@ def _reflect_on(store: Any, run_id: str, record: Dict[str, Any], calls: Optional
     def early(status: str, reason: Optional[str] = None) -> Dict[str, Any]:
         return _numbers(status, model, now, reason=reason, same_model=same_model)
 
+    # A night whose Director fell back to another model is not the reading the reflector checks.
+    if models.get("fallback_fired") is True:
+        return early("skipped", reason="fallback")
     if not isinstance(standing, dict) or not isinstance(standing.get("block"), str):
         return early("no_group")
     if not isinstance(chosen, dict) or not isinstance(chosen.get("block"), str) or not own_gloss:

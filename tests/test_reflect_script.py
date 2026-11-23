@@ -604,3 +604,38 @@ def test_main_still_refuses_a_model_outside_the_two(monkeypatch, capsys, tmp_pat
     code, lines, _ = _main(monkeypatch, capsys, ["--model", "gemini-9-unknown", "--allow-same-model"], store, client)
     assert code == 0 and lines[0].startswith("[reflector] status=%d " % reflect.STATUS_NUMBERS["skipped"])
     assert client.generates == [] and _stored(store, run_id) is None
+
+
+# ---- a run whose Director fell back ----
+
+
+def _fell_back(**kwargs):
+    record = _record(**kwargs)
+    record["models"]["fallback_fired"] = True
+    return record
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"allow_same_model": True}, {"model": mc.HYDROGEN}])
+def test_a_record_whose_director_fell_back_is_skipped_without_a_paid_call(tmp_path, kwargs):
+    store, client = Store(tmp_path), Client()
+    run_id = store.put(_fell_back(director=mc.FLASH))
+    outcome = _reflect(store, client, **kwargs)
+    assert (outcome["status"], outcome["reason"], outcome["calls"]) == ("skipped", "fallback", 0)
+    _no_paid_call(client)
+    stored = _stored(store, run_id)
+    assert (stored["status"], stored["reason"]) == ("skipped", "fallback")
+    assert ("load_pulse_feed_history", 30) not in store.calls
+
+
+def test_the_fallback_skip_comes_before_the_other_early_statuses(tmp_path):
+    store, client = Store(tmp_path, history=[]), Client()
+    store.put(_fell_back(inputs=_inputs(standing=False, chosen=False)))
+    assert _reflect(store, client)["reason"] == "fallback"
+
+
+def test_a_record_without_a_models_block_is_not_a_fallback(tmp_path):
+    store, client = Store(tmp_path), Client()
+    record = _record()
+    record["models"] = None
+    store.put(record)
+    assert _reflect(store, client)["status"] == "pointer"
