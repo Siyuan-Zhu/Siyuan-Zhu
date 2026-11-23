@@ -121,19 +121,39 @@ def _photo_line(scored: List[Dict[str, Any]], photo_ok: bool) -> str:
     )
 
 
-def _cluster_stored(store: Any, rows: List[Any], items: List[Any], now: datetime) -> List[Any]:
+@dataclass
+class Grouping:
+    """The night's groups, which cutoffs made them, and the model that made the grouped vectors."""
+
+    clusters: List[Any]
+    cutoffs_source: str
+    embedding_model: str
+
+
+def _vector_model(rows: Sequence[Any]) -> str:
+    """The one embedding model named on the rows; "mixed" for several, "unknown" for none."""
+    models = {row.get("embedding_model") if isinstance(row, dict) else None for row in rows}
+    if len(models) > 1:
+        return "mixed"
+    model = next(iter(models), None)
+    return model if isinstance(model, str) and model else "unknown"
+
+
+def _cluster_stored(store: Any, rows: List[Any], items: List[Any], now: datetime) -> Grouping:
     """Group the stored vectors with the cutoffs of the model that made them; reads only, writes nothing.
 
     Rows that all carry embedding-2 vectors use the accepted calibration's cutoffs. Any other
     window (embedding-001, unmarked or mixed rows, or no accepted calibration) keeps the legacy cutoffs.
     """
-    models = {row.get("embedding_model") if isinstance(row, dict) else None for row in rows}
-    if models == {em.EMBED_2}:
+    model = _vector_model(rows)
+    if model == em.EMBED_2:
         plan = em.plan_embedding_run(store, em.EMBED_2)
         if plan is not None and plan.mode == "migrated":
             # Migrated mode never touches the store; it is given none so nothing can be written.
-            return em.cluster_for_run(items, plan, store=None, now_utc=now)
-    return pipeline.score_and_cluster_signals(items, now_utc=now)
+            clusters = em.cluster_for_run(items, plan, store=None, now_utc=now)
+            calibrated = plan.cutoffs is not None and not plan.fallback
+            return Grouping(clusters, "calibrated" if calibrated else "legacy", model)
+    return Grouping(pipeline.score_and_cluster_signals(items, now_utc=now), "legacy", model)
 
 
 def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: RunModels) -> PrivateRun:
@@ -149,7 +169,8 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             rows = list(cached.values()) if isinstance(cached, dict) else list(cached or ())
             items = [item for item in (pipeline._row_to_cached_item(row, index, now.isoformat())
                                        for index, row in enumerate(rows)) if item is not None]
-            clusters = _cluster_stored(store, rows, items, now)
+            grouping = _cluster_stored(store, rows, items, now)
+            clusters = grouping.clusters
             history = store.load_pulse_feed_history(days=30)
             entries = list(history.get("entries", [])) if isinstance(history, dict) else list(history or ())
 
@@ -166,7 +187,7 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             lines.append(DIRECTOR_LINE % (int(director_ok), commission.attempts_used, int(commission.packet_used),
                                           int(run_models.fallback_fired), len(items), len(clusters)))
             if run_record.run_record_enabled():
-                _write_private_record(store, now, date_iso, run_models, clusters, commission)
+                _write_private_record(store, now, date_iso, run_models, grouping, commission)
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -198,7 +219,7 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
 
 
 def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: RunModels,
-                          clusters: List[Any], commission: Any) -> None:
+                          grouping: Grouping, commission: Any) -> None:
     """The private run record after the Director step. Prints and logs nothing.
 
     Any failure is swallowed, except an interrupt or an exit, which end the run as any interrupt does.
@@ -207,10 +228,10 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
         evidence = pipeline.director_evidence(commission)
         record = run_record.build_run_record(
             kind="private_run", date_iso=date_iso, now_utc=now, environ=os.environ, run_models=run_models,
-            embedding_model=run_models.current("embedding"), clusters=clusters,
+            embedding_model=grouping.embedding_model, clusters=grouping.clusters,
             evidence_text=evidence["evidence_text"], commission=commission,
             candidate_words=evidence["candidate_words"], chosen_cluster_id=commission.selected_cluster_id,
-            prompt_sha256=evidence["prompt_sha256"],
+            prompt_sha256=evidence["prompt_sha256"], cutoffs_source=grouping.cutoffs_source,
         )
         run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
     except (KeyboardInterrupt, SystemExit):
@@ -329,20 +350,37 @@ def parse_arms(arms: str, repeats: Optional[str]) -> Tuple[List[str], int, int]:
     return names, count, 0
 
 
-def _arm_clusters(store: ArmStore, rows: List[Any], arm: Arm, genai_client: Any, now: datetime) -> List[Any]:
-    """The arm's groups: rows on another model are embedded again in memory, never saved."""
+class ArmNotReady(RuntimeError):
+    """An arm on the second embedding model without its own vectors and an accepted calibration."""
+
+
+def _items(rows: List[Any], now: datetime) -> List[Any]:
+    return [item for item in (pipeline._row_to_cached_item(row, index, now.isoformat())
+                              for index, row in enumerate(rows)) if item is not None]
+
+
+def _calibrated_grouping(store: ArmStore, rows: List[Any], now: datetime) -> Grouping:
+    """The stored embedding-2 vectors on the accepted calibration's cutoffs; no call. Raises if either is missing."""
+    if _vector_model(rows) != em.EMBED_2:
+        raise ArmNotReady("rows are not all embedding-2")
+    grouping = _cluster_stored(store, rows, _items(rows, now), now)
+    if grouping.cutoffs_source != "calibrated":
+        raise ArmNotReady("no accepted calibration")
+    return grouping
+
+
+def _reembedded_grouping(store: ArmStore, rows: List[Any], arm: Arm, genai_client: Any, now: datetime) -> Grouping:
+    """The first model's vectors (made again in memory when the rows carry another model) on the legacy cutoffs."""
     if any(not isinstance(row, dict) or row.get("embedding_model") != arm.embedding for row in rows):
         keyed = {str(index): row for index, row in enumerate(rows) if isinstance(row, dict)}
         embedded = pipeline._embed_rows(keyed, {}, genai_client, arm.embedding)
         if embedded is None:
             raise ValueError("arm embedding unavailable")
         rows = list(embedded)
-    items = [item for item in (pipeline._row_to_cached_item(row, index, now.isoformat())
-                               for index, row in enumerate(rows)) if item is not None]
-    return _cluster_stored(store, rows, items, now)
+    return _cluster_stored(store, rows, _items(rows, now), now)
 
 
-def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int, clusters: List[Any],
+def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int, grouping: Grouping,
                 digest: str, history_entries: List[Any], genai_client: Any, now: datetime,
                 lines: List[str]) -> Tuple[bool, bool]:
     """One naming attempt of one arm, then its record, then (first repeat only) its photo path.
@@ -351,6 +389,7 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     """
     date_iso = now.strftime("%Y-%m-%d")
     run_models = RunModels(arm.director, arm.judge, arm.embedding)
+    clusters = grouping.clusters
     order = candidate_order(min(SHOWN_GROUPS, len(clusters)), digest, repeat)
     shown = [clusters[position] for position in order] + list(clusters[len(order):])
     with activate(run_models):
@@ -365,10 +404,10 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     evidence = pipeline.director_evidence(commission)
     record = run_record.build_run_record(
         kind="private_run", date_iso=date_iso, now_utc=now, environ=os.environ, run_models=run_models,
-        embedding_model=arm.embedding, clusters=clusters, evidence_text=evidence["evidence_text"],
+        embedding_model=grouping.embedding_model, clusters=clusters, evidence_text=evidence["evidence_text"],
         commission=commission, candidate_words=evidence["candidate_words"],
         chosen_cluster_id=commission.selected_cluster_id, prompt_sha256=evidence["prompt_sha256"],
-        intake_hash=digest, arm=name, repeat=repeat,
+        intake_hash=digest, arm=name, repeat=repeat, cutoffs_source=grouping.cutoffs_source,
     )
     written = run_record.write_run_record(
         store, run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat), record)
@@ -411,12 +450,34 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
     failed = False
     written = 0
     stop = False
+    stores = [ArmStore(store) for _ in names]
+    # Before any paid call of the dispatch: an arm on the second embedding model needs the stored
+    # embedding-2 vectors and an accepted calibration, and is grouped now; it never runs on legacy cutoffs.
+    groupings: Dict[int, Optional[Grouping]] = {}
     for index, name in enumerate(names, 1):
-        arm = ARMS[name]
-        arm_store = ArmStore(store)
+        if ARMS[name].embedding != em.EMBED_2:
+            continue
         try:
-            with activate(RunModels(arm.director, arm.judge, arm.embedding)):
-                clusters = _arm_clusters(arm_store, rows, arm, genai_client, now)
+            groupings[index] = _calibrated_grouping(stores[index - 1], rows, now)
+        except BaseException as error:
+            groupings[index] = None
+            if not isinstance(error, Exception):
+                lines.append(ARM_FAILED_LINE % (index, 0, READ))
+                failed = stop = True
+                break
+    for index, name in enumerate(names, 1):
+        if stop:
+            break
+        arm = ARMS[name]
+        arm_store = stores[index - 1]
+        try:
+            if index in groupings:
+                grouping = groupings[index]
+                if grouping is None:
+                    raise ArmNotReady("arm not ready")
+            else:
+                with activate(RunModels(arm.director, arm.judge, arm.embedding)):
+                    grouping = _reembedded_grouping(arm_store, rows, arm, genai_client, now)
             if arm_store.refused:
                 raise ArmWriteRefused("arm store write refused")
         except BaseException as error:
@@ -429,7 +490,7 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
             refused_before = arm_store.refused
             try:
                 ok, wrote = _arm_repeat(arm_store, index=index, name=name, arm=arm, repeat=repeat,
-                                        clusters=clusters, digest=digest, history_entries=entries,
+                                        grouping=grouping, digest=digest, history_entries=entries,
                                         genai_client=genai_client, now=now, lines=lines)
                 written += int(wrote)
                 if arm_store.refused != refused_before:
@@ -443,8 +504,6 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
                 if not isinstance(error, Exception):
                     stop = True
                     break
-        if stop:
-            break
     lines.append(RECORDS_LINE % written)
     result.exit_code = 3 if failed else 0
     return result

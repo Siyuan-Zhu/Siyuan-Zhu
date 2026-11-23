@@ -38,7 +38,7 @@ EXPECTED_KEYS = {
     "record_schema", "kind", "date", "written_at", "commit", "switches", "models", "prompt_path",
     "attempts_used", "groups", "evidence_text", "chosen_cluster_id", "chosen_rank", "candidate_words",
     "word", "gloss", "thesis", "commission_sha256", "prompt_sha256", "revised_by_photo_recovery",
-    "main_pass", "intake_hash", "arm", "repeat", "tests",
+    "main_pass", "intake_hash", "cutoffs_source", "arm", "repeat", "tests",
 }
 GROUP_KEYS = {
     "cluster_id", "rank", "commission_score", "velocity", "orbit_resonance", "s_intra",
@@ -471,3 +471,9 @@ def test_prune_never_raises_and_counts_only_what_it_deleted() -> None:
     assert rr.prune_run_records(store, now_utc=NOW) == 1
     assert store.deleted == ["daily_run:2026-01-02:local:1"]
     assert rr.prune_run_records(object(), now_utc=NOW) == 0
+
+
+def test_the_record_says_which_cutoffs_grouped_the_night() -> None:
+    assert _build()["cutoffs_source"] is None
+    assert _build(cutoffs_source="calibrated")["cutoffs_source"] == "calibrated"
+    assert _build(cutoffs_source="legacy")["cutoffs_source"] == "legacy"

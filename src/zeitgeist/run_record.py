@@ -149,6 +149,7 @@ def build_run_record(
     extra: Optional[Mapping[str, Any]] = None,
     main_commission: Any = None,
     prompt_sha256: Optional[str] = None,
+    cutoffs_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The record as plain values.
 
@@ -191,6 +192,7 @@ def build_run_record(
         "revised_by_photo_recovery": main != commission,
         "main_pass": {"word": getattr(main, "word", None), "gloss": getattr(main, "gloss", None)},
         "intake_hash": intake_hash,
+        "cutoffs_source": cutoffs_source,
         "arm": arm,
         "repeat": repeat,
         "tests": dict(extra or {}),

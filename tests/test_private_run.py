@@ -700,7 +700,7 @@ class ArmStore(CalibratedStore):
     """The reads, the calibration read and run records; every other store attribute still fails the test."""
 
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault("rows", _marked_rows(em.EMBED_001))
+        kwargs.setdefault("rows", _marked_rows(em.EMBED_2))
         kwargs.setdefault("calibration", _accepted_calibration())
         super().__init__(*args, **kwargs)
         self.records = []
@@ -755,14 +755,14 @@ def test_two_arms_three_repeats_write_six_records_on_one_intake(monkeypatch, cap
     # The intake is read once, and each arm's Director answers on its own model.
     assert [read[0] for read in store.reads].count("load_ingestion_cache") == 1
     assert client.calls == [mc.FLASH] * 3 + [mc.HYDROGEN] * 3
-    # Only the current arm re-embeds, in memory, with its own model.
-    assert {model for model, _ in client.embeds} == {em.EMBED_2}
+    # Only the previous arm embeds again, in memory, with the first model; the current arm uses the stored vectors.
+    assert {model for model, _ in client.embeds} == {em.EMBED_001}
     assert sum(size for _, size in client.embeds) == 8
     ids = [run_id for run_id, _ in store.records]
     assert ids == [f"private_run:2026-11-21:local:1:{arm}:{repeat}"
                    for arm in ("previous", "current") for repeat in (1, 2, 3)]
     records = [record for _, record in store.records]
-    expected_hash = private_run.intake_hash(list(_marked_rows(em.EMBED_001).values()))
+    expected_hash = private_run.intake_hash(list(_marked_rows(em.EMBED_2).values()))
     assert {record["intake_hash"] for record in records} == {expected_hash}
     assert [(record["arm"], record["repeat"]) for record in records] == [
         (arm, repeat) for arm in ("previous", "current") for repeat in (1, 2, 3)]
@@ -773,7 +773,9 @@ def test_two_arms_three_repeats_write_six_records_on_one_intake(monkeypatch, cap
     assert previous["models"]["embedding"] == em.EMBED_001 and previous["prompt_path"] == "legacy"
     assert current["models"]["director"] == current["models"]["judge"] == mc.HYDROGEN
     assert current["models"]["embedding"] == em.EMBED_2 and current["prompt_path"] == "packet"
-    # The current arm's re-embedded window is grouped with the calibrated embedding-2 cutoffs.
+    # The previous arm groups on the legacy cutoffs; the current arm on the calibrated embedding-2 ones.
+    assert {record["cutoffs_source"] for record in records[:3]} == {"legacy"}
+    assert {record["cutoffs_source"] for record in records[3:]} == {"calibrated"}
     assert len(previous["groups"]) == 5 and len(current["groups"]) == 2
 
 
@@ -956,3 +958,62 @@ def test_a_failed_intake_read_ends_the_dispatch_with_a_numeric_line(monkeypatch,
                                                         store=store)
     assert lines == ["[private_run] failed_stage=2"] and code == 3
     assert client.calls == [] and store.records == [] and "Zqsecret" not in everything
+
+
+# ---- the record says which cutoffs and which embedding model grouped the night ----
+
+
+@pytest.mark.parametrize("rows_model, calibration, source", [
+    (em.EMBED_2, True, "calibrated"),
+    (em.EMBED_2, False, "legacy"),
+    (em.EMBED_001, True, "legacy"),
+], ids=["embedding-2-calibrated", "embedding-2-uncalibrated", "embedding-001"])
+def test_the_private_record_names_the_cutoffs_and_the_vectors_model(monkeypatch, rows_model, calibration, source):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    store = ArmStore(rows=_marked_rows(rows_model), calibration=_accepted_calibration() if calibration else None)
+    # The environment names the first model; the record must name the model on the rows.
+    result, _ = _run(store, reply=_slate_reply(), run_models=_models())
+    assert result.exit_code == 0
+    [(_, record)] = store.records
+    assert record["cutoffs_source"] == source
+    assert record["models"]["embedding"] == rows_model
+
+
+def test_the_private_record_does_not_name_one_model_for_mixed_rows(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    rows = _marked_rows(em.EMBED_2)
+    rows["h00"]["embedding_model"] = em.EMBED_001
+    store = ArmStore(rows=rows)
+    _run(store, reply=_slate_reply())
+    [(_, record)] = store.records
+    assert record["cutoffs_source"] == "legacy" and record["models"]["embedding"] == "mixed"
+
+
+@pytest.mark.parametrize("rows_model, calibration", [(em.EMBED_001, True), (em.EMBED_2, False)],
+                         ids=["first-model-rows", "no-accepted-calibration"])
+def test_the_current_arm_fails_before_any_call_without_its_vectors_and_calibration(
+        monkeypatch, capsys, rows_model, calibration):
+    _photo_world(monkeypatch)
+    store = ArmStore(rows=_marked_rows(rows_model), calibration=_accepted_calibration() if calibration else None)
+    code, lines, _, store, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "current,previous", "--repeats", "1"], store=store)
+    _assert_arms_public(lines)
+    assert code == 3
+    assert lines[0] == "[private_run] arm=1 repeat=0 failed_stage=2"
+    assert not any(line.startswith("[private_run] arm=1 repeat=1") for line in lines)
+    assert mc.HYDROGEN not in client.calls and em.EMBED_2 not in {model for model, _ in client.embeds}
+    # The previous arm still runs, on the first model's vectors and the legacy cutoffs.
+    assert [(record["arm"], record["cutoffs_source"], record["models"]["embedding"])
+            for _, record in store.records] == [("previous", "legacy", em.EMBED_001)]
+
+
+def test_the_previous_arm_on_first_model_rows_makes_no_embedding_call(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    store = ArmStore(rows=_marked_rows(em.EMBED_001))
+    code, _, _, store, client = _arms_main(monkeypatch, capsys, ["--arms", "previous", "--repeats", "1"],
+                                           store=store)
+    assert code == 0 and client.embeds == []
+    [(_, record)] = store.records
+    assert record["cutoffs_source"] == "legacy" and record["models"]["embedding"] == em.EMBED_001
