@@ -501,3 +501,77 @@ def test_with_no_groups_any_id_is_accepted_as_today(repair_on, links):
     assert len(prompts) == 1 and commission.attempts_used == 1
     assert commission.selected_cluster_id == "g_anything" and commission.fallback_used is False
     assert not pipeline.chosen_id_mapped(commission)
+
+
+
+# ---- photo recovery's revision is not id-checked ----
+
+
+def _revision_run(tmp_path, monkeypatch):
+    """The live photo branch with fake clients; the main pass picks the top group, and the one revision the
+    photo needs comes from the real Director call with a reply about another group."""
+    import sys
+    import types
+
+    from src.zeitgeist import photo_recovery, spend_guard
+
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    monkeypatch.setenv(mc.DIRECTOR_ENV, mc.HYDROGEN)
+    monkeypatch.setenv(mc.JUDGE_ENV, mc.HYDROGEN)
+    fake_genai = types.ModuleType("google.genai")
+    fake_genai.Client = lambda **kw: object()
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    google = sys.modules.get("google")
+    if google is None:
+        google = types.ModuleType("google")
+        monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setattr(google, "genai", fake_genai, raising=False)
+    monkeypatch.setattr(spend_guard, "guard_genai_client", lambda client, **kw: client)
+    client = _ScriptedClient(lambda model, count: _reply(
+        selected_cluster_id="g_other_story", word="Loom", gloss="steady weaving"))
+    real_commission = commission_daily_zeitgeist  # imported before any patch
+    seen = {}
+
+    def commission(clusters, **kw):
+        if "max_retries" not in kw:
+            seen["run_models"] = kw["run_models"]
+            return DirectorCommission(word="Loom", gloss="steady weaving", commissioned_thesis="Looms keep time.",
+                                      selected_cluster_id=clusters[0].cluster_id, attempts_used=1)
+        return real_commission(clusters, **{**kw, "genai_client": client})
+
+    monkeypatch.setattr(pipeline, "commission_daily_zeitgeist", commission)
+    real_render = pipeline.select_and_render_pulse_assets
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets",
+                        lambda *a, **kw: real_render(*a, **{**kw, "offline_demo": True, "strict_photo_errors": False}))
+
+    def recover(current, *, render, revise, history, photo_required):
+        try:
+            revise(current, change_word=False)
+        except ValueError as error:
+            seen["error"] = str(error)
+        return current, render(current), {"recovered": False}
+
+    monkeypatch.setattr(photo_recovery, "recover_visual", recover)
+    real_collect = pipeline.collect_96h_signals
+    monkeypatch.setattr(pipeline, "collect_96h_signals",
+                        lambda *a, **kw: real_collect(*a, **{**kw, "offline_demo": True}))
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config/orbit_sources.json").write_text("{}")
+    roster = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=_FakeStore(tmp_path, roster))
+    staged._run_staged("2026-11-21", None, offline_demo=False)
+    return seen, client
+
+
+def test_a_revision_about_another_group_behaves_as_with_both_switches_off(tmp_path, monkeypatch, understanding_on):
+    off, off_client = _revision_run(tmp_path / "off", monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    monkeypatch.setenv("ZEITGEIST_LINKS", "1")
+    on, on_client = _revision_run(tmp_path / "on", monkeypatch)
+    # One revision call on Hydrogen, refused by the caller as another story; no Flash round, no extra call.
+    assert off_client.calls == on_client.calls == [mc.HYDROGEN]
+    assert on["error"] == off["error"] == "Same-story photo recovery did not produce a grounded commission"
+    for seen in (off, on):
+        assert seen["run_models"].fallback_fired is False
+        assert seen["run_models"].current("judge") == mc.HYDROGEN

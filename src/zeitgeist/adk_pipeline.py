@@ -1035,7 +1035,7 @@ class ZeitgeistADKOrchestrator:
                     revised = commission_daily_zeitgeist(selected,
                         history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
                         genai_client=genai_client, model_name=run_models.current("director"),
-                        run_models=run_models, max_retries=0, owner_override=locks)
+                        run_models=run_models, max_retries=0, owner_override=locks, check_shown_ids=False)
                     if revised.fallback_used or revised.selected_cluster_id!=story_id:
                         raise ValueError("Same-story photo recovery did not produce a grounded commission")
                     if chosen_link is not None:
@@ -1906,11 +1906,13 @@ def commission_daily_zeitgeist(
     run_models: Optional[RunModels] = None,
     links: Optional[Sequence[Any]] = None,
     extra_group: Any = None,
+    check_shown_ids: bool = True,
 ) -> DirectorCommission:
     """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3).
 
     `links` (the night's links, given only with the links switch on) and `extra_group` are shown on the
-    packet path only; a link id is valid only on an attempt that showed that link.
+    packet path only; a link id is valid only on an attempt that showed that link. `check_shown_ids=False`
+    turns the shown-candidate check off (photo recovery's revision, whose caller refuses another story).
     """
     owner = validate_owner_interjection(owner_override or {})
     constrained = owner.get("enabled") and any(owner.get(k) for k in ("override_word", "override_phrase", "personal_note"))
@@ -2040,7 +2042,7 @@ def commission_daily_zeitgeist(
 
                 not_offered = False
                 # A night with no groups offers nothing to check against: as today, no id check.
-                if is_valid and top_clusters and (repair or links is not None):
+                if is_valid and check_shown_ids and top_clusters and (repair or links is not None):
                     chosen_id = str(commission.selected_cluster_id).strip()
                     offered = _offered_ids(top_clusters, links, extra_group, use_packet)
                     # With the repair switch every id is checked; with only links on, a link id.
