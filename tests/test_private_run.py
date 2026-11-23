@@ -1813,7 +1813,7 @@ def test_the_private_run_offers_the_pointed_group_as_the_edition_does(monkeypatc
     [(_, record)] = store.records
     assert record["reflector_candidate"] == {"pointer_run_id": "daily_run:x", "matched_cluster_id": ids[-1],
                                              "overlap": 1.0, "already_shown": False, "offered": True,
-                                             "lookup": "ok"}
+                                             "lookup": "ok", "shown": True}
     assert baseline_store.records[0][1]["reflector_candidate"] is None
 
 
@@ -1895,6 +1895,8 @@ def test_the_reflector_arm_offers_the_pointed_group_whatever_the_editions_switch
         assert records["private_run:2026-11-21:local:1:current:%d" % repeat]["reflector_candidate"] is None
         assert records["private_run:2026-11-21:local:1:current_reflector:%d" % repeat]["reflector_candidate"][
             "offered"] is True
+        assert records["private_run:2026-11-21:local:1:current_reflector:%d" % repeat]["reflector_candidate"][
+            "shown"] is True
 
 
 def test_with_both_switches_on_the_current_arm_still_offers_nothing(monkeypatch, capsys):

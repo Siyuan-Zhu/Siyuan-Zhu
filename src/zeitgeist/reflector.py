@@ -332,42 +332,28 @@ def _find_pointer(store: Any, now: datetime, max_age_hours: float) -> Optional[D
         now = now.replace(tzinfo=timezone.utc)
     window = timedelta(hours=float(max_age_hours))
     found = []
-    for kind in POINTER_KINDS:
-        records = store.load_run_records(kind=kind, limit=POINTER_LOAD_LIMIT)
-        for record in records or ():
-            if not isinstance(record, dict) or record.get("kind") != kind:
-                continue
-            tests, run_id = record.get("tests"), record.get("run_id")
-            if not isinstance(tests, dict) or not isinstance(run_id, str):
-                continue
-            result = tests.get(KEY)
-            if not isinstance(result, Mapping) or result.get("status") != "pointer":
-                continue
-            if not _may_supply_pointer(record, result):
-                continue
-            hashes = _pointer_hashes(result)
-            moment = run_record._written_at(record)
-            if hashes is None or moment is None or not timedelta(0) <= now - moment <= window:
-                continue
-            found.append((moment, run_id, hashes))
+    # One read of the newest records of every kind; the kinds are filtered here.
+    for record in store.load_run_records(limit=POINTER_LOAD_LIMIT) or ():
+        if not isinstance(record, dict) or record.get("kind") not in POINTER_KINDS:
+            continue
+        tests, run_id = record.get("tests"), record.get("run_id")
+        if not isinstance(tests, dict) or not isinstance(run_id, str):
+            continue
+        result = tests.get(KEY)
+        if not isinstance(result, Mapping) or result.get("status") != "pointer":
+            continue
+        if not _may_supply_pointer(record, result):
+            continue
+        hashes = _pointer_hashes(result)
+        moment = run_record._written_at(record)
+        if hashes is None or moment is None or not timedelta(0) <= now - moment <= window:
+            continue
+        found.append((moment, run_id, hashes))
     if not found:
         return None
     found.sort(key=lambda entry: entry[1])
     found.sort(key=lambda entry: entry[0], reverse=True)
     return {"run_id": found[0][1], "item_hashes": found[0][2]}
-
-
-def newest_pointer(store: Any, now: datetime, *, max_age_hours: float = POINTER_MAX_AGE_HOURS) -> Optional[Dict[str, Any]]:
-    """The newest pointer of a daily or private run record written in the window; None when there is none.
-
-    Only tests["reflector"] with status "pointer" counts, never tests["reflector_trial"]. The window is
-    read from the record's own written_at. A store read that raises finds nothing. Never raises; prints
-    and logs nothing.
-    """
-    try:
-        return _find_pointer(store, now, max_age_hours)
-    except Exception:
-        return None
 
 
 def match_pointer(pointer: Mapping[str, Any], clusters: Sequence[Any]) -> tuple:
@@ -419,8 +405,14 @@ def candidate_for_night(store: Any, clusters: Sequence[Any], now: datetime) -> D
         return _no_candidate(LOOKUP_FAILED)
 
 
-def candidate_record(found: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
-    """What the run record keeps of the night's candidate: everything but the group itself."""
+def candidate_record(found: Optional[Mapping[str, Any]], shown: bool = False) -> Optional[Dict[str, Any]]:
+    """What the run record keeps of the night's candidate: everything but the group itself, and `shown`.
+
+    `offered` says a group was passed to the Director; `shown` that a packet attempt rendered it (not on an
+    owner-word night or an older-prompt round).
+    """
     if found is None:
         return None
-    return {key: value for key, value in found.items() if key != "group"}
+    kept = {key: value for key, value in found.items() if key != "group"}
+    kept["shown"] = bool(shown) and kept.get("offered") is True
+    return kept

@@ -66,56 +66,65 @@ def test_the_candidate_switch_reads_the_process_environment(monkeypatch):
     assert reflector.candidate_enabled() is True
 
 
-# ---- which pointers count ----
+# ---- which pointers count, through the production path ----
+
+
+def _pointer(store, night=None):
+    """The pointer the night's lookup used: its run id, or None."""
+    return reflector.candidate_for_night(store, _night() if night is None else night, NOW)["pointer_run_id"]
 
 
 @pytest.mark.parametrize("kind", ["daily_run", "private_run"])
 def test_a_fresh_pointer_of_either_kind_is_found(tmp_path, kind):
     store = _store(tmp_path, _record(kind))
-    assert reflector.newest_pointer(store, NOW) == {"run_id": "%s:2026-11-21:local:0" % kind, "item_hashes": HASHES}
+    found = reflector.candidate_for_night(store, _night(), NOW)
+    assert found["pointer_run_id"] == "%s:2026-11-21:local:0" % kind and found["offered"] is True
 
 
-@pytest.mark.parametrize("hours, found", [(35.9, True), (36.1, False), (-1, False)])
+@pytest.mark.parametrize("hours, found", [(35.9, True), (36.1, False), (37, False), (-1, False)])
 def test_only_a_pointer_written_in_the_last_36_hours_counts(tmp_path, hours, found):
-    store = _store(tmp_path, _record(hours=hours))
-    assert (reflector.newest_pointer(store, NOW) is not None) is found
+    assert (_pointer(_store(tmp_path, _record(hours=hours))) is not None) is found
 
 
 @pytest.mark.parametrize("status", ["named", "void", "disputed", "skipped", "failed", None])
 def test_any_other_status_is_not_a_pointer(tmp_path, status):
-    assert reflector.newest_pointer(_store(tmp_path, _record(status=status)), NOW) is None
+    assert _pointer(_store(tmp_path, _record(status=status))) is None
 
 
 def test_a_trial_result_is_never_read(tmp_path):
-    store = _store(tmp_path, _record(key="reflector_trial"))
-    assert reflector.newest_pointer(store, NOW) is None
+    assert _pointer(_store(tmp_path, _record(key="reflector_trial"))) is None
 
 
 def test_another_kind_of_record_is_not_read(tmp_path):
-    assert reflector.newest_pointer(_store(tmp_path, _record("other_run")), NOW) is None
+    assert _pointer(_store(tmp_path, _record("other_run"))) is None
 
 
 @pytest.mark.parametrize("hashes", [None, [], [""], [3, None], "p1"])
 def test_a_malformed_pointer_is_not_offered(tmp_path, hashes):
-    assert reflector.newest_pointer(_store(tmp_path, _record(hashes=hashes)), NOW) is None
+    assert _pointer(_store(tmp_path, _record(hashes=hashes))) is None
 
 
 @pytest.mark.parametrize("written", ["not a time", None, ""])
 def test_an_unreadable_moment_is_not_offered(tmp_path, written):
     record = _record()
     record["written_at"] = written
-    assert reflector.newest_pointer(_store(tmp_path, record), NOW) is None
+    assert _pointer(_store(tmp_path, record)) is None
 
 
 def test_the_newest_pointer_wins_across_kinds(tmp_path):
     store = _store(tmp_path, _record("daily_run", hours=10, hashes=["old"]), _record("private_run", hours=3),
                    _record("daily_run", hours=1, status="void"))
-    assert reflector.newest_pointer(store, NOW) == {"run_id": "private_run:2026-11-21:local:1", "item_hashes": HASHES}
+    assert _pointer(store) == "private_run:2026-11-21:local:1"
 
 
-def test_duplicate_hashes_count_once(tmp_path):
-    store = _store(tmp_path, _record(hashes=["p1", "p1", "p2"]))
-    assert reflector.newest_pointer(store, NOW)["item_hashes"] == ["p1", "p2"]
+def test_pointers_written_at_one_moment_go_to_the_smaller_run_id(tmp_path):
+    moment = NOW - timedelta(hours=2)
+    store = JsonFileStateStore(repo_root=tmp_path)
+    for run_id, hashes in (("private_run:b", ["p1"]), ("daily_run:z", HASHES), ("private_run:a", HASHES)):
+        record = _record("private_run" if run_id.startswith("private") else "daily_run", written=moment,
+                         hashes=hashes)
+        assert run_record.write_run_record(store, run_id, record)
+    assert _pointer(store) == "daily_run:z"
 
 
 class _Raising:
@@ -123,10 +132,26 @@ class _Raising:
         raise RuntimeError("Zqsecret store")
 
 
-def test_a_failing_or_missing_store_read_finds_nothing():
-    assert reflector.newest_pointer(_Raising(), NOW) is None
-    assert reflector.newest_pointer(object(), NOW) is None
-    assert reflector.newest_pointer(SimpleNamespace(load_run_records=lambda **kw: [1, "x", None]), NOW) is None
+class _Counting:
+    def __init__(self, records):
+        self.records, self.calls = records, []
+
+    def load_run_records(self, **kwargs):
+        self.calls.append(kwargs)
+        return list(self.records)
+
+
+def test_the_lookup_reads_the_run_records_once_and_filters_the_kinds_itself():
+    records = [dict(_record("other_run"), run_id="other_run:x"), dict(_record("private_run", hours=3), run_id="p:1"),
+               dict(_record("daily_run", hours=1), run_id="d:1")]
+    store = _Counting(records)
+    assert _pointer(store) == "d:1"
+    [call] = store.calls
+    assert call.get("kind") is None and call["limit"] == reflector.POINTER_LOAD_LIMIT
+
+
+def test_newest_pointer_is_gone():
+    assert not hasattr(reflector, "newest_pointer")
 
 
 # ---- which records can supply a pointer ----
@@ -242,14 +267,8 @@ def test_the_lookup_never_raises():
     assert reflector.candidate_for_night(store, None, NOW)["offered"] is False
 
 
-def test_a_read_that_raises_for_one_kind_fails_the_whole_lookup():
-    class HalfRaising:
-        def load_run_records(self, *, kind=None, limit=50):
-            if kind == "private_run":
-                raise RuntimeError("Zqsecret store")
-            return [dict(_record(), run_id="daily_run:x")]
-
-    assert reflector.candidate_for_night(HalfRaising(), _night(), NOW) == FAILED_LOOKUP
+def test_a_read_that_raises_fails_the_whole_lookup():
+    assert reflector.candidate_for_night(_Raising(), _night(), NOW) == FAILED_LOOKUP
 
 
 def test_a_finished_lookup_says_ok_whatever_it_found(tmp_path):
@@ -259,9 +278,14 @@ def test_a_finished_lookup_says_ok_whatever_it_found(tmp_path):
     assert reflector.candidate_for_night(junk, _night(), NOW)["lookup"] == "ok"
 
 
-def test_the_record_value_leaves_the_group_out(tmp_path):
+def test_the_record_value_leaves_the_group_out_and_says_whether_it_was_shown(tmp_path):
     found = reflector.candidate_for_night(_store(tmp_path, _record()), _night(), NOW)
-    assert reflector.candidate_record(found) == {k: v for k, v in found.items() if k != "group"}
+    plain = {k: v for k, v in found.items() if k != "group"}
+    assert reflector.candidate_record(found, shown=True) == dict(plain, shown=True)
+    assert reflector.candidate_record(found) == dict(plain, shown=False)
+    nothing = reflector.candidate_for_night(_store(tmp_path / "none"), _night(), NOW)
+    # Nothing offered is never shown.
+    assert reflector.candidate_record(nothing, shown=True)["shown"] is False
     assert reflector.candidate_record(None) is None
 
 
@@ -304,7 +328,7 @@ class PointerStore(_MemoryRecordStore):
             self.stall.wait(10)
         if self.fail is not None:
             raise self.fail
-        if kind != "daily_run" or self.rank is None:
+        if kind not in (None, "daily_run") or self.rank is None:
             return []
         group = self.seen[0][self.rank]
         moment = datetime.now(timezone.utc) - timedelta(hours=2)
@@ -409,7 +433,7 @@ def test_a_pointed_group_beyond_the_five_is_one_more_plain_cluster_line_after_th
     assert on_lines[at - 1] == _cluster_lines(off_prompt)[-1]
     assert on.record["reflector_candidate"] == {
         "pointer_run_id": "daily_run:2026-11-20:local:1", "matched_cluster_id": str(extra.cluster_id),
-        "overlap": 1.0, "already_shown": False, "offered": True, "lookup": "ok"}
+        "overlap": 1.0, "already_shown": False, "offered": True, "lookup": "ok", "shown": True}
     assert on.result == off.result
 
 
@@ -689,3 +713,67 @@ def test_the_lookup_runs_on_a_thread_named_for_it(tmp_path, monkeypatch):
     monkeypatch.setattr(own_group, "threading", SimpleNamespace(Thread=_Thread, Event=threading.Event))
     _candidate_edition(tmp_path, monkeypatch)
     assert names == [reflector.LOOKUP_THREAD_NAME] and reflector.LOOKUP_THREAD_NAME == "reflector-candidate-lookup"
+
+
+
+# ---- shown: a packet attempt rendered the extra group ----
+
+from tests.test_director_cluster_choice import _commission, _groups  # noqa: E402
+from tests.test_director_cluster_choice import _reply as _choice_reply  # noqa: E402
+
+
+def test_the_extra_group_counts_as_shown_only_when_a_packet_attempt_rendered_it(monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    groups = _groups()
+    shown, prompts = _commission([_choice_reply()], groups=groups, extra_group=groups[5])
+    assert "- Cluster g_5: " in prompts[0] and pipeline.extra_group_shown(shown) is True
+    older, prompts = _commission([_choice_reply()], groups=groups, extra_group=groups[5], packet=False)
+    assert "- Cluster g_5: " not in prompts[0] and pipeline.extra_group_shown(older) is False
+    owner = {"enabled": True, "override_word": "Selvedge", "personal_note": "A synthetic note."}
+    owner_night, prompts = _commission([_choice_reply()], groups=groups, extra_group=groups[5], owner_override=owner)
+    assert "- Cluster g_5: " not in "".join(prompts) and pipeline.extra_group_shown(owner_night) is False
+    none_offered, _ = _commission([_choice_reply()], groups=groups)
+    assert pipeline.extra_group_shown(none_offered) is False
+    assert pipeline.extra_group_shown(None) is False
+
+
+def test_the_edition_records_shown_false_when_no_packet_attempt_rendered_the_group(tmp_path, monkeypatch):
+    _switches(monkeypatch, "1")
+    run = _candidate_edition(tmp_path / "packet", monkeypatch)
+    assert run.record["reflector_candidate"]["offered"] is True and run.record["reflector_candidate"]["shown"] is True
+
+    def no_packet(*args, **kwargs):
+        raise RuntimeError("synthetic packet failure")
+
+    # The packet prompt cannot be built: the older prompt's round runs, without the extra group.
+    monkeypatch.setattr(pipeline, "render_evidence_packet", no_packet)
+    older = _candidate_edition(tmp_path / "older", monkeypatch)
+    assert all("Cluster %s:" % older.seen[0][5].cluster_id not in prompt for prompt in older.client.prompts)
+    assert older.record["reflector_candidate"]["offered"] is True
+    assert older.record["reflector_candidate"]["shown"] is False
+
+
+# ---- the final echo diagnostic covers the extra group ----
+
+
+def test_the_final_echo_line_counts_an_echo_of_the_offered_group(capsys, monkeypatch):
+    from tests.test_director_cluster_choice import ECHO, _echoing
+
+    # The legacy ranking needs fields these synthetic groups lack; this test is about final_echo only.
+    monkeypatch.setattr(pipeline, "ranking_stats", lambda clusters: (0, 1))
+    groups = _echoing(_groups(), 5)
+    commission = DirectorCommission(word="Echoword", gloss="g", commissioned_thesis="They wrote " + ECHO + " here.",
+                                    selected_cluster_id="g_5")
+    pipeline._print_understanding_line(groups, commission, commission)
+    assert "final_echo=0" in capsys.readouterr().out
+    pipeline._print_understanding_line(groups, commission, commission, extra_group=groups[5])
+    assert "final_echo=1" in capsys.readouterr().out
+
+
+def test_the_staged_run_passes_the_offered_group_to_the_final_echo_line(tmp_path, monkeypatch, candidate_on):
+    _offer_sixth(monkeypatch)
+    calls = []
+    monkeypatch.setattr(pipeline, "_print_understanding_line", lambda *a, **kw: calls.append(kw))
+    seen = choice._staged(tmp_path, monkeypatch, choose=_choose_extra)
+    [kw] = calls
+    assert kw["extra_group"] is seen["scored"][0][5]

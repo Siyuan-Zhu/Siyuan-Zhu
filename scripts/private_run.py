@@ -312,7 +312,7 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
             links=links.shown(commission) if links is not None else None,
             realm_counts=links.realm_counts(commission) if links is not None else None,
             chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links if links is not None else None),
-            reflector_candidate=reflector.candidate_record(candidate),
+            reflector_candidate=reflector.candidate_record(candidate, shown=pipeline.extra_group_shown(commission)),
         )
         return run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
     except (KeyboardInterrupt, SystemExit):
@@ -553,7 +553,7 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
         intake_hash=digest, arm=name, repeat=repeat, cutoffs_source=grouping.cutoffs_source,
         links=links.shown(commission), realm_counts=links.realm_counts(commission),
         chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links),
-        reflector_candidate=reflector.candidate_record(candidate),
+        reflector_candidate=reflector.candidate_record(candidate, shown=pipeline.extra_group_shown(commission)),
     )
     run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
     written = run_record.write_run_record(store, run_id, record)

@@ -135,11 +135,13 @@ def _print_understanding_line(
     scored_clusters: Sequence[Any],
     commission: "DirectorCommission",
     original: Optional["DirectorCommission"] = None,
+    extra_group: Any = None,
 ) -> None:
     """One diagnostic line per run for the understanding-v1 switch; never raises.
 
-    final_echo is measured on commission (the one published); the attempt counters come from
-    original (the Director's own commission, before any photo-recovery revision).
+    final_echo is measured on commission (the one published), against the five groups and the reflector's
+    extra group when one was offered; the attempt counters come from original (the Director's own
+    commission, before any photo-recovery revision).
     """
     try:
         counters = original if original is not None else commission
@@ -147,7 +149,7 @@ def _print_understanding_line(
         final_echo = echo_violation(
             [commission.word, commission.gloss, commission.commissioned_thesis, commission.visual_anchor,
              *commission.unsplash_queries, commission.imagen_commission_prompt],
-            list(scored_clusters)[:5],
+            list(scored_clusters)[:5] + ([extra_group] if extra_group is not None else []),
         )
         print(
             f"[understanding_v1] top_changed={int(top_changed)} new_top_legacy_rank={int(rank)} "
@@ -1081,7 +1083,8 @@ class ZeitgeistADKOrchestrator:
         self.last_published_pulse = published
         if understanding_v1:
             # After photo recovery: measure the commission that will be published.
-            _print_understanding_line(scored_clusters, self.last_commission, original_commission)
+            _print_understanding_line(scored_clusters, self.last_commission, original_commission,
+                                      extra_group=extra_group)
         # Compatibility DTOs describe the one actual publication. The primary
         # clustering/commissioning path above remains authoritative; no second renderer runs.
         lens_by_tier = {"M1": "ai_builders", "M2": "markets_finops", "M3": "global_politics"}
@@ -1140,7 +1143,8 @@ class ZeitgeistADKOrchestrator:
                 "realm_counts": (None if night_links is None else _night_realm_counts(
                     raw_signals, realm_map, scored_clusters, links_shown(original_commission, night_links) or [])),
                 "links_on": night_links is not None,
-                "reflector_candidate": reflector.candidate_record(reflector_candidate),
+                "reflector_candidate": reflector.candidate_record(reflector_candidate,
+                                                                 shown=extra_group_shown(original_commission)),
             }
         if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
@@ -1946,6 +1950,12 @@ def _deterministic_fallback_commission(
 _LINK_ID_RE = re.compile(r"link_\d+")
 _MAPPED_ATTR = "_chosen_id_mapped"
 _LINKS_SHOWN_ATTR = "_links_shown"
+_EXTRA_SHOWN_ATTR = "_extra_group_shown"
+
+
+def extra_group_shown(commission: Any) -> bool:
+    """True when a packet attempt of the Director loop rendered the reflector's extra group."""
+    return getattr(commission, _EXTRA_SHOWN_ATTR, False) is True
 
 
 def links_shown(commission: Any, links: Optional[Sequence[Any]]) -> Optional[List[Any]]:
@@ -2022,6 +2032,8 @@ def commission_daily_zeitgeist(
     def shown_mark(commission: DirectorCommission) -> DirectorCommission:
         # Whether any attempt of the loop showed the night's links (a packet attempt, links given).
         setattr(commission, _LINKS_SHOWN_ATTR, links is not None and packet_attempts > 0)
+        # And whether one showed the extra group, which only the packet prompt renders.
+        setattr(commission, _EXTRA_SHOWN_ATTR, extra_group is not None and packet_attempts > 0)
         return commission
 
     if llm_callable is not None or genai_client is not None:
