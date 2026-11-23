@@ -10,7 +10,8 @@ import hashlib
 import json
 import math
 import os
-from datetime import date, datetime, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
@@ -149,6 +150,7 @@ def build_run_record(
     extra: Optional[Mapping[str, Any]] = None,
     main_commission: Any = None,
     prompt_sha256: Optional[str] = None,
+    cutoffs_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The record as plain values.
 
@@ -191,6 +193,7 @@ def build_run_record(
         "revised_by_photo_recovery": main != commission,
         "main_pass": {"word": getattr(main, "word", None), "gloss": getattr(main, "gloss", None)},
         "intake_hash": intake_hash,
+        "cutoffs_source": cutoffs_source,
         "arm": arm,
         "repeat": repeat,
         "tests": dict(extra or {}),
@@ -198,10 +201,31 @@ def build_run_record(
     return _plain(record)
 
 
+_SURROGATE_RE = re.compile("[" + chr(0xD800) + "-" + chr(0xDFFF) + "]")
+_REPLACEMENT = chr(0xFFFD)
+
+
+def _without_surrogates(value: Any) -> Any:
+    """Every string, keys included, with each surrogate code point replaced by U+FFFD.
+
+    A Python string holds a surrogate only when it is unpaired as text; UTF-8 cannot encode one,
+    and Firestore refuses the whole document.
+    """
+    if isinstance(value, str):
+        return _SURROGATE_RE.sub(_REPLACEMENT, value)
+    if isinstance(value, dict):
+        return {_without_surrogates(key): _without_surrogates(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_without_surrogates(item) for item in value]
+    return value
+
+
 def write_run_record(store: Any, run_id: str, record: Dict[str, Any]) -> bool:
     """Write the record once; False when it is too large or anything fails. Never raises, never prints."""
     try:
-        document = _plain(record)
+        document = _without_surrogates(_plain(record))
+        # The record carries its own id, so a later step that loads it can find it again.
+        document["run_id"] = run_id
         size = len(json.dumps(document, allow_nan=False).encode("utf-8"))
         if size > MAX_RECORD_BYTES:
             return False
@@ -209,3 +233,55 @@ def write_run_record(store: Any, run_id: str, record: Dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
+
+
+def add_test_numbers(store: Any, run_id: str, key: str, numbers: Dict[str, Any]) -> bool:
+    """Set `tests[key]` on the stored record and save it; no other key changes.
+
+    False when the record is absent or anything fails. Never raises, never prints.
+    """
+    try:
+        record = store.load_run_record(run_id)
+        if not isinstance(record, dict) or not isinstance(record.get("tests"), dict):
+            return False
+        record["tests"][str(key)] = _plain(numbers)
+        return write_run_record(store, run_id, record)
+    except Exception:
+        return False
+
+
+PRUNE_LOAD_LIMIT = 100_000
+
+
+def _written_at(record: Any) -> Optional[datetime]:
+    try:
+        moment = datetime.fromisoformat(str(record.get("written_at")))
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def prune_run_records(store: Any, *, older_than_days: int = 180, now_utc: Optional[datetime] = None) -> int:
+    """Delete the records written more than `older_than_days` ago; the count deleted. Never raises, never prints.
+
+    A record without its id or a readable `written_at` is kept; a time without a zone is read as UTC.
+    """
+    try:
+        now = now_utc or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        cutoff = now - timedelta(days=int(older_than_days))
+        records = store.load_run_records(limit=PRUNE_LOAD_LIMIT)
+    except Exception:
+        return 0
+    deleted = 0
+    for record in records or ():
+        try:
+            run_id = record.get("run_id")
+            moment = _written_at(record)
+            if isinstance(run_id, str) and moment is not None and moment < cutoff:
+                store.delete_run_record(run_id)
+                deleted += 1
+        except Exception:
+            continue
+    return deleted
