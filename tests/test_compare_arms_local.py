@@ -198,3 +198,21 @@ def test_the_page_ends_with_the_fixed_note_on_fewer_attempts():
     page = cmp.render_html(cmp.build_comparison(_records(), seed=1))
     assert page.count(FOOT_NOTE) == 1
     assert page.index(FOOT_NOTE) > page.rindex('<div class="engine">')
+
+
+def test_existing_files_and_directory_are_made_private_again(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cmp, "_store", lambda: _store_with(_records()))
+    out_dir = tmp_path / "compare"
+    out_dir.mkdir(mode=0o755)
+    out_dir.chmod(0o755)
+    page = out_dir / f"comparison-{HASH[:12]}.html"
+    key_file = out_dir / f"key-{HASH[:12]}.json"
+    for path in (page, key_file):
+        path.write_text("stale", encoding="utf-8")
+        path.chmod(0o644)
+    assert cmp.main(["--out-dir", str(out_dir)]) == 0
+    assert out_dir.stat().st_mode & 0o777 == 0o700
+    for path in (page, key_file):
+        assert path.stat().st_mode & 0o777 == 0o600, path.name
+        assert path.read_text(encoding="utf-8") != "stale"
+

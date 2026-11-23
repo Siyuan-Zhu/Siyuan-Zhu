@@ -130,9 +130,11 @@ def _store() -> Any:
 
 
 def _write_private(path: Path, text: str) -> None:
+    """Write the file readable by the owner only; a file that already existed keeps no wider mode."""
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(text)
+    os.chmod(path, 0o600)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -150,6 +152,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(COUNTS_LINE % (0, 0))
         return 1
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # mkdir leaves an existing directory's mode as it was.
+    os.chmod(out_dir, 0o700)
     stem = comparison["intake_hash"][:12]
     page = out_dir / f"comparison-{stem}.html"
     key_file = out_dir / f"key-{stem}.json"
