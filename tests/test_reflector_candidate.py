@@ -25,12 +25,14 @@ def _night(extra_hashes=("p1", "p2", "p3")):
     return groups
 
 
-def _record(kind="daily_run", *, hours=2, status="pointer", hashes=HASHES, key="reflector", written=None):
+def _record(kind="daily_run", *, hours=2, status="pointer", hashes=HASHES, key="reflector", written=None, arm=None,
+            same_model=False):
     tests = {"reflector_inputs": {}}
-    tests[key] = {"status": status, "pointer_item_hashes": list(hashes) if isinstance(hashes, (list, tuple)) else hashes}
+    tests[key] = {"status": status, "pointer_item_hashes": list(hashes) if isinstance(hashes, (list, tuple)) else hashes,
+                  "same_model": same_model}
     moment = NOW - timedelta(hours=hours) if written is None else written
     return {"kind": kind, "date": "2026-11-21", "written_at": moment.isoformat() if isinstance(moment, datetime)
-            else moment, "tests": tests}
+            else moment, "tests": tests, "arm": arm}
 
 
 def _store(tmp_path, *records):
@@ -125,6 +127,38 @@ def test_a_failing_or_missing_store_read_finds_nothing():
     assert reflector.newest_pointer(_Raising(), NOW) is None
     assert reflector.newest_pointer(object(), NOW) is None
     assert reflector.newest_pointer(SimpleNamespace(load_run_records=lambda **kw: [1, "x", None]), NOW) is None
+
+
+# ---- which records can supply a pointer ----
+
+
+def _supplier(store):
+    return reflector.candidate_for_night(store, _night(), NOW)["pointer_run_id"]
+
+
+@pytest.mark.parametrize("kind, arm", [("daily_run", None), ("private_run", None), ("private_run", "current")])
+def test_the_edition_the_single_private_run_and_the_current_arm_can_supply_a_pointer(tmp_path, kind, arm):
+    assert _supplier(_store(tmp_path, _record(kind, arm=arm))) == "%s:2026-11-21:local:0" % kind
+
+
+@pytest.mark.parametrize("arm", ["previous", "current_links", "current_reflector", "Zqunknown"])
+def test_no_other_comparison_arm_can_supply_a_pointer(tmp_path, arm):
+    assert _supplier(_store(tmp_path, _record("private_run", arm=arm))) is None
+
+
+@pytest.mark.parametrize("kind, arm", [("daily_run", None), ("private_run", None), ("private_run", "current")])
+@pytest.mark.parametrize("same_model", [True, None, "false", 0])
+def test_a_reflector_on_the_directors_own_model_never_supplies_a_pointer(tmp_path, kind, arm, same_model):
+    record = _record(kind, arm=arm, same_model=same_model)
+    if same_model is None:
+        del record["tests"]["reflector"]["same_model"]
+    assert _supplier(_store(tmp_path, record)) is None
+
+
+def test_an_excluded_newer_pointer_leaves_the_older_eligible_one(tmp_path):
+    store = _store(tmp_path, _record("daily_run", hours=5), _record("private_run", hours=1, arm="previous"),
+                   _record("private_run", hours=2, same_model=True))
+    assert _supplier(store) == "daily_run:2026-11-21:local:0"
 
 
 # ---- matching tonight's groups ----
@@ -275,8 +309,8 @@ class PointerStore(_MemoryRecordStore):
         group = self.seen[0][self.rank]
         moment = datetime.now(timezone.utc) - timedelta(hours=2)
         return [{"kind": "daily_run", "run_id": "daily_run:2026-11-20:local:1", "written_at": moment.isoformat(),
-                 "tests": {"reflector": {"status": "pointer",
-                                         "pointer_item_hashes": [item.url_hash for item in group.items]}}}]
+                 "arm": None, "tests": {"reflector": {"status": "pointer", "same_model": False,
+                                                      "pointer_item_hashes": [item.url_hash for item in group.items]}}}]
 
 
 def _switches(monkeypatch, candidate, repair="1"):

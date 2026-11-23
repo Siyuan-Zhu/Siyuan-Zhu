@@ -302,6 +302,28 @@ def _pointer_hashes(result: Any) -> Optional[List[str]]:
     return list(dict.fromkeys(hashes))
 
 
+# A private run record supplies a pointer only from the single private run (no arm) or the current arm.
+POINTER_ARMS = (None, "current")
+
+
+def _may_supply_pointer(record: Mapping[str, Any], result: Mapping[str, Any]) -> bool:
+    """Whether this record's result may steer a public edition.
+
+    The edition's own records, and private runs of the engine the edition runs (the single private run and the
+    current arm). Another comparison arm reads the night with other models or another prompt (previous is Flash
+    on the old embedding model), so its pointer says nothing about the engine that publishes. And a reflector that
+    answered on the Director's own model is a second reading by the same model, which the design rules out:
+    same_model must be stored and false.
+    """
+    kind = record.get("kind")
+    if kind == "private_run":
+        if record.get("arm") not in POINTER_ARMS:
+            return False
+    elif kind != "daily_run":
+        return False
+    return result.get("same_model") is False
+
+
 def _find_pointer(store: Any, now: datetime, max_age_hours: float) -> Optional[Dict[str, Any]]:
     """The newest pointer in the window, or None; raises when a store read raises."""
     from . import run_record
@@ -320,6 +342,8 @@ def _find_pointer(store: Any, now: datetime, max_age_hours: float) -> Optional[D
                 continue
             result = tests.get(KEY)
             if not isinstance(result, Mapping) or result.get("status") != "pointer":
+                continue
+            if not _may_supply_pointer(record, result):
                 continue
             hashes = _pointer_hashes(result)
             moment = run_record._written_at(record)
