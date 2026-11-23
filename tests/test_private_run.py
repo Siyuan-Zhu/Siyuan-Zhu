@@ -514,6 +514,22 @@ def _slate_reply():
     return _reply(selected_cluster_id="cluster_0", candidate_words=SLATE)
 
 
+RECORD_LINE = re.compile(r"\[run_record\] written=[01]")
+
+
+def _assert_public_with_record(lines):
+    """The switch-on lines: today's lines plus one numbers-only record line."""
+    assert lines
+    for line in lines:
+        assert any(pattern.fullmatch(line) for pattern in FORMATS + [RECORD_LINE]), line
+        assert not any(text in line for text in PRIVATE), line
+
+
+def _with_record_line(baseline_lines, written):
+    """The switch-off lines with the record line after the Director line."""
+    return baseline_lines[:2] + ["[run_record] written=%d" % written] + baseline_lines[2:]
+
+
 def test_switch_on_writes_one_private_record_after_the_director(monkeypatch):
     _photo_world(monkeypatch)
     monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
@@ -522,8 +538,9 @@ def test_switch_on_writes_one_private_record_after_the_director(monkeypatch):
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     store = RecordingStore()
     result, director = _run(store, reply=_slate_reply())
-    assert result.lines == baseline.lines and result.exit_code == baseline.exit_code == 0
-    _assert_public(result.lines)
+    assert result.lines == _with_record_line(baseline.lines, 1)
+    assert result.exit_code == baseline.exit_code == 0
+    _assert_public_with_record(result.lines)
     assert [read[0] for read in store.reads] == ["load_ingestion_cache", "load_pulse_feed_history"]
     [(run_id, record)] = store.records
     assert run_id == "private_run:2026-11-21:local:1"
@@ -556,8 +573,8 @@ def test_switch_on_with_a_failing_record_store_keeps_the_run(monkeypatch):
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     for store in (RecordingStore(raise_on_save=True), ReadOnlyStore()):
         result, _ = _run(store, reply=_slate_reply())
-        assert result.lines == baseline.lines and result.exit_code == baseline.exit_code
-        _assert_public(result.lines)
+        assert result.lines == _with_record_line(baseline.lines, 0) and result.exit_code == baseline.exit_code
+        _assert_public_with_record(result.lines)
 
 
 class _Halt(BaseException):
@@ -574,8 +591,8 @@ def test_a_base_exception_from_the_record_store_keeps_the_lines_and_exit_code(mo
     baseline, _ = _run(reply=_slate_reply())
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     result, _ = _run(HaltingStore(), reply=_slate_reply())
-    assert result.lines == baseline.lines and result.exit_code == baseline.exit_code == 0
-    _assert_public(result.lines)
+    assert result.lines == _with_record_line(baseline.lines, 0) and result.exit_code == baseline.exit_code == 0
+    _assert_public_with_record(result.lines)
 
 
 def test_switch_on_records_a_director_fallback_and_still_exits_3(monkeypatch):
@@ -595,8 +612,9 @@ def test_main_with_the_switch_on_prints_the_same_public_lines(monkeypatch, capsy
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     store = RecordingStore()
     code_on, lines_on, everything = _main(monkeypatch, capsys, store, Director(_slate_reply()))
-    assert (code_on, lines_on) == (code_off, lines_off)
-    _assert_public(lines_on)
+    assert (code_on, lines_on) == (code_off, _with_record_line(lines_off, 1))
+    _assert_public(lines_off)
+    _assert_public_with_record(lines_on)
     assert len(store.records) == 1
     assert not any(text in everything for text in PRIVATE)
 
@@ -1068,3 +1086,26 @@ def test_the_director_counter_counts_every_made_call_but_not_a_refusal_before_di
     assert counter.calls == 3
     counter.models.embed_content(model=em.EMBED_001, contents=["Zqtitle00"], config={})
     assert counter.calls == 3 and client.embeds == [(em.EMBED_001, 1)]
+
+
+# ---- the switch-on run says by number whether its record was written ----
+
+
+def test_a_director_fallback_with_the_switch_on_still_says_whether_the_record_was_written(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    result, _ = _run(RecordingStore(), reply="not json")
+    assert result.lines[2] == "[run_record] written=1" and len(result.lines) == 3
+    assert result.exit_code == 3
+
+
+@pytest.mark.parametrize("value", [None, "0"])
+def test_switch_off_prints_no_record_line(monkeypatch, value):
+    _photo_world(monkeypatch)
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_RUN_RECORD", value)
+    result, _ = _run(RecordingStore(), reply=_slate_reply())
+    assert not any(line.startswith("[run_record]") for line in result.lines)
+    _assert_public(result.lines)

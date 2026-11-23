@@ -50,6 +50,7 @@ from src.zeitgeist.understanding import understanding_v1_enabled  # noqa: E402
 DIRECTOR_LINE = "[private_run] director_ok=%d attempts=%d packet=%d fallback=%d items=%d clusters=%d"
 PHOTO_LINE = "[private_run] photo_ok=%d candidates=%d safe=%d best_meaning=%.3f best_composite=%.3f"
 FAILED_LINE = "[private_run] failed_stage=%d"
+RECORD_LINE = "[run_record] written=%d"
 CALIBRATION_LINE = ("[judge_calibration] photos=%d flash_pass_meaning=%d flash_pass_composite=%d "
                     "meaning_min=%.2f composite_min=%.2f written=%d")
 # The critic's batch size, as the live photo search uses it.
@@ -191,7 +192,8 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             lines.append(DIRECTOR_LINE % (int(director_ok), commission.attempts_used, int(commission.packet_used),
                                           int(run_models.fallback_fired), len(items), len(clusters)))
             if run_record.run_record_enabled():
-                _write_private_record(store, now, date_iso, run_models, grouping, commission)
+                written = _write_private_record(store, now, date_iso, run_models, grouping, commission)
+                lines.append(RECORD_LINE % int(written))
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -223,10 +225,10 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
 
 
 def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: RunModels,
-                          grouping: Grouping, commission: Any) -> None:
-    """The private run record after the Director step. Prints and logs nothing.
+                          grouping: Grouping, commission: Any) -> bool:
+    """The private run record after the Director step; True when it was written. Prints and logs nothing.
 
-    Any failure is swallowed, except an interrupt or an exit, which end the run as any interrupt does.
+    Any failure is swallowed (False), except an interrupt or an exit, which end the run as any interrupt does.
     """
     try:
         evidence = pipeline.director_evidence(commission)
@@ -237,11 +239,11 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
             candidate_words=evidence["candidate_words"], chosen_cluster_id=commission.selected_cluster_id,
             prompt_sha256=evidence["prompt_sha256"], cutoffs_source=grouping.cutoffs_source,
         )
-        run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
+        return run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:
-        pass
+        return False
 
 
 def _flash_scores(scored: List[Dict[str, Any]], commission: Any) -> List[Tuple[float, float]]:
