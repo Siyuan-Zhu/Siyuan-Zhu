@@ -488,3 +488,96 @@ def test_other_base_exceptions_in_the_director_are_a_failed_stage(monkeypatch, c
     captured = capsys.readouterr()
     assert captured.out.splitlines()[-1] == "[private_run] failed_stage=3"
     assert captured.err == "" and MARKER not in captured.out and code == 3
+
+
+# ---- the private run record, behind its own switch ----
+
+
+SLATE = [{"word": f"Zqsecret{i}", "fit": f"Zqsecret fit {i}"} for i in range(10)]
+
+
+class RecordingStore(ReadOnlyStore):
+    """The two reads, plus run records; every other store attribute still fails the test."""
+
+    def __init__(self, *args, raise_on_save=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.records = []
+        self.raise_on_save = raise_on_save
+
+    def save_run_record(self, run_id, document):
+        if self.raise_on_save:
+            raise RuntimeError("Zqsecret store failure")
+        self.records.append((run_id, document))
+
+
+def _slate_reply():
+    return _reply(selected_cluster_id="cluster_0", candidate_words=SLATE)
+
+
+def test_switch_on_writes_one_private_record_after_the_director(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    baseline, _ = _run(reply=_slate_reply())
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    store = RecordingStore()
+    result, director = _run(store, reply=_slate_reply())
+    assert result.lines == baseline.lines and result.exit_code == baseline.exit_code == 0
+    _assert_public(result.lines)
+    assert [read[0] for read in store.reads] == ["load_ingestion_cache", "load_pulse_feed_history"]
+    [(run_id, record)] = store.records
+    assert run_id == "private_run:2026-11-21:local:1"
+    assert record["kind"] == "private_run" and record["date"] == "2026-11-21"
+    assert record["word"] == result.commission.word == "Selvedge"
+    assert record["chosen_cluster_id"] == "cluster_0"
+    assert record["candidate_words"] == SLATE
+    sent = director.prompts[0]
+    assert record["evidence_text"] and ("Top Candidate Clusters:\n" + record["evidence_text"] + "\nReturn JSON") in sent
+    assert record["prompt_path"] == "packet" and record["revised_by_photo_recovery"] is False
+    assert record["models"]["director"] == mc.HYDROGEN
+
+
+@pytest.mark.parametrize("value", [None, "0"])
+def test_switch_off_makes_no_new_store_call(monkeypatch, value):
+    _photo_world(monkeypatch)
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_RUN_RECORD", value)
+    store = RecordingStore()
+    result, _ = _run(store, reply=_slate_reply())
+    assert store.records == [] and result.exit_code == 0
+    assert [read[0] for read in store.reads] == ["load_ingestion_cache", "load_pulse_feed_history"]
+
+
+def test_switch_on_with_a_failing_record_store_keeps_the_run(monkeypatch):
+    _photo_world(monkeypatch)
+    baseline, _ = _run(reply=_slate_reply())
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    for store in (RecordingStore(raise_on_save=True), ReadOnlyStore()):
+        result, _ = _run(store, reply=_slate_reply())
+        assert result.lines == baseline.lines and result.exit_code == baseline.exit_code
+        _assert_public(result.lines)
+
+
+def test_switch_on_records_a_director_fallback_and_still_exits_3(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    reply = lambda model: _refusal() if model == mc.HYDROGEN else _slate_reply()
+    store = RecordingStore()
+    result, _ = _run(store, reply=reply)
+    assert result.exit_code == 3
+    [(_, record)] = store.records
+    assert record["models"]["fallback_fired"] is True and record["models"]["director"] == mc.FLASH
+
+
+def test_main_with_the_switch_on_prints_the_same_public_lines(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    code_off, lines_off, _ = _main(monkeypatch, capsys, RecordingStore(), Director(_slate_reply()))
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    store = RecordingStore()
+    code_on, lines_on, everything = _main(monkeypatch, capsys, store, Director(_slate_reply()))
+    assert (code_on, lines_on) == (code_off, lines_off)
+    _assert_public(lines_on)
+    assert len(store.records) == 1
+    assert not any(text in everything for text in PRIVATE)

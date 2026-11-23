@@ -6,7 +6,8 @@ exactly as the edition would (the Stage 0 packet only under the same switch), an
 scores photos for it. It publishes nothing: no commit,
 no README, no artifact. Its one state write is the judge calibration: when Hydrogen judged
 the photos and blocked no batch for safety, Flash scores them again and Hydrogen's matched
-pass marks are stored. The photo stage renders into a temporary directory that is removed
+pass marks are stored. With ZEITGEIST_RUN_RECORD=1 it also writes one private run record
+after the Director step. The photo stage renders into a temporary directory that is removed
 at once. Only numbers and public model names are printed.
 """
 from __future__ import annotations
@@ -28,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.zeitgeist import adk_pipeline as pipeline  # noqa: E402
 from src.zeitgeist import judge_calibration as jc  # noqa: E402
+from src.zeitgeist import run_record  # noqa: E402
 from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import (  # noqa: E402
     FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
@@ -105,6 +107,8 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             lines.append(model_choice_line(run_models, commission.slate_count))
             lines.append(DIRECTOR_LINE % (int(director_ok), commission.attempts_used, int(commission.packet_used),
                                           int(run_models.fallback_fired), len(items), len(clusters)))
+            if run_record.run_record_enabled():
+                _write_private_record(store, now, date_iso, run_models, clusters, commission)
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -133,6 +137,23 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
         lines.append(FAILED_LINE % stage)
         result.exit_code = 3
     return result
+
+
+def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: RunModels,
+                          clusters: List[Any], commission: Any) -> None:
+    """The private run record after the Director step. Never raises, prints or logs."""
+    try:
+        evidence = pipeline.director_evidence(commission)
+        record = run_record.build_run_record(
+            kind="private_run", date_iso=date_iso, now_utc=now, environ=os.environ, run_models=run_models,
+            embedding_model=run_models.current("embedding"), clusters=clusters,
+            evidence_text=evidence["evidence_text"], commission=commission,
+            candidate_words=evidence["candidate_words"], chosen_cluster_id=commission.selected_cluster_id,
+            prompt_sha256=evidence["prompt_sha256"],
+        )
+        run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
+    except Exception:
+        pass
 
 
 def _flash_scores(scored: List[Dict[str, Any]], commission: Any) -> List[Tuple[float, float]]:

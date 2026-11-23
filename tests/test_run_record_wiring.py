@@ -1,0 +1,307 @@
+"""Task 3: the candidate words and evidence kept off the public commission, and the record written by the edition."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from dataclasses import asdict
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from src.state_store import JsonFileStateStore
+from src.zeitgeist import adk_pipeline as pipeline
+from src.zeitgeist import model_choice as mc
+from src.zeitgeist.adk_pipeline import DirectorCommission, commission_daily_zeitgeist
+from src.zeitgeist.publication_commit import publish_bundle as _real_publish
+from src.zeitgeist.understanding import render_evidence_packet
+from tests.test_understanding_pipeline import HISTORY, _clusters, _reply, _run_photo_recovery
+
+ROOT = Path(__file__).resolve().parents[1]
+NOW = "2026-11-21T12:00:00Z"
+COMMISSION_KEYS = {
+    "word", "gloss", "commissioned_thesis", "visual_anchor", "unsplash_queries", "imagen_commission_prompt",
+    "flux_3_commission_prompts", "palette_hex", "selected_cluster_id", "attempts_used", "fallback_used",
+    "packet_used", "echo_rejections", "slate_count",
+}
+SLATE = [{"word": f"Synthword{i}", "fit": f"synthetic fit {i}"} for i in range(10)]
+RECORD_LINE = "ZEITGEIST_RUN_RECORD: ${{ vars.ZEITGEIST_RUN_RECORD || '0' }}"
+UNDERSTANDING_LINE = "ZEITGEIST_UNDERSTANDING_V1: ${{ vars.ZEITGEIST_UNDERSTANDING_V1 || '0' }}"
+
+# sha256 of each prompt as the builders rendered it before this change: not one character may move.
+GOLDEN = {
+    "legacy": "bee670594934d778f9c85b04ebe405f14cd4e1d620fd2d254a1f945fac609ecb",
+    "legacy_retry": "7b0aadc02a960ccaef33f59c07d4927b8c1a4462f6f541e4abbec5b97daa8a83",
+    "legacy_empty": "225333f76fa7206247cb60bdbffc89cf342d15beaa1db1de4cc7e1eb29eb4100",
+    "packet": "b4989b0b8b7098a9989f2f80d3b8cdc8012f4cb0b40d30ab94fecf9e676ad2f4",
+    "packet_slate_retry": "433824acfaaf7f5762046420ca7a9b345b6d69508eec7a7597a5d7bff6cdc8c8",
+}
+CASES = {
+    "legacy": ((_clusters, HISTORY), {}),
+    "legacy_retry": ((_clusters, HISTORY, "Synthetic reason"), {}),
+    "legacy_empty": ((list, []), {}),
+    "packet": ((_clusters, HISTORY), {"evidence_packet": True, "now_utc": NOW}),
+    "packet_slate_retry": ((_clusters, HISTORY, "Synthetic reason"),
+                           {"evidence_packet": True, "now_utc": NOW, "slate": True}),
+}
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _call(builder, name):
+    (make, *args), kwargs = CASES[name]
+    return builder(make(), *args, **kwargs)
+
+
+def _block_of(prompt: str) -> str:
+    return re.search(r"Top Candidate Clusters:\n(.*)\nReturn JSON with keys", prompt, re.S).group(1)
+
+
+@pytest.mark.parametrize("name", sorted(GOLDEN))
+def test_the_prompt_text_is_unchanged_to_the_character(name):
+    assert _sha(_call(pipeline._build_director_prompt, name)) == GOLDEN[name]
+    prompt, block = _call(pipeline._director_prompt_and_block, name)
+    assert _sha(prompt) == GOLDEN[name]
+    assert block == _block_of(prompt)
+
+
+def test_the_packet_block_is_the_rendered_packet():
+    _, block = pipeline._director_prompt_and_block(_clusters(), HISTORY, evidence_packet=True, now_utc=NOW)
+    assert block == render_evidence_packet(_clusters()[:5], now_utc=NOW)
+
+
+class _Client:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.prompts = []
+        self.models = self
+
+    def generate_content(self, *, model, contents, config):
+        self.prompts.append(contents)
+        return SimpleNamespace(text=self.replies[min(len(self.prompts), len(self.replies)) - 1])
+
+
+def _hydrogen():
+    return mc.RunModels(mc.HYDROGEN, mc.HYDROGEN, mc.EMBED_001)
+
+
+def _packet_commission(replies):
+    client = _Client(replies)
+    commission = commission_daily_zeitgeist(
+        _clusters(), HISTORY, genai_client=client, model_name=mc.HYDROGEN, run_models=_hydrogen(),
+        evidence_packet=True, now_utc=NOW,
+    )
+    return commission, client
+
+
+def test_candidate_words_and_evidence_are_kept_off_the_public_commission():
+    commission, client = _packet_commission([_reply(candidate_words=SLATE)])
+    assert set(asdict(commission)) == COMMISSION_KEYS
+    assert "candidate_words" not in commission.to_dict()
+    assert "candidate_words" not in json.dumps(commission.to_dict())
+    assert commission.slate_count == 10
+    evidence = pipeline.director_evidence(commission)
+    assert evidence["candidate_words"] == SLATE
+    assert evidence["evidence_text"] == _block_of(client.prompts[-1])
+    assert evidence["evidence_text"] == render_evidence_packet(_clusters()[:5], now_utc=NOW)
+    assert evidence["prompt_sha256"] == _sha(client.prompts[-1])
+
+
+def test_the_evidence_comes_from_the_accepted_attempt():
+    commission, client = _packet_commission(["not json", _reply(candidate_words=SLATE)])
+    assert len(client.prompts) == 2 and "PREVIOUS ATTEMPT REJECTED" in client.prompts[1]
+    assert pipeline.director_evidence(commission)["prompt_sha256"] == _sha(client.prompts[1])
+
+
+def test_the_older_prompt_path_keeps_its_cluster_lines_and_no_words():
+    prompts = []
+
+    def llm(prompt):
+        prompts.append(prompt)
+        return _reply()
+
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=llm)
+    assert set(asdict(commission)) == COMMISSION_KEYS
+    evidence = pipeline.director_evidence(commission)
+    assert evidence["candidate_words"] == []
+    assert evidence["evidence_text"] == _block_of(prompts[0])
+    assert evidence["evidence_text"].startswith("- Cluster c_one: commission_score=1.50")
+    assert evidence["prompt_sha256"] == _sha(prompts[0])
+
+
+def test_a_fallback_commission_has_no_evidence():
+    commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=lambda prompt: "not json")
+    assert commission.fallback_used is True
+    assert pipeline.director_evidence(commission) == {"candidate_words": [], "evidence_text": None,
+                                                      "prompt_sha256": None}
+    assert pipeline.director_evidence(None) == {"candidate_words": [], "evidence_text": None,
+                                                "prompt_sha256": None}
+
+
+# ---- the edition writes one record, only once it is published ----
+
+
+class _RecordingStore(JsonFileStateStore):
+    """The real JSON store; run records are kept in memory and their moment is noted among the events."""
+
+    def __init__(self, root, events):
+        super().__init__(repo_root=root)
+        self.events = events
+        self.records = []
+
+    def save_run_record(self, run_id, document):
+        self.events.append("save_run_record")
+        self.records.append((run_id, document))
+
+
+class _RaisingStore(_RecordingStore):
+    def save_run_record(self, run_id, document):
+        self.events.append("save_run_record")
+        raise RuntimeError("synthetic store failure")
+
+
+def _edition_setup(tmp_path, monkeypatch, *, switch, publish_fails=False):
+    from src.zeitgeist import publication_commit
+
+    if switch is None:
+        monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_RUN_RECORD", switch)
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    monkeypatch.setenv(mc.DIRECTOR_ENV, mc.HYDROGEN)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config/orbit_sources.json").write_text("{}")
+    client = _Client([_reply(selected_cluster_id="cluster_0", candidate_words=SLATE)])
+    real_commission = pipeline.commission_daily_zeitgeist
+    monkeypatch.setattr(pipeline, "commission_daily_zeitgeist",
+                        lambda clusters, **kw: real_commission(clusters, **{**kw, "genai_client": client}))
+    events = []
+
+    def publish(*args, **kwargs):
+        events.append("publish_bundle:called")
+        if publish_fails:
+            raise RuntimeError("synthetic publication failure")
+        state = _real_publish(*args, **kwargs)
+        events.append("publish_bundle:returned")
+        return state
+
+    monkeypatch.setattr(publication_commit, "publish_bundle", publish)
+    return client, events
+
+
+def _edition(tmp_path, monkeypatch, store_cls=_RecordingStore, *, switch, publish_fails=False):
+    client, events = _edition_setup(tmp_path, monkeypatch, switch=switch, publish_fails=publish_fails)
+    store = store_cls(tmp_path, events)
+    orchestrator = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    analysis, decision, _ = orchestrator.run("2026-11-21", "blueprint", offline_demo=True)
+    return store, client, (analysis.word_of_the_day, analysis.explanation_phrase, decision.selected_mode)
+
+
+def test_switch_on_writes_one_daily_record_only_after_publication(tmp_path, monkeypatch, capsys):
+    store, client, result = _edition(tmp_path, monkeypatch, switch="1")
+    out = capsys.readouterr()
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+    [(run_id, record)] = store.records
+    assert run_id == "daily_run:2026-11-21:local:1"
+    assert record["kind"] == "daily_run"
+    assert record["word"] == result[0] == "Selvedge"
+    assert store.load_pulse_state()["published_pulse"]["word"] == record["word"]
+    assert record["chosen_cluster_id"] == "cluster_0"
+    assert record["candidate_words"] == SLATE
+    assert record["evidence_text"] == _block_of(client.prompts[-1])
+    assert record["prompt_sha256"] == _sha(client.prompts[-1])
+    assert record["prompt_path"] == "packet"
+    assert record["revised_by_photo_recovery"] is False
+    assert record["main_pass"] == {"word": record["word"], "gloss": record["gloss"]}
+    assert record["switches"]["ZEITGEIST_RUN_RECORD"] == "1"
+    assert record["models"]["director"] == mc.HYDROGEN and record["models"]["fallback_fired"] is False
+    assert 1 <= len(record["groups"]) <= 5 and record["groups"][0]["rank"] == 1
+    for text in ("Synthword", "synthetic fit", record["gloss"]):
+        assert text not in out.out + out.err
+
+
+def test_a_failed_publication_writes_no_record(tmp_path, monkeypatch):
+    events_store = []
+    with pytest.raises(RuntimeError, match="synthetic publication failure"):
+        _edition(tmp_path, monkeypatch, lambda root, events: events_store.append(_RecordingStore(root, events))
+                 or events_store[0], switch="1", publish_fails=True)
+    [store] = events_store
+    assert store.events == ["publish_bundle:called"]
+    assert store.records == []
+
+
+@pytest.mark.parametrize("switch", [None, "0", "true"])
+def test_switch_off_writes_no_record(tmp_path, monkeypatch, switch):
+    store, _, _ = _edition(tmp_path, monkeypatch, switch=switch)
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned"]
+    assert store.records == []
+    assert not (tmp_path / "data" / "run_records").exists()
+
+
+def test_a_store_that_raises_leaves_the_edition_unchanged(tmp_path, monkeypatch, capsys):
+    on_store, _, on = _edition(tmp_path / "on", monkeypatch, _RaisingStore, switch="1")
+    on_out = capsys.readouterr()
+    off_store, _, off = _edition(tmp_path / "off", monkeypatch, _RecordingStore, switch="0")
+    off_out = capsys.readouterr()
+    assert on == off
+    assert on_store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+    assert on_store.load_pulse_state()["published_pulse"]["word"] == off_store.load_pulse_state()["published_pulse"]["word"]
+    assert not (tmp_path / "on" / "data" / "publication_reconcile.json").exists()
+    assert (on_out.out, on_out.err) == (off_out.out, off_out.err)
+
+
+def test_the_json_backend_record_lands_in_the_gitignored_folder(tmp_path, monkeypatch):
+    _edition(tmp_path, monkeypatch, lambda root, events: JsonFileStateStore(repo_root=root), switch="1")
+    records = JsonFileStateStore(repo_root=tmp_path).load_run_records(kind="daily_run")
+    assert len(records) == 1 and records[0]["word"] == "Selvedge"
+    assert [p.name for p in (tmp_path / "data" / "run_records").iterdir()] == ["daily_run:2026-11-21:local:1.json"]
+
+
+def test_a_staged_run_alone_writes_nothing(tmp_path, monkeypatch):
+    _, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    store = _RecordingStore(tmp_path, events)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
+    assert store.records == [] and events == []
+    assert staged._run_record_inputs is not None
+
+
+def test_a_photo_recovery_revision_is_recorded_with_its_main_pass(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+
+    def recover(commission, *, render, revise, history, photo_required):
+        revised = DirectorCommission(word="Warp", gloss="threads held taut", commissioned_thesis="Synthetic thesis.",
+                                     selected_cluster_id=commission.selected_cluster_id)
+        return revised, render(revised), {"recovered": True}
+
+    staged = _run_photo_recovery(tmp_path, monkeypatch, recover=recover)
+    store = JsonFileStateStore(repo_root=tmp_path / "records")
+    pipeline._write_pending_run_record(store, staged)
+    [record] = store.load_run_records()
+    assert (record["word"], record["gloss"], record["thesis"]) == ("Warp", "threads held taut", "Synthetic thesis.")
+    assert record["revised_by_photo_recovery"] is True
+    assert record["main_pass"] == {"word": "Loom", "gloss": "steady weaving"}
+    assert record["prompt_path"] == "packet" and record["attempts_used"] == 3
+
+
+# ---- the workflows pass the switch, off by default ----
+
+
+def test_the_daily_workflow_passes_the_switch_beside_every_understanding_line():
+    lines = [line.strip() for line in (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text().splitlines()]
+    understanding = [i for i, line in enumerate(lines) if line == UNDERSTANDING_LINE]
+    assert len(understanding) == 2
+    assert [lines[i + 1] for i in understanding] == [RECORD_LINE, RECORD_LINE]
+    assert lines.count(RECORD_LINE) == 2
+
+
+def test_the_private_run_workflow_passes_the_switch():
+    lines = [line.strip() for line in (ROOT / ".github/workflows/private_run.yml").read_text().splitlines()]
+    assert lines.count(RECORD_LINE) == 1
+    assert lines[lines.index(UNDERSTANDING_LINE) + 1] == RECORD_LINE
