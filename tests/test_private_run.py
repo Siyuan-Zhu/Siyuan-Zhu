@@ -1876,16 +1876,34 @@ def test_the_reflector_arm_is_the_current_arm_plus_the_pointed_group(monkeypatch
             "offered"] is True
 
 
-def test_without_the_switch_the_reflector_arm_runs_as_current(monkeypatch, capsys):
+def test_the_reflector_arm_offers_the_pointed_group_whatever_the_editions_switches_say(monkeypatch, capsys):
+    # The arm definition alone decides, as for the links arm: with both variables unset it still looks up and offers.
     _photo_world(monkeypatch)
     monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
     monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
     calls = []
     _offer_last(monkeypatch, calls)
     code, lines, _, records, client = _reflector_arms(monkeypatch, capsys)
+    assert code == 0 and len(calls) == 2
+    for plain, offered in zip(client.prompts[0:2], client.prompts[2:4]):
+        assert _cluster_lines(offered)[:-1] == _cluster_lines(plain)
+        assert _cluster_lines(offered)[-1].startswith("- Cluster %s:" % calls[0][0][-1])
+    for repeat in (1, 2):
+        assert records["private_run:2026-11-21:local:1:current:%d" % repeat]["reflector_candidate"] is None
+        assert records["private_run:2026-11-21:local:1:current_reflector:%d" % repeat]["reflector_candidate"][
+            "offered"] is True
+
+
+def test_with_both_switches_on_the_current_arm_still_offers_nothing(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    calls = []
+    _offer_last(monkeypatch, calls)
+    code, _, _, records, client = _reflector_arms(monkeypatch, capsys, names="previous,current,current_links")
     assert code == 0 and calls == []
-    assert client.prompts[0:2] == client.prompts[2:4]
     assert all(record["reflector_candidate"] is None for record in records.values())
+    assert not any(_cluster_lines(prompt)[5:] for prompt in client.prompts)
 
 
 def test_with_no_match_the_reflector_arm_runs_as_current_and_says_offered_false(monkeypatch, capsys):

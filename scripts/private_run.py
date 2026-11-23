@@ -17,8 +17,8 @@ calibration is measured, and vectors from another embedding model are made again
 
 With ZEITGEIST_LINKS=1 the private run shows the Director the night's links as the edition does; the
 current_links arm always does, whatever that switch says. With ZEITGEIST_REFLECTOR_CANDIDATE=1 (and the
-keyword repair) the private run and the current_reflector arm offer the reflector's pointed group as the
-edition does; without the switch that arm runs as current.
+keyword repair) the private run offers the reflector's pointed group as the edition does; the
+current_reflector arm always does, whatever those switches say.
 """
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ class Arm:
     runnable: bool = True
     # The night's links shown to the Director, built as the edition builds them with ZEITGEIST_LINKS on.
     links: bool = False
-    # The reflector's pointed group offered as one more candidate, when its switch is on and one matches.
+    # The reflector's pointed group offered as one more candidate when one matches, whatever the edition's switches.
     reflector: bool = False
 
 
@@ -528,7 +528,8 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     # Built from the ranked groups, as the edition builds them; the order shuffle moves only the five.
     links = _links_for(arm.links, store, config, rows, clusters)
     # Matched against the ranked groups; the order shuffle moves only the five, and the extra group follows them.
-    candidate = _candidate_for(arm.reflector and arm.packet, store, clusters, now)
+    # The arm definition alone decides, whatever the edition's candidate and repair switches say.
+    candidate = reflector.candidate_for_night(store, clusters, now) if arm.reflector and arm.packet else None
     extra = candidate["group"] if candidate is not None else None
     with activate(run_models):
         packet = {"evidence_packet": True, "now_utc": now} if arm.packet else {}
