@@ -390,3 +390,183 @@ def test_the_private_run_workflow_passes_the_switch():
     lines = [line.strip() for line in (ROOT / ".github/workflows/private_run.yml").read_text().splitlines()]
     assert lines.count(RECORD_LINE) == 1
     assert lines[lines.index(UNDERSTANDING_LINE) + 1] == RECORD_LINE
+
+
+# ---- the own-group check runs after the record, only with its switch on ----
+
+from src.zeitgeist import own_group  # noqa: E402
+
+OWN_GROUP_LINE = "ZEITGEIST_OWN_GROUP: " + DOLLAR + "{{ vars.ZEITGEIST_OWN_GROUP || '0' }}"
+
+
+@pytest.fixture(autouse=True)
+def _own_group_switch_off_unless_set(monkeypatch):
+    """A shell that exports ZEITGEIST_OWN_GROUP must not change these tests; those that want it set it."""
+    monkeypatch.delenv("ZEITGEIST_OWN_GROUP", raising=False)
+
+
+class _MemoryRecordStore(_RecordingStore):
+    """Run records kept in memory and read back from there; every load is noted among the events."""
+
+    def load_run_record(self, run_id):
+        self.events.append("load_run_record")
+        found = [document for saved_id, document in self.records if saved_id == run_id]
+        return json.loads(json.dumps(found[-1])) if found else None
+
+
+def _own_group_switch(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("ZEITGEIST_OWN_GROUP", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_OWN_GROUP", value)
+
+
+def _spy_check(monkeypatch, events, error=None):
+    calls = []
+
+    def spy(store, run_id, **kwargs):
+        events.append("own_group_check")
+        calls.append((run_id, kwargs))
+        if error is not None:
+            raise error
+
+    monkeypatch.setattr(own_group, "run_own_group_check", spy)
+    return calls
+
+
+def _spied_edition(tmp_path, monkeypatch, *, error=None, store_cls=_MemoryRecordStore):
+    holder = []
+
+    def make(root, events):
+        holder.append(store_cls(root, events))
+        holder.append(_spy_check(monkeypatch, events, error))
+        return holder[0]
+
+    _, _, result = _edition(tmp_path, monkeypatch, make, switch="1")
+    return holder[0], holder[1], result
+
+
+def test_switch_on_checks_once_after_the_record_with_the_records_inputs(tmp_path, monkeypatch, capsys):
+    _own_group_switch(monkeypatch, "1")
+    store, calls, result = _spied_edition(tmp_path, monkeypatch)
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record", "own_group_check"]
+    [(run_id, kwargs)] = calls
+    [(record_id, record)] = store.records
+    assert run_id == record_id == "daily_run:2026-11-21:local:1"
+    assert (kwargs["word"], kwargs["gloss"]) == (record["word"], record["gloss"]) and kwargs["word"] == result[0]
+    assert kwargs["chosen_cluster_id"] == record["chosen_cluster_id"] == "cluster_0"
+    assert [str(c.cluster_id) for c in kwargs["clusters"]][:5] == [g["cluster_id"] for g in record["groups"]]
+    assert kwargs["embedding_model"] == record["models"]["embedding"]
+    # The offline edition has no live client, so the real check would store "skipped".
+    assert kwargs["genai_client"] is None
+    assert capsys.readouterr().out.count(record["gloss"]) == 0
+
+
+def test_switch_on_without_a_client_stores_skipped_and_keeps_the_edition(tmp_path, monkeypatch, capsys):
+    _own_group_switch(monkeypatch, "0")
+    off_store, _, off = _edition(tmp_path / "off", monkeypatch, _MemoryRecordStore, switch="1")
+    off_out = capsys.readouterr()
+    _own_group_switch(monkeypatch, "1")
+    on_store, _, on = _edition(tmp_path / "on", monkeypatch, _MemoryRecordStore, switch="1")
+    on_out = capsys.readouterr()
+    assert on == off
+    assert on_store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record",
+                               "load_run_record", "load_run_record", "save_run_record"]
+    saved = on_store.records[-1][1]
+    assert saved["tests"] == {"own_group": {"status": "skipped", "reason": "no_client"}}
+    assert {k: v for k, v in saved.items() if k != "tests"} == {k: v for k, v in on_store.records[0][1].items()
+                                                                if k != "tests"}
+    assert _published_state(on_store, tmp_path / "on") == _published_state(off_store, tmp_path / "off")
+    assert (on_out.out, on_out.err) == (off_out.out, off_out.err)
+
+
+@pytest.mark.parametrize("value", [None, "0", "true"])
+def test_switch_off_makes_no_new_call(tmp_path, monkeypatch, value):
+    _own_group_switch(monkeypatch, value)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("own-group check called with the switch off")
+
+    monkeypatch.setattr(own_group, "run_own_group_check", forbidden)
+    monkeypatch.setattr(pipeline, "_daily_own_group_check", forbidden, raising=False)
+    store, _, _ = _edition(tmp_path, monkeypatch, _MemoryRecordStore, switch="1")
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+    assert len(store.records) == 1 and store.records[0][1]["tests"] == {}
+
+
+@pytest.mark.parametrize("error", [RuntimeError("Zqsecret failure"), _Halt("Zqsecret halt")])
+def test_a_failing_check_leaves_the_published_edition(tmp_path, monkeypatch, capsys, error):
+    _own_group_switch(monkeypatch, "0")
+    clean_store, _, clean = _edition(tmp_path / "clean", monkeypatch, _MemoryRecordStore, switch="1")
+    clean_out = capsys.readouterr()
+    _own_group_switch(monkeypatch, "1")
+    store, _, result = _spied_edition(tmp_path / "failing", monkeypatch, error=error)
+    out = capsys.readouterr()
+    assert result == clean
+    assert store.events[-2:] == ["save_run_record", "own_group_check"]
+    assert _published_state(store, tmp_path / "failing") == _published_state(clean_store, tmp_path / "clean")
+    assert _published_state(store, tmp_path / "failing")[1:] == (False, False)
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+def test_an_interrupt_during_the_check_is_not_a_failed_publication(tmp_path, monkeypatch):
+    from src.zeitgeist.publication_commit import PublicationMirrorError
+
+    _own_group_switch(monkeypatch, "1")
+    holder = []
+
+    def make(root, events):
+        holder.append(_MemoryRecordStore(root, events))
+        _spy_check(monkeypatch, events, KeyboardInterrupt())
+        return holder[0]
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        _edition(tmp_path, monkeypatch, make, switch="1")
+    assert not isinstance(raised.value, PublicationMirrorError)
+    [store] = holder
+    assert store.events[-2:] == ["save_run_record", "own_group_check"]
+    assert _published_state(store, tmp_path) == ("Selvedge", False, False)
+
+
+def test_a_failed_publication_runs_no_check(tmp_path, monkeypatch):
+    _own_group_switch(monkeypatch, "1")
+    holder = []
+
+    def make(root, events):
+        holder.append(_MemoryRecordStore(root, events))
+        _spy_check(monkeypatch, events)
+        return holder[0]
+
+    with pytest.raises(RuntimeError, match="synthetic publication failure"):
+        _edition(tmp_path, monkeypatch, make, switch="1", publish_fails=True)
+    assert holder[0].events == ["publish_bundle:called"]
+
+
+@pytest.mark.parametrize("value, kept", [(None, False), ("0", False), ("1", True)])
+def test_a_staged_run_keeps_the_check_inputs_only_with_the_switch_on(tmp_path, monkeypatch, value, kept):
+    _own_group_switch(monkeypatch, value)
+    _, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    store = _RecordingStore(tmp_path, events)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
+    assert store.records == [] and events == []
+    assert (staged._own_group_inputs is not None) is kept
+
+
+def test_the_daily_workflow_passes_the_own_group_switch_to_the_edition_job_only():
+    text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
+    edition = _job_lines(text, "synthesize-pulse")
+    assert edition[edition.index(RECORD_LINE) + 1] == OWN_GROUP_LINE
+    assert OWN_GROUP_LINE not in _job_lines(text, "profile-preflight")
+    assert [line.strip() for line in text.splitlines()].count(OWN_GROUP_LINE) == 1
+
+
+@pytest.mark.parametrize("name", ["private_run.yml", "comparison_run.yml"])
+def test_the_private_and_comparison_workflows_pass_the_own_group_switch(name):
+    lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
+    assert lines.count(OWN_GROUP_LINE) == 1
+    assert lines[lines.index(RECORD_LINE) + 1] == OWN_GROUP_LINE
+
+
+def test_the_provider_canary_does_not_pass_the_own_group_switch():
+    assert "ZEITGEIST_OWN_GROUP" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()

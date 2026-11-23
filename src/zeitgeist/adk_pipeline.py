@@ -69,7 +69,7 @@ from .visual_router import (
 from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_controls_supported
 from . import embedding_migration
 from . import judge_calibration
-from . import run_record
+from . import own_group, run_record
 from .embedding_migration import EmbeddingRun
 from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
@@ -609,6 +609,8 @@ class ZeitgeistADKOrchestrator:
         self.last_published_pulse: Optional[PublishedPulse] = None
         # The private run record's inputs; `run()` writes the record only once the edition is published.
         self._run_record_inputs: Optional[Dict[str, Any]] = None
+        # The own-group check's inputs, kept only with its switch on; `run()` uses them after the record.
+        self._own_group_inputs: Optional[Dict[str, Any]] = None
 
     def run(
         self,
@@ -730,6 +732,16 @@ class ZeitgeistADKOrchestrator:
         # Published, installed and the download confirmed: only now, outside the publication's
         # failure handler, the private run record.
         _write_pending_run_record(store, staged)
+        # Then the own-group check on that record, guarded as the record write is. With its switch
+        # off no inputs were kept and nothing is called.
+        try:
+            own_group_inputs = staged._own_group_inputs
+            if own_group_inputs is not None:
+                _daily_own_group_check(store, **own_group_inputs)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            pass
         return result
 
     def _run_staged(
@@ -1063,6 +1075,12 @@ class ZeitgeistADKOrchestrator:
             self._run_record_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
+            }
+        if own_group.own_group_enabled():
+            self._own_group_inputs = {
+                "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
+                "clusters": scored_clusters, "commission": commission, "main_commission": original_commission,
+                "genai_client": genai_client,
             }
         return analysis, decision, telemetry
 
@@ -1451,6 +1469,23 @@ def _write_daily_run_record(
         run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
         pass
+
+
+def _daily_own_group_check(
+    store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
+    clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission, genai_client: Any,
+) -> None:
+    """The own-group check on the edition's run record, with the record's own inputs. Prints and logs nothing.
+
+    `run()` calls it inside the same kind of guard as the record write.
+    """
+    own_group.run_own_group_check(
+        store, run_record.make_run_id("daily_run", date_iso),
+        word=commission.word, gloss=commission.gloss, chosen_cluster_id=main_commission.selected_cluster_id,
+        clusters=clusters,
+        embedding_model=embedding_run.used if embedding_run is not None else run_models.current("embedding"),
+        genai_client=genai_client,
+    )
 
 
 def _coerce_director_commission(raw: Any) -> DirectorCommission:

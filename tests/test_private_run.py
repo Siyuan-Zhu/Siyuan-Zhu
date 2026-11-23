@@ -1115,3 +1115,203 @@ def test_switch_off_prints_no_record_line(monkeypatch, value):
     result, _ = _run(RecordingStore(), reply=_slate_reply())
     assert not any(line.startswith("[run_record]") for line in result.lines)
     _assert_public(result.lines)
+
+
+# ---- the own-group check after the record (SIY-213) ----
+
+
+from src.zeitgeist import own_group  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _own_group_switch_off_unless_set(monkeypatch):
+    """A shell that exports ZEITGEIST_OWN_GROUP must not change these tests; those that want it set it."""
+    monkeypatch.delenv("ZEITGEIST_OWN_GROUP", raising=False)
+
+
+class OwnGroupStore(RecordingStore):
+    """Rows marked with one embedding model, run records kept and read back; every store call is noted."""
+
+    def __init__(self, *args, model=em.EMBED_001, **kwargs):
+        kwargs.setdefault("rows", _marked_rows(model))
+        super().__init__(*args, **kwargs)
+        self.calls = []
+
+    def save_run_record(self, run_id, document):
+        self.calls.append("save_run_record")
+        super().save_run_record(run_id, document)
+
+    def load_run_record(self, run_id):
+        self.calls.append("load_run_record")
+        found = [document for saved_id, document in self.records if saved_id == run_id]
+        return json.loads(json.dumps(found[-1])) if found else None
+
+
+def _group_vector(group):
+    vector = np.zeros(768)
+    vector[group] = 1.0
+    return list(vector)
+
+
+class EmbeddingDirector(Director):
+    """The fake Director plus a fake embedding endpoint that answers the own-group text on group 0's axis."""
+
+    def __init__(self, reply, embed_error=None):
+        super().__init__(reply)
+        self.embeds = []
+        self.embed_error = embed_error
+
+    def embed_content(self, *, model, contents, config):
+        texts = [content.parts[0].text if hasattr(content, "parts") else str(content) for content in contents]
+        self.embeds.append((model, texts, config))
+        if self.embed_error is not None:
+            raise self.embed_error
+        vectors = [_embedding_2_vector(text) if "Zqtitle" in text else _group_vector(0) for text in texts]
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=vector) for vector in vectors])
+
+
+def _own_group_run(store, embed_error=None):
+    client = EmbeddingDirector(_slate_reply(), embed_error=embed_error)
+    result = private_run.run_private(store, genai_client=client, now=NOW, run_models=_models())
+    return result, client
+
+
+def _own_group(record):
+    return record["tests"].get("own_group")
+
+
+def test_own_group_on_stores_the_numbers_after_the_record_and_keeps_the_lines(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    baseline, _ = _own_group_run(OwnGroupStore())
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    store = OwnGroupStore()
+    result, client = _own_group_run(store)
+    assert (result.lines, result.exit_code) == (baseline.lines, baseline.exit_code)
+    _assert_public_with_record(result.lines)
+    assert client.embeds == [(em.EMBED_001, ["Selvedge. A finished edge that holds."], {"output_dimensionality": 768})]
+    assert store.calls == ["save_run_record", "load_run_record", "load_run_record", "save_run_record"]
+    first, last = store.records[0][1], store.records[-1][1]
+    assert store.records[0][0] == store.records[-1][0] == "private_run:2026-11-21:local:1"
+    numbers = _own_group(last)
+    assert numbers["status"] == "ok"
+    chosen = next(group for group in first["groups"] if group["cluster_id"] == first["chosen_cluster_id"])
+    assert numbers["n_own"] == chosen["item_count"]
+    assert len(numbers["others"]) == len(first["groups"]) - 1
+    assert {k: v for k, v in last.items() if k != "tests"} == {k: v for k, v in first.items() if k != "tests"}
+    out = capsys.readouterr()
+    assert not any(text in out.out + out.err for text in PRIVATE)
+
+
+@pytest.mark.parametrize("error", [None, "refused", "raises"])
+def test_a_refused_or_failing_embedding_leaves_the_run_unchanged(monkeypatch, error):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    baseline, _ = _own_group_run(OwnGroupStore())
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    store = OwnGroupStore()
+    embed_error = {None: None, "refused": _refusal(), "raises": RuntimeError("Zqsecret embedding failure")}[error]
+    result, client = _own_group_run(store, embed_error=embed_error)
+    assert (result.lines, result.exit_code) == (baseline.lines, baseline.exit_code)
+    assert len(client.embeds) == 1
+    expected = {None: "ok", "refused": "skipped", "raises": "skipped"}[error]
+    assert _own_group(store.records[-1][1])["status"] == expected
+
+
+def test_vectors_of_several_models_are_skipped_without_a_call(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    rows = _marked_rows(em.EMBED_001)
+    rows["h00"]["embedding_model"] = em.EMBED_2
+    store = OwnGroupStore(rows=rows)
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and client.embeds == []
+    assert _own_group(store.records[-1][1]) == {"status": "skipped", "reason": "embedding_model"}
+
+
+@pytest.mark.parametrize("value", [None, "0"])
+def test_own_group_off_makes_no_embedding_and_no_extra_store_call(monkeypatch, value):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    if value is not None:
+        monkeypatch.setenv("ZEITGEIST_OWN_GROUP", value)
+    store = OwnGroupStore()
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and client.embeds == []
+    assert store.calls == ["save_run_record"] and _own_group(store.records[0][1]) is None
+
+
+def test_own_group_on_with_the_record_off_makes_no_call(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    store = OwnGroupStore()
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and client.embeds == [] and store.calls == []
+
+
+def test_an_unwritten_record_gets_no_check(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    store = OwnGroupStore(raise_on_save=True)
+    result, client = _own_group_run(store)
+    assert result.exit_code == 0 and client.embeds == []
+    assert store.calls == ["save_run_record"]
+
+
+class OwnGroupArmStore(ArmStore):
+    """The arm test store with its run records read back."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = []
+
+    def save_run_record(self, run_id, document):
+        self.calls.append("save_run_record")
+        super().save_run_record(run_id, document)
+
+    def load_run_record(self, run_id):
+        self.calls.append("load_run_record")
+        found = [document for saved_id, document in self.records if saved_id == run_id]
+        return json.loads(json.dumps(found[-1])) if found else None
+
+
+class OwnGroupArmClient(ArmClient):
+    """The arm client; the own-group text is answered on one fixed axis."""
+
+    def embed_content(self, *, model, contents, config):
+        texts = [content.parts[0].text if hasattr(content, "parts") else str(content) for content in contents]
+        if any("Zqtitle" in text for text in texts):
+            return super().embed_content(model=model, contents=contents, config=config)
+        self.embeds.append((model, len(contents)))
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=_group_vector(2)) for _ in texts])
+
+
+def _own_group_arms(monkeypatch, capsys):
+    store, client = OwnGroupArmStore(), OwnGroupArmClient(_slate_reply())
+    code, lines, everything, _, _ = _arms_main(monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "2"],
+                                               store=store, client=client)
+    return code, lines, everything, store, client
+
+
+def test_each_arm_and_repeat_is_checked_after_its_record(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    code_off, lines_off, _, store_off, client_off = _own_group_arms(monkeypatch, capsys)
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    code, lines, everything, store, client = _own_group_arms(monkeypatch, capsys)
+    assert (code, lines) == (code_off, lines_off) and code == 0
+    _assert_arms_public(lines)
+    assert not any(text in everything for text in PRIVATE)
+    # One request of one text per arm and repeat, on the model that made that arm's vectors.
+    assert client.embeds == client_off.embeds + [(em.EMBED_001, 1)] * 2 + [(em.EMBED_2, 1)] * 2
+    assert store_off.calls == ["save_run_record"] * 4
+    assert store.calls == ["save_run_record", "load_run_record", "load_run_record", "save_run_record"] * 4
+    finals = {}
+    for run_id, record in store.records:
+        finals[run_id] = record
+    assert list(finals) == [f"private_run:2026-11-21:local:1:{arm}:{repeat}"
+                            for arm in ("previous", "current") for repeat in (1, 2)]
+    assert all(_own_group(record)["status"] == "ok" for record in finals.values())

@@ -119,3 +119,236 @@ def test_the_items_may_be_objects_with_an_f16_vector():
     own = [SimpleNamespace(embedding_f16=pack_f16_base64([1.0, 0.0, 0.0]))]
     numbers = own_group.own_group_numbers([1, 0, 0], own, [])
     assert numbers["own"] == pytest.approx(1.0, abs=1e-3)
+
+
+# ---- the guarded step ----
+
+
+from types import SimpleNamespace  # noqa: E402
+
+from src.zeitgeist import model_choice as mc  # noqa: E402
+from src.zeitgeist.collectors import EMBEDDING_2_TASK_PREFIX  # noqa: E402
+from src.zeitgeist.spend_guard import SpendBlocked  # noqa: E402
+
+RUN_ID = "daily_run:2026-11-21:local:1"
+WORD, GLOSS = "Selvedge", "A finished edge that holds."
+TEXT = WORD + ". " + GLOSS
+
+
+def _axis(index, dim=768):
+    vector = [0.0] * dim
+    vector[index] = 1.0
+    return vector
+
+
+def _cluster(index, *axes, dim=768):
+    return SimpleNamespace(cluster_id="cluster_%d" % index, items=[{"embedding_f32": _axis(a, dim)} for a in axes])
+
+
+def _night(count=5, dim=768):
+    # Candidate i holds two items on axis i and one on axis 10 + i.
+    return [_cluster(i, i, i, 10 + i, dim=dim) for i in range(count)]
+
+
+class MemoryStore:
+    """One stored run record, every store call noted."""
+
+    def __init__(self, record=None, fail_on=None, error=RuntimeError):
+        self.records = {} if record is False else {RUN_ID: record or {"run_id": RUN_ID, "tests": {}}}
+        self.calls = []
+        self.fail_on = fail_on
+        self.error = error
+
+    def load_run_record(self, run_id):
+        self.calls.append("load_run_record")
+        if self.fail_on == "load":
+            raise self.error("synthetic load failure")
+        record = self.records.get(run_id)
+        return None if record is None else {**record, "tests": dict(record["tests"])}
+
+    def save_run_record(self, run_id, document):
+        self.calls.append("save_run_record")
+        if self.fail_on == "save":
+            raise self.error("synthetic save failure")
+        self.records[run_id] = document
+
+
+class EmbedClient:
+    """A fake embedding endpoint: records each request and answers one vector per text."""
+
+    def __init__(self, vector=None, error=None, count=None):
+        self.requests = []
+        self.vector = _axis(0) if vector is None else vector
+        self.error = error
+        self.count = count
+        self.models = self
+
+    def embed_content(self, *, model, contents, config):
+        self.requests.append({"model": model, "contents": contents, "config": config})
+        if self.error is not None:
+            raise self.error
+        count = len(contents) if self.count is None else self.count
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=list(self.vector)) for _ in range(count)])
+
+
+def _check(store=None, client=None, **over):
+    kwargs = dict(word=WORD, gloss=GLOSS, chosen_cluster_id="cluster_0", clusters=_night(),
+                  embedding_model=mc.EMBED_001, genai_client=EmbedClient() if client is None else client)
+    kwargs.update(over)
+    store = MemoryStore() if store is None else store
+    return own_group.run_own_group_check(store, RUN_ID, **kwargs), store, kwargs["genai_client"]
+
+
+def _stored(store):
+    return store.records[RUN_ID]["tests"].get("own_group")
+
+
+def test_the_stored_numbers_are_the_arithmetic_of_one_embedding_request(capsys, caplog):
+    vector = [0.0] * 768
+    vector[0], vector[1] = 0.8, 0.6
+    ok, store, client = _check(client=EmbedClient(vector=vector))
+    assert ok is True
+    [request] = client.requests
+    assert request == {"model": mc.EMBED_001, "contents": [TEXT], "config": {"output_dimensionality": 768}}
+    clusters = _night()
+    expected = own_group.own_group_numbers(vector, clusters[0].items, [c.items for c in clusters[1:]])
+    stored = _stored(store)
+    assert stored["status"] == "ok" and stored["n_own"] == 3
+    assert stored["own"] == pytest.approx(expected["own"], abs=1e-3)
+    assert stored["others"] == pytest.approx(expected["others"], abs=1e-3) and len(stored["others"]) == 4
+    assert stored["margin"] == pytest.approx(expected["margin"], abs=1e-3)
+    # Nothing else in the record moves.
+    assert set(store.records[RUN_ID]) == {"run_id", "tests"} and set(store.records[RUN_ID]["tests"]) == {"own_group"}
+    out = capsys.readouterr()
+    assert out.out == out.err == "" and caplog.records == []
+
+
+def test_the_embedding_2_request_is_the_one_the_collection_step_makes():
+    ok, store, client = _check(embedding_model=mc.EMBED_2)
+    assert ok is True and _stored(store)["status"] == "ok"
+    [request] = client.requests
+    assert request["model"] == mc.EMBED_2 and request["config"] == {"output_dimensionality": 768}
+    [content] = request["contents"]
+    assert [part.text for part in content.parts] == [EMBEDDING_2_TASK_PREFIX + TEXT]
+
+
+def test_the_check_reads_only_the_first_five_candidates():
+    clusters = _night(6)
+    ok, store, client = _check(chosen_cluster_id="cluster_5", clusters=clusters)
+    assert ok is False and client.requests == []
+    assert _stored(store) == {"status": "skipped", "reason": "unknown_candidate"}
+    ok, store, _ = _check(chosen_cluster_id="cluster_4", clusters=clusters)
+    assert ok is True and len(_stored(store)["others"]) == 4
+
+
+@pytest.mark.parametrize("chosen", ["cluster_9", None, ""])
+def test_an_unknown_chosen_candidate_is_skipped_without_a_call(chosen):
+    ok, store, client = _check(chosen_cluster_id=chosen)
+    assert ok is False and client.requests == []
+    assert _stored(store) == {"status": "skipped", "reason": "unknown_candidate"}
+
+
+def test_a_chosen_candidate_without_vectors_is_skipped_without_a_call():
+    clusters = _night()
+    clusters[0] = SimpleNamespace(cluster_id="cluster_0", items=[{"title": "no vector"}])
+    ok, store, client = _check(clusters=clusters)
+    assert ok is False and client.requests == []
+    assert _stored(store) == {"status": "skipped", "reason": "no_vector"}
+    clusters[0] = SimpleNamespace(cluster_id="cluster_0", items=[])
+    ok, store, client = _check(clusters=clusters)
+    assert ok is False and client.requests == []
+    assert _stored(store) == {"status": "skipped", "reason": "no_items"}
+
+
+def test_a_night_with_one_candidate_stores_empty_others_and_a_null_margin():
+    ok, store, _ = _check(clusters=_night(1))
+    assert ok is True
+    stored = _stored(store)
+    assert stored["status"] == "ok" and stored["others"] == [] and stored["margin"] is None
+
+
+def test_item_vectors_of_another_length_are_skipped():
+    ok, store, client = _check(clusters=_night(dim=32))
+    assert ok is False and len(client.requests) == 1
+    assert _stored(store) == {"status": "skipped", "reason": "dimension"}
+
+
+@pytest.mark.parametrize("model", ["mixed", "unknown", "", None])
+def test_vectors_of_no_single_model_are_skipped_without_a_call(model):
+    ok, store, client = _check(embedding_model=model)
+    assert ok is False and client.requests == []
+    assert _stored(store) == {"status": "skipped", "reason": "embedding_model"}
+
+
+def test_no_client_is_skipped():
+    ok, store, _ = _check(genai_client=None)
+    assert ok is False
+    assert _stored(store) == {"status": "skipped", "reason": "no_client"}
+
+
+def _refusal(pre):
+    error = SpendBlocked("Unregistered paid SDK method")
+    if pre:
+        error.refused_before_dispatch = True
+    return error
+
+
+@pytest.mark.parametrize("pre", [True, False])
+def test_a_refused_call_is_stored_as_skipped(pre, capsys):
+    ok, store, client = _check(client=EmbedClient(error=_refusal(pre)))
+    assert ok is False and len(client.requests) == 1
+    assert _stored(store) == {"status": "skipped", "reason": "refused"}
+    out = capsys.readouterr()
+    assert out.out == out.err == ""
+
+
+class _Halt(BaseException):
+    """A failure outside Exception, as a library or the runtime might raise."""
+
+
+@pytest.mark.parametrize("error", [RuntimeError("Zqsecret failure"), _Halt("Zqsecret halt")])
+def test_a_raising_client_is_stored_as_skipped(error, capsys, caplog):
+    ok, store, _ = _check(client=EmbedClient(error=error))
+    assert ok is False
+    assert _stored(store) == {"status": "skipped", "reason": "failed"}
+    out = capsys.readouterr()
+    assert out.out == out.err == "" and caplog.records == []
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_a_reply_without_exactly_one_vector_is_stored_as_skipped(count):
+    ok, store, _ = _check(client=EmbedClient(count=count), embedding_model=mc.EMBED_2)
+    assert ok is False
+    assert _stored(store) == {"status": "skipped", "reason": "failed"}
+
+
+def test_a_vector_of_another_length_from_the_provider_is_stored_as_skipped():
+    ok, store, _ = _check(client=EmbedClient(vector=_axis(0, 12)))
+    assert ok is False
+    assert _stored(store) == {"status": "skipped", "reason": "failed"}
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, SystemExit])
+def test_an_interrupt_or_exit_is_raised_again(error):
+    with pytest.raises(error):
+        _check(client=EmbedClient(error=error()))
+
+
+def test_without_a_record_nothing_is_embedded_or_stored():
+    ok, store, client = _check(store=MemoryStore(record=False))
+    assert ok is False and client.requests == []
+    assert store.calls == ["load_run_record"]
+
+
+@pytest.mark.parametrize("fail_on, error", [("load", RuntimeError), ("save", RuntimeError),
+                                            ("load", _Halt), ("save", _Halt)])
+def test_a_failing_store_returns_false_and_raises_nothing(fail_on, error):
+    ok, _, _ = _check(store=MemoryStore(fail_on=fail_on, error=error))
+    assert ok is False
+
+
+def test_a_missing_word_or_gloss_is_skipped_without_a_call():
+    for over in ({"word": None}, {"gloss": ""}):
+        ok, store, client = _check(**over)
+        assert ok is False and client.requests == []
+        assert _stored(store) == {"status": "skipped", "reason": "no_text"}
