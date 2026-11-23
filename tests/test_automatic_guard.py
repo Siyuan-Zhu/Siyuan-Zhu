@@ -167,14 +167,20 @@ def test_completion_near_month_end_does_not_require_room_to_start_another_reques
         guard.begin_provider_request('bfl','image','.20','b'*64)
 
 
-def test_authenticated_gemini_usage_outside_admitted_shape_freezes_before_next_call():
+def test_authenticated_gemini_prompt_overage_inside_the_hold_settles_and_admits_the_next_call():
     guard=budget();result=types.GenerateContentResponse(response_id='mismatch',model_version='gemini-3.8-flash',
         usage_metadata={'prompt_token_count':11,'candidates_token_count':5,'total_token_count':16})
     api,calls=client(guard,result=result)
-    with pytest.raises(SpendBlocked,match='Authenticated Gemini usage'):generate(api)
-    assert guard.ledger.document['reconciliation_required'] is True
+    generate(api)
+    record=next(iter(guard.ledger.document['reservations'].values()))
+    assert record['request_context']['admitted_input_tokens']==10
+    assert record['status']=='settled'
+    assert Decimal(record['actual_gross_usd'])==(Decimal(11)*Decimal('.75')+Decimal(5)*Decimal('3.75'))/1000000
+    assert record['usage_receipt']['prompt_tokens_over_admitted']==1
+    assert guard.ledger.document.get('reconciliation_required') is not True
     assert len(calls)==1
-    with pytest.raises(SpendBlocked):generate(api)
+    api,calls=client(guard)
+    generate(api)
     assert len(calls)==1
 
 
