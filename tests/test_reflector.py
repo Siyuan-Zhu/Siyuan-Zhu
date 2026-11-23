@@ -258,3 +258,155 @@ def test_clusters_that_cannot_be_read_store_nothing(tmp_path):
 
     assert reflector.store_reflector_inputs(store, RUN_ID, [Unreadable(), Unreadable()], "x", "m") is False
     assert store.load_run_record(RUN_ID) == before
+
+
+# ---- has it been named? the arithmetic answer ----
+
+
+def test_the_any_day_glosses_are_three_fixed_strings():
+    assert reflector.ANY_DAY_GLOSSES == ("A quiet tension beneath ordinary days.", "Change arriving slower than expected.",
+                                         "What we carry and what we set down.")
+
+
+def test_a_past_gloss_as_close_as_tonights_own_names_the_group():
+    # Tonight's own gloss sits at cosine 0.8 to its candidate; a past gloss sits at 0.8 to the standing group.
+    numbers = reflector.named_by_arithmetic([1, 0, 0], [[0, 1, 0], [0.8, 0.6, 0]], [0.8, 0, 0.6], [1, 0, 0])
+    assert numbers == {"named": True, "margin": pytest.approx(0.0), "best_index": 1}
+    assert type(numbers["margin"]) is float and type(numbers["named"]) is bool
+
+
+def test_the_rule_allows_two_hundredths_below_the_reference():
+    reference = [0.8, 0, 0.6]
+    just_inside = [0.785, math.sqrt(1 - 0.785 ** 2), 0]
+    just_outside = [0.775, math.sqrt(1 - 0.775 ** 2), 0]
+    inside = reflector.named_by_arithmetic([1, 0, 0], [just_inside], reference, [1, 0, 0])
+    outside = reflector.named_by_arithmetic([1, 0, 0], [just_outside], reference, [1, 0, 0])
+    assert inside["named"] is True and inside["margin"] == pytest.approx(-0.015)
+    assert outside["named"] is False and outside["margin"] == pytest.approx(-0.025)
+
+
+def test_vectors_are_normalised_before_the_cosine():
+    numbers = reflector.named_by_arithmetic([5, 0, 0], [[0, 0, 2], [3, 3, 0]], [0, 4, 0], [0, 9, 0])
+    assert numbers["best_index"] == 1
+    assert numbers["margin"] == pytest.approx(1 / math.sqrt(2) - 1.0)
+    assert numbers["named"] is False
+
+
+@pytest.mark.parametrize("args", [
+    ([1, 0], [], [1, 0], [1, 0]),
+    ([0, 0], [[1, 0]], [1, 0], [1, 0]),
+    ([1, 0], [[1, 0]], [1, 0], [1, 0, 0]),
+    ([1, 0], [[float("nan"), 0]], [1, 0], [1, 0]),
+])
+def test_an_arithmetic_answer_needs_usable_vectors(args):
+    with pytest.raises(ValueError):
+        reflector.named_by_arithmetic(*args)
+
+
+# ---- the pointing task ----
+
+
+def test_the_prompt_head_is_fixed():
+    assert reflector.PROMPT_HEAD == (
+        "Below is one group of items and a numbered list of short glosses. Reply with JSON of the form "
+        '{"answer": N}, where N is the number of the gloss that was written about this group, or "none" if no '
+        "gloss was.")
+
+
+def test_the_question_is_the_head_the_block_then_the_glosses_numbered_in_the_given_order():
+    question = reflector.build_question("- Cluster g: synthetic block", ["First.", "Second.", "Third."], [2, 0, 1])
+    assert question == (reflector.PROMPT_HEAD + "\n\n- Cluster g: synthetic block\n\n"
+                        "1. Third.\n2. First.\n3. Second.")
+
+
+def test_a_gloss_with_line_breaks_stays_on_its_numbered_line():
+    question = reflector.build_question("block", ["One\nline.", "Two."], [0, 1])
+    assert question.endswith("\n\n1. One line.\n2. Two.")
+
+
+@pytest.mark.parametrize("order", [[0, 1], [0, 1, 1], [0, 1, 3], [1, 2, 3]])
+def test_an_order_that_is_not_a_permutation_is_refused(order):
+    with pytest.raises(ValueError):
+        reflector.build_question("block", ["a", "b", "c"], order)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ('{"answer": 2}', 2),
+    ('  {"answer": 1}\n', 1),
+    ('{"answer": 3, "why": "synthetic"}', 3),
+    ('{"answer": "none"}', "none"),
+    ('{"answer": "None"}', "none"),
+    ('{"answer": 0}', None),
+    ('{"answer": 4}', None),
+    ('{"answer": -1}', None),
+    ('{"answer": true}', None),
+    ('{"answer": 2.0}', None),
+    ('{"answer": "2"}', None),
+    ('{"answer": null}', None),
+    ('{"answer": [1]}', None),
+    ('{"other": 1}', None),
+    ('[1]', None),
+    ('Answer: {"answer": 2}', None),
+    ('{"answer": 2} because it fits', None),
+    ('```json\n{"answer": 2}\n```', None),
+    ("", None),
+    (None, None),
+    ("not json", None),
+])
+def test_an_answer_is_a_number_in_range_none_or_nothing(text, expected):
+    assert reflector.parse_answer(text, 3) == expected
+
+
+def test_parse_answer_never_raises_on_odd_input():
+    for text in (b'{"answer": 1}', 12, object(), '{"answer": 1e999}', "{" * 5000):
+        assert reflector.parse_answer(text, 3) in (None, 1)
+
+
+def test_an_answer_maps_back_to_the_gloss_it_pointed_at():
+    order = [2, 0, 1]
+    assert [reflector.answer_identity(answer, order) for answer in (1, 2, 3, "none", None)] == [2, 0, 1, "none", None]
+
+
+# ---- the verdict ----
+
+
+def _verdict(control=(0, 0, 0), expected=(0, 0, 0), real=("none",) * 3, plants=(5, 6, 7)):
+    return reflector.verdict(list(control), list(expected), list(real), list(plants))
+
+
+def test_clean_plants_and_three_nones_give_a_pointer():
+    assert _verdict() == {"plants_ok": True, "agreement": True, "status": "pointer"}
+
+
+def test_clean_plants_and_three_answers_on_one_gloss_give_named():
+    assert _verdict(real=(3, 3, 3)) == {"plants_ok": True, "agreement": True, "status": "named"}
+
+
+def test_a_wrong_control_gives_void():
+    assert _verdict(control=(0, 2, 0)) == {"plants_ok": False, "agreement": True, "status": "void"}
+
+
+def test_an_unreadable_control_counts_as_wrong():
+    assert _verdict(control=(0, None, 0))["status"] == "void"
+
+
+def test_a_chosen_any_day_plant_gives_void():
+    # The plant of the second run is chosen in the second run.
+    assert _verdict(real=("none", 6, "none")) == {"plants_ok": False, "agreement": False, "status": "void"}
+    assert _verdict(real=(6, 6, 6)) == {"plants_ok": False, "agreement": True, "status": "void"}
+
+
+def test_three_real_answers_that_differ_give_void():
+    assert _verdict(real=(3, 3, "none")) == {"plants_ok": True, "agreement": False, "status": "void"}
+    assert _verdict(real=(1, 2, 3))["status"] == "void"
+
+
+def test_an_unreadable_real_answer_voids_the_run():
+    assert _verdict(real=("none", None, "none")) == {"plants_ok": True, "agreement": False, "status": "void"}
+    assert _verdict(real=(None, None, None)) == {"plants_ok": True, "agreement": False, "status": "void"}
+
+
+def test_missing_runs_give_void():
+    assert reflector.verdict([0, 0], [0, 0, 0], ["none"] * 3, [5, 6, 7])["status"] == "void"
+    assert reflector.verdict([0] * 3, [0] * 3, ["none"] * 2, [5, 6, 7])["status"] == "void"
+    assert reflector.verdict([], [], [], [])["status"] == "void"

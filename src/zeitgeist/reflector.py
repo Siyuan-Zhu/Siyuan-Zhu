@@ -6,6 +6,7 @@ reflector needs from the run on its record. Arithmetic only: it calls no provide
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from datetime import date, datetime, timezone
@@ -146,3 +147,117 @@ def store_reflector_inputs(
         raise
     except BaseException:
         return False
+
+
+# ---- has it been named? arithmetic, then the pointing task ----
+
+ANY_DAY_GLOSSES = (
+    "A quiet tension beneath ordinary days.",
+    "Change arriving slower than expected.",
+    "What we carry and what we set down.",
+)
+# The standing group counts as named when its closest past gloss is this close to tonight's reference, or closer.
+NAMED_TOLERANCE = 0.02
+NONE_ANSWER = "none"
+
+
+def _unit(vector: Any) -> np.ndarray:
+    array = np.asarray(vector, dtype=np.float64).reshape(-1)
+    norm = float(np.linalg.norm(array)) if array.size else 0.0
+    if not array.size or not np.all(np.isfinite(array)) or not norm > 1e-12:
+        raise ValueError("vector is not usable")
+    return array / norm
+
+
+def named_by_arithmetic(
+    standing_centre: Any, gloss_vectors: Sequence[Any], own_gloss_vector: Any, chosen_centre: Any,
+) -> Dict[str, Any]:
+    """Whether a past gloss sits as close to the standing group as tonight's gloss sits to tonight's candidate.
+
+    The reference is the cosine of `own_gloss_vector` to `chosen_centre`; the best is the highest cosine of
+    a past gloss to `standing_centre`. `margin` is best minus reference; `named` is best >= reference - 0.02.
+    Raises ValueError when there is no past gloss or a vector is unusable. Pure.
+    """
+    standing = _unit(standing_centre)
+    reference_vectors = [_unit(own_gloss_vector), _unit(chosen_centre)]
+    glosses = [_unit(vector) for vector in gloss_vectors or ()]
+    if not glosses:
+        raise ValueError("no past gloss")
+    if any(vector.shape != standing.shape for vector in glosses + reference_vectors):
+        raise ValueError("vector dimensions differ")
+    reference = float(reference_vectors[0] @ reference_vectors[1])
+    cosines = [float(vector @ standing) for vector in glosses]
+    best_index = int(np.argmax(cosines))
+    best = cosines[best_index]
+    return {"named": bool(best >= reference - NAMED_TOLERANCE), "margin": float(best - reference),
+            "best_index": best_index}
+
+
+PROMPT_HEAD = (
+    "Below is one group of items and a numbered list of short glosses. Reply with JSON of the form "
+    '{"answer": N}, where N is the number of the gloss that was written about this group, or "none" if no '
+    "gloss was."
+)
+
+
+def build_question(block: str, glosses: Sequence[str], order: Sequence[int]) -> str:
+    """The head, the block, then the glosses numbered from 1: gloss `order[n - 1]` is shown as number n."""
+    order = [int(index) for index in order]
+    if sorted(order) != list(range(len(glosses))):
+        raise ValueError("order is not a permutation of the glosses")
+    lines = ["%d. %s" % (number, " ".join(str(glosses[index]).split())) for number, index in enumerate(order, 1)]
+    return PROMPT_HEAD + "\n\n" + str(block) + "\n\n" + "\n".join(lines)
+
+
+def parse_answer(text: Any, count: int) -> Any:
+    """An integer from 1 to `count`, the string "none", or None for anything else. Never raises.
+
+    The whole reply must be one JSON object with an "answer" key; text around it is not read.
+    """
+    try:
+        if not isinstance(text, str):
+            return None
+        reply = json.loads(text.strip())
+        if not isinstance(reply, dict) or "answer" not in reply:
+            return None
+        answer = reply["answer"]
+        if isinstance(answer, str):
+            return NONE_ANSWER if answer.strip().lower() == NONE_ANSWER else None
+        if isinstance(answer, int) and not isinstance(answer, bool) and 1 <= answer <= int(count):
+            return int(answer)
+    except Exception:
+        return None
+    return None
+
+
+def answer_identity(answer: Any, order: Sequence[int]) -> Any:
+    """The gloss an answer pointed at, as its index before the shuffle; "none" and None stay as they are."""
+    if isinstance(answer, int) and not isinstance(answer, bool) and 1 <= answer <= len(order):
+        return int(order[answer - 1])
+    return answer if answer == NONE_ANSWER else None
+
+
+def verdict(
+    control_answers: Sequence[Any], control_expected: Sequence[Any], real_answers: Sequence[Any],
+    plant_indexes: Sequence[Any],
+) -> Dict[str, Any]:
+    """The pointing task's verdict over its runs. Every answer and index is a gloss identity (`answer_identity`).
+
+    `plants_ok`: every control answer is its expected gloss and no real answer is its run's any-day gloss.
+    `agreement`: every real answer was read and all are the same. `status` is "void" unless both hold,
+    then "pointer" when the answers are all "none" and "named" when they are all the same gloss. Pure.
+    """
+    control_answers, control_expected = list(control_answers), list(control_expected)
+    real_answers, plant_indexes = list(real_answers), list(plant_indexes)
+    runs = len(real_answers)
+    complete = runs > 0 and len(control_answers) == len(control_expected) == len(plant_indexes) == runs
+    plants_ok = bool(complete
+                     and all(answer is not None and answer == expected
+                             for answer, expected in zip(control_answers, control_expected))
+                     and all(answer is None or answer != plant for answer, plant in zip(real_answers, plant_indexes)))
+    agreement = bool(runs > 0 and all(answer is not None for answer in real_answers)
+                     and all(answer == real_answers[0] for answer in real_answers))
+    status = "void"
+    if plants_ok and agreement:
+        status = "pointer" if real_answers[0] == NONE_ANSWER else "named"
+    return {"plants_ok": plants_ok, "agreement": agreement, "status": status}
