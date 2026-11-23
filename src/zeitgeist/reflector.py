@@ -96,11 +96,13 @@ def centre(cluster: Any) -> Optional[List[float]]:
     return [float(value) for value in mean / norm]
 
 
-def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_model: Any) -> Dict[str, Any]:
+def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_model: Any,
+                     extra_group: Any = None) -> Dict[str, Any]:
     """The standing group and the chosen candidate as the reflector needs them: block, centre, item hashes.
 
     `standing` is the first standing group that is not the chosen one; `chosen` is the cluster among the
-    first five whose id is `chosen_cluster_id`. Either is None when there is none. Pure.
+    first five whose id is `chosen_cluster_id`, or the extra group offered to the Director when it is that one.
+    Either is None when there is none. Pure.
     """
     from . import run_record
     from .understanding import _render_cluster
@@ -113,6 +115,8 @@ def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_
 
     standing = next((cluster for cluster in standing_groups(ranked) if cluster_id(cluster) != chosen_id), None)
     chosen = next((cluster for cluster in ranked[:run_record.MAX_GROUPS] if cluster_id(cluster) == chosen_id), None)
+    if chosen is None and extra_group is not None and chosen_id is not None and cluster_id(extra_group) == chosen_id:
+        chosen = extra_group
     standing_entry = None
     if standing is not None:
         standing_entry = {
@@ -132,6 +136,7 @@ def reflector_inputs(clusters: Sequence[Any], chosen_cluster_id: Any, embedding_
 
 def store_reflector_inputs(
     store: Any, run_id: str, clusters: Sequence[Any], chosen_cluster_id: Any, embedding_model: Any,
+    extra_group: Any = None,
 ) -> bool:
     """Store `reflector_inputs` under tests["reflector_inputs"] of a stored record; True when it was stored.
 
@@ -141,7 +146,7 @@ def store_reflector_inputs(
     from . import run_record
 
     try:
-        inputs = reflector_inputs(clusters, chosen_cluster_id, embedding_model)
+        inputs = reflector_inputs(clusters, chosen_cluster_id, embedding_model, extra_group)
         return bool(run_record.add_test_numbers(store, run_id, INPUTS_KEY, inputs))
     except (KeyboardInterrupt, SystemExit):
         raise

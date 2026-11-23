@@ -484,3 +484,34 @@ def test_an_exit_in_the_main_thread_while_waiting_propagates():
     finally:
         release.set()
         signal.signal(signal.SIGUSR1, previous)
+
+
+
+# ---- the reflector's extra group, when the word is about it ----
+
+
+def test_a_word_about_the_extra_group_is_measured_against_it_with_the_five_as_the_others():
+    five = [SimpleNamespace(cluster_id="g_%d" % n, items=[_item(*([0.0] * n + [1.0] + [0.0] * (5 - n)))])
+            for n in range(5)]
+    extra = SimpleNamespace(cluster_id="g_9", items=[_item(0, 0, 0, 0, 0, 1)])
+    own, others = own_group._own_and_others("g_9", five, [], extra)
+    assert own == extra.items and others == [group.items for group in five]
+    assert own_group._own_and_others("g_9", five, []) is None
+    # One of the five stays measured as one of the five, extra group or not.
+    own, others = own_group._own_and_others("g_1", five, [], extra)
+    assert own == five[1].items and len(others) == 4
+
+
+def test_the_check_passes_the_extra_group_through(monkeypatch):
+    seen = {}
+
+    def measure(**kwargs):
+        seen.update(kwargs)
+        return {"status": "skipped", "reason": "no_client"}
+
+    monkeypatch.setattr(own_group, "_measure", measure)
+    store = SimpleNamespace(load_run_record=lambda run_id: {"tests": {}}, save_run_record=lambda *a: None)
+    extra = SimpleNamespace(cluster_id="g_9", items=[])
+    own_group.run_own_group_check(store, "r", word="w", gloss="g", chosen_cluster_id="g_9", clusters=[],
+                                  embedding_model="m", genai_client=None, extra_group=extra)
+    assert seen["extra_group"] is extra

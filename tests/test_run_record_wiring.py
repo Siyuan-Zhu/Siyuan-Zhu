@@ -972,7 +972,7 @@ def _reflector_switch(monkeypatch, value):
 def _spy_inputs(monkeypatch, events, error=None):
     calls = []
 
-    def spy(store, run_id, clusters, chosen_cluster_id, embedding_model):
+    def spy(store, run_id, clusters, chosen_cluster_id, embedding_model, extra_group=None):
         events.append("reflector_inputs")
         calls.append((run_id, clusters, chosen_cluster_id, embedding_model))
         if error is not None:
@@ -1087,7 +1087,7 @@ def test_an_interrupt_while_the_edition_waits_on_the_inputs_is_not_a_failed_publ
     release = threading.Event()
     holder = []
 
-    def inputs(store, *args):
+    def inputs(store, *args, **kwargs):
         holder[0].events.append("reflector_inputs")
         _thread.interrupt_main()
         release.wait(10)
@@ -1147,9 +1147,9 @@ def test_a_stalled_own_group_check_leaves_no_reflector_inputs_and_the_edition_cl
     def stalled(store, run_id, **kwargs):
         release.wait(10)
 
-    def inputs(*args):
+    def inputs(*args, **kwargs):
         # Reached only once the abandoned check returns; by then the store refuses the save.
-        late.append(real_inputs(*args))
+        late.append(real_inputs(*args, **kwargs))
 
     monkeypatch.setattr(own_group, "run_own_group_check", stalled)
     monkeypatch.setattr(reflector, "store_reflector_inputs", inputs)
@@ -1183,9 +1183,9 @@ def test_stalled_inputs_alone_are_held_to_the_same_budget(tmp_path, monkeypatch,
     release, late = threading.Event(), []
     real_inputs = reflector.store_reflector_inputs
 
-    def inputs(*args):
+    def inputs(*args, **kwargs):
         release.wait(10)
-        late.append(real_inputs(*args))
+        late.append(real_inputs(*args, **kwargs))
 
     monkeypatch.setattr(reflector, "store_reflector_inputs", inputs)
     started = time.monotonic()
@@ -1211,9 +1211,9 @@ def test_a_clean_run_stores_both_inside_one_budget(tmp_path, monkeypatch, capsys
         order.append("own_group")
         return real_check(store, run_id, **{**kwargs, "genai_client": client})
 
-    def inputs(*args):
+    def inputs(*args, **kwargs):
         order.append("reflector_inputs")
-        return real_inputs(*args)
+        return real_inputs(*args, **kwargs)
 
     def budget(fn, seconds):
         budgets.append((seconds, real_budget(fn, seconds)))
@@ -1265,7 +1265,7 @@ def test_the_inputs_name_the_published_commissions_candidate(tmp_path, monkeypat
     inputs = staged._reflector_inputs
     assert "cluster_1" in [str(cluster.cluster_id) for cluster in inputs["clusters"][:5]]
     calls = []
-    monkeypatch.setattr(reflector, "store_reflector_inputs", lambda *args: calls.append(args))
+    monkeypatch.setattr(reflector, "store_reflector_inputs", lambda *args, **kwargs: calls.append(args))
     pipeline._daily_reflector_inputs(object(), **inputs)
     [(_, run_id, _, chosen, _)] = calls
     assert run_id == "daily_run:2026-11-21:local:1" and chosen == "cluster_1"

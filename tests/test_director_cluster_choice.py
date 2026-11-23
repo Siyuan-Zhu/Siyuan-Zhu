@@ -400,8 +400,11 @@ def _echo_groups():
     return groups
 
 
-def _play(script, monkeypatch, *, repair, links, groups=None, owner=None, packet=True):
-    """Run one scripted reply sequence on Hydrogen; the outcome, the models called and the final models."""
+def _play(script, monkeypatch, *, repair, links, groups=None, owner=None, packet=True, extra=False):
+    """Run one scripted reply sequence on Hydrogen; the outcome, the models called and the final models.
+
+    With `extra` the sixth group is offered as the reflector's extra candidate.
+    """
     if repair:
         monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
     else:
@@ -413,11 +416,12 @@ def _play(script, monkeypatch, *, repair, links, groups=None, owner=None, packet
 
     client = _ScriptedClient(answer)
     run_models = mc.RunModels(mc.HYDROGEN, mc.HYDROGEN, mc.EMBED_001)
+    shown = _echo_groups() if groups is None else groups
     try:
         commission = commission_daily_zeitgeist(
-            _echo_groups() if groups is None else groups, ["Entropy"], genai_client=client,
+            shown, ["Entropy"], genai_client=client,
             model_name=mc.HYDROGEN, run_models=run_models, evidence_packet=packet, now_utc=NOW, links=links,
-            owner_override=owner,
+            owner_override=owner, extra_group=shown[5] if extra else None,
         )
         outcome = ("published", commission.word, commission.fallback_used)
     except Exception as error:  # noqa: BLE001 - the exception type is the outcome
@@ -426,9 +430,10 @@ def _play(script, monkeypatch, *, repair, links, groups=None, owner=None, packet
     return outcome, client.calls, final, commission
 
 
-def _same_as_off(script, monkeypatch, *, repair=True, links=None, groups=None, owner=None, packet=True):
+def _same_as_off(script, monkeypatch, *, repair=True, links=None, groups=None, owner=None, packet=True, extra=False):
     off = _play(script, monkeypatch, repair=False, links=None, groups=groups, owner=owner, packet=packet)
-    on = _play(script, monkeypatch, repair=repair, links=links, groups=groups, owner=owner, packet=packet)
+    on = _play(script, monkeypatch, repair=repair, links=links, groups=groups, owner=owner, packet=packet,
+               extra=extra)
     assert on[:3] == off[:3]
     return off, on
 
@@ -524,7 +529,9 @@ _KINDS = (
 
 def test_random_reply_sequences_end_exactly_as_with_the_switches_off(monkeypatch):
     rng = random.Random(20261123)
-    configs = (dict(repair=True, links=None), dict(repair=False, links=[]), dict(repair=True, links=[]))
+    # The reflector's extra group (the sixth) is offered only with the repair on, as in the edition.
+    configs = (dict(repair=True, links=None), dict(repair=False, links=[]), dict(repair=True, links=[]),
+               dict(repair=True, links=None, extra=True), dict(repair=True, links=[], extra=True))
     for _ in range(320):
         script = [rng.choice(_KINDS)(rng) for _ in range(rng.randint(1, 10))]
         packet = rng.random() < 0.8
@@ -650,3 +657,41 @@ def test_links_count_as_shown_only_when_a_packet_attempt_showed_them():
     none_found, _ = _commission([_reply()], groups=groups, links=[])
     assert pipeline.links_shown(none_found, []) == []
     assert pipeline.links_shown(shown, None) is None
+
+
+
+# ---- the reflector's extra group: never worse than switches off ----
+
+
+def test_a_reply_naming_the_extra_group_is_a_shown_id_and_kept(monkeypatch):
+    off, on = _same_as_off([_reply(selected_cluster_id="g_5", word="Extraword")], monkeypatch, extra=True)
+    assert on[0] == ("published", "Extraword", False) and on[1] == [mc.HYDROGEN]
+    assert on[3].selected_cluster_id == "g_5" and pipeline.chosen_id_mapped(on[3]) is False
+
+
+def test_the_extra_groups_id_on_an_older_prompt_attempt_is_mapped_as_any_unshown_id(monkeypatch):
+    off, on = _same_as_off(["not json", "not json", _reply(selected_cluster_id="g_5", word="Lateword")],
+                           monkeypatch, extra=True)
+    assert on[1] == [mc.HYDROGEN] * 3 and on[3].packet_used is False
+    _assert_mapped(on)
+
+
+def test_an_unshown_id_with_the_extra_group_offered_is_mapped(monkeypatch):
+    off, on = _same_as_off([_reply(selected_cluster_id="cluster_9", word="Firstword")], monkeypatch, extra=True)
+    assert on[1] == [mc.HYDROGEN]
+    _assert_mapped(on)
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("synthetic"), _blocked(pre=True), _blocked(pre=False)],
+                         ids=["transport", "refused", "blocked"])
+def test_failures_with_the_extra_group_offered_end_as_with_the_switches_off(monkeypatch, failure):
+    off, on = _same_as_off([failure, _reply(selected_cluster_id="g_5"), failure], monkeypatch, extra=True)
+    assert on[0][0] == off[0][0] and len(on[1]) <= len(off[1])
+
+
+def test_the_extra_group_is_one_more_cluster_line_and_no_sentence(repair_on):
+    groups = _groups()
+    _, with_extra = _commission([_reply()], groups=groups, extra_group=groups[5])
+    _, without = _commission([_reply()], groups=groups)
+    added = [line for line in with_extra[0].split("\n") if line not in without[0].split("\n")]
+    assert len(added) == 1 and added[0].startswith("- Cluster g_5: ")

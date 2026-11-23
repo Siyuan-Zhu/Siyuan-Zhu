@@ -16,7 +16,9 @@ arm and repeat. In that mode the store refuses every write but the run record, n
 calibration is measured, and vectors from another embedding model are made again in memory only.
 
 With ZEITGEIST_LINKS=1 the private run shows the Director the night's links as the edition does; the
-current_links arm always does, whatever that switch says.
+current_links arm always does, whatever that switch says. With ZEITGEIST_REFLECTOR_CANDIDATE=1 (and the
+keyword repair) the private run and the current_reflector arm offer the reflector's pointed group as the
+edition does; without the switch that arm runs as current.
 """
 from __future__ import annotations
 
@@ -91,14 +93,15 @@ class Arm:
     runnable: bool = True
     # The night's links shown to the Director, built as the edition builds them with ZEITGEIST_LINKS on.
     links: bool = False
+    # The reflector's pointed group offered as one more candidate, when its switch is on and one matches.
+    reflector: bool = False
 
 
 ARMS: Mapping[str, Arm] = MappingProxyType({
     "previous": Arm(FLASH, FLASH, EMBED_001, packet=False),
     "current": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True),
     "current_links": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, links=True),
-    # Known, but its part is not built yet.
-    "current_reflector": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, runnable=False),
+    "current_reflector": Arm(HYDROGEN, HYDROGEN, EMBED_2, packet=True, reflector=True),
 })
 
 
@@ -194,6 +197,10 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             links = _links_for(links_enabled(), store, _orbit_config, rows, clusters)
             if links.links is not None:
                 packet["links"] = links.links
+            # And the same candidate switch whether the reflector's pointed group is offered.
+            candidate = _candidate_for(bool(packet), store, clusters, now)
+            if candidate is not None and candidate["group"] is not None:
+                packet["extra_group"] = candidate["group"]
             commission = pipeline.commission_daily_zeitgeist(
                 clusters, history_words_30d=_history_words(entries, date_iso), genai_client=genai_client,
                 owner_override={}, model_name=run_models.current("director"), run_models=run_models, **packet,
@@ -204,14 +211,16 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             lines.append(DIRECTOR_LINE % (int(director_ok), commission.attempts_used, int(commission.packet_used),
                                           int(run_models.fallback_fired), len(items), len(clusters)))
             if run_record.run_record_enabled():
-                written = _write_private_record(store, now, date_iso, run_models, grouping, commission, links)
+                written = _write_private_record(store, now, date_iso, run_models, grouping, commission, links,
+                                                candidate)
                 lines.append(RECORD_LINE % int(written))
+                extra = candidate["group"] if candidate is not None else None
                 if written and director_ok and not run_models.fallback_fired and own_group.own_group_enabled():
                     _check_own_group(store, run_record.make_run_id("private_run", date_iso), grouping, commission,
-                                     genai_client, links.shown(commission))
+                                     genai_client, links.shown(commission), extra)
                 if written and reflector.reflector_enabled():
                     _store_reflector_inputs(store, run_record.make_run_id("private_run", date_iso), grouping,
-                                            commission)
+                                            commission, extra)
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -278,8 +287,16 @@ def _links_for(enabled: bool, store: Any, config: Any, rows: Sequence[Any], clus
     return NightLinks(links, realm_map, rows, clusters)
 
 
+def _candidate_for(enabled: bool, store: Any, clusters: Sequence[Any], now: datetime) -> Optional[Dict[str, Any]]:
+    """The reflector's candidate for the night, looked up as the edition looks it up; None with its switch off."""
+    if not enabled or not reflector.candidate_enabled():
+        return None
+    return reflector.candidate_for_night(store, clusters, now)
+
+
 def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: RunModels,
-                          grouping: Grouping, commission: Any, links: Optional[NightLinks] = None) -> bool:
+                          grouping: Grouping, commission: Any, links: Optional[NightLinks] = None,
+                          candidate: Optional[Dict[str, Any]] = None) -> bool:
     """The private run record after the Director step; True when it was written. Prints and logs nothing.
 
     Any failure is swallowed (False), except an interrupt or an exit, which end the run as any interrupt does.
@@ -295,6 +312,7 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
             links=links.shown(commission) if links is not None else None,
             realm_counts=links.realm_counts(commission) if links is not None else None,
             chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links if links is not None else None),
+            reflector_candidate=reflector.candidate_record(candidate),
         )
         return run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
     except (KeyboardInterrupt, SystemExit):
@@ -304,19 +322,20 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
 
 
 def _check_own_group(store: Any, run_id: str, grouping: Grouping, commission: Any, genai_client: Any,
-                     links: Optional[Sequence[Any]] = None) -> bool:
+                     links: Optional[Sequence[Any]] = None, extra_group: Any = None) -> bool:
     """The own-group check on a written record; never raises but an interrupt or an exit, prints nothing."""
     return own_group.run_own_group_check(
         store, run_id, word=getattr(commission, "word", None), gloss=getattr(commission, "gloss", None),
         chosen_cluster_id=commission.selected_cluster_id, clusters=grouping.clusters,
-        embedding_model=grouping.embedding_model, genai_client=genai_client, links=links,
+        embedding_model=grouping.embedding_model, genai_client=genai_client, links=links, extra_group=extra_group,
     )
 
 
-def _store_reflector_inputs(store: Any, run_id: str, grouping: Grouping, commission: Any) -> bool:
+def _store_reflector_inputs(store: Any, run_id: str, grouping: Grouping, commission: Any,
+                            extra_group: Any = None) -> bool:
     """What the reflector needs from a written record's run; never raises but an interrupt or an exit, prints nothing."""
     return reflector.store_reflector_inputs(store, run_id, grouping.clusters, commission.selected_cluster_id,
-                                            grouping.embedding_model)
+                                            grouping.embedding_model, extra_group=extra_group)
 
 
 def _flash_scores(scored: List[Dict[str, Any]], commission: Any) -> List[Tuple[float, float]]:
@@ -508,10 +527,15 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     shown = [clusters[position] for position in order] + list(clusters[len(order):])
     # Built from the ranked groups, as the edition builds them; the order shuffle moves only the five.
     links = _links_for(arm.links, store, config, rows, clusters)
+    # Matched against the ranked groups; the order shuffle moves only the five, and the extra group follows them.
+    candidate = _candidate_for(arm.reflector and arm.packet, store, clusters, now)
+    extra = candidate["group"] if candidate is not None else None
     with activate(run_models):
         packet = {"evidence_packet": True, "now_utc": now} if arm.packet else {}
         if links.links is not None:
             packet["links"] = links.links
+        if extra is not None:
+            packet["extra_group"] = extra
         commission = pipeline.commission_daily_zeitgeist(
             shown, history_words_30d=_history_words(history_entries, date_iso), genai_client=genai_client,
             owner_override={}, model_name=run_models.current("director"), run_models=run_models, **packet,
@@ -528,14 +552,15 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
         intake_hash=digest, arm=name, repeat=repeat, cutoffs_source=grouping.cutoffs_source,
         links=links.shown(commission), realm_counts=links.realm_counts(commission),
         chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links),
+        reflector_candidate=reflector.candidate_record(candidate),
     )
     run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
     written = run_record.write_run_record(store, run_id, record)
     ok = director_ok and not run_models.fallback_fired
     if written and ok and own_group.own_group_enabled():
-        _check_own_group(store, run_id, grouping, commission, genai_client, links.shown(commission))
+        _check_own_group(store, run_id, grouping, commission, genai_client, links.shown(commission), extra)
     if written and reflector.reflector_enabled():
-        _store_reflector_inputs(store, run_id, grouping, commission)
+        _store_reflector_inputs(store, run_id, grouping, commission, extra)
     if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
         scored: List[Dict[str, Any]] = []
         photo_ok = False

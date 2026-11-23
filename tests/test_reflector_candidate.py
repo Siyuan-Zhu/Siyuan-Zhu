@@ -208,3 +208,386 @@ def test_the_record_value_leaves_the_group_out(tmp_path):
     found = reflector.candidate_for_night(_store(tmp_path, _record()), _night(), NOW)
     assert reflector.candidate_record(found) == {k: v for k, v in found.items() if k != "group"}
     assert reflector.candidate_record(None) is None
+
+
+# ---- the edition: the lookup runs before the Director call, inside a 20-second budget ----
+
+import threading  # noqa: E402
+import time  # noqa: E402
+
+from src.zeitgeist import adk_pipeline as pipeline  # noqa: E402
+from src.zeitgeist.adk_pipeline import commission_daily_zeitgeist as _REAL_COMMISSION  # noqa: E402
+from src.zeitgeist.adk_pipeline import score_and_cluster_signals as _REAL_SCORE  # noqa: E402
+from src.zeitgeist.adk_pipeline import select_and_render_pulse_assets as _REAL_RENDER  # noqa: E402
+from src.zeitgeist import own_group  # noqa: E402
+from src.zeitgeist.understanding import public_keywords  # noqa: E402
+from tests.test_run_record_wiring import SLATE, _edition_setup, _MemoryRecordStore, _published_state  # noqa: E402
+from tests.test_understanding_pipeline import _reply  # noqa: E402
+
+SWITCHES = ("ZEITGEIST_REFLECTOR_CANDIDATE", "ZEITGEIST_CHOSEN_GROUP_FIELDS", "ZEITGEIST_REFLECTOR",
+            "ZEITGEIST_OWN_GROUP", "ZEITGEIST_LINKS")
+
+
+@pytest.fixture(autouse=True)
+def _switches_off_unless_set(monkeypatch):
+    for name in SWITCHES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+
+
+class PointerStore(_MemoryRecordStore):
+    """Run records in memory; the pointer record names the items of tonight's group at `rank` (from 0)."""
+
+    def __init__(self, root, events, *, seen, rank=5, fail=None, stall=None):
+        super().__init__(root, events)
+        self.seen, self.rank, self.fail, self.stall = seen, rank, fail, stall
+
+    def load_run_records(self, *, kind=None, limit=50):
+        self.events.append("load_run_records")
+        if self.stall is not None:
+            self.stall.wait(10)
+        if self.fail is not None:
+            raise self.fail
+        if kind != "daily_run" or self.rank is None:
+            return []
+        group = self.seen[0][self.rank]
+        moment = datetime.now(timezone.utc) - timedelta(hours=2)
+        return [{"kind": "daily_run", "run_id": "daily_run:2026-11-20:local:1", "written_at": moment.isoformat(),
+                 "tests": {"reflector": {"status": "pointer",
+                                         "pointer_item_hashes": [item.url_hash for item in group.items]}}}]
+
+
+def _switches(monkeypatch, candidate, repair="1"):
+    for name, value in (("ZEITGEIST_REFLECTOR_CANDIDATE", candidate), ("ZEITGEIST_CHOSEN_GROUP_FIELDS", repair)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
+def _candidate_edition(tmp_path, monkeypatch, *, choose="cluster_0", **store_kwargs):
+    """A full offline edition with the run record on; the Director replies `choose` (a callable gets the groups)."""
+    seen, renders = [], []
+    # Each spy wraps the real function, so a second run in one test is spied on its own.
+    def score(rows, **kw):
+        clusters = _REAL_SCORE(rows, **kw)
+        # The offline fixture gives every item one url_hash; a pointer needs them distinct.
+        for cluster in clusters:
+            for index, item in enumerate(cluster.items):
+                object.__setattr__(item, "url_hash", "u_%s_%d" % (cluster.cluster_id, index))
+        seen.append(clusters)
+        return clusters
+
+    monkeypatch.setattr(pipeline, "score_and_cluster_signals", score)
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets",
+                        lambda *a, **kw: renders.append(kw) or _REAL_RENDER(*a, **kw))
+    # _edition_setup wraps the function it finds; a second run in one test must wrap the real one again.
+    monkeypatch.setattr(pipeline, "commission_daily_zeitgeist", _REAL_COMMISSION)
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+
+    class Chooser:
+        def __getitem__(self, index):
+            chosen = choose(seen[0]) if callable(choose) else choose
+            return _reply(selected_cluster_id=chosen, candidate_words=SLATE)
+
+    client.replies = Chooser()
+
+    def generate(*, model, contents, config):
+        client.prompts.append(contents)
+        return SimpleNamespace(text=client.replies[0])
+
+    client.generate_content = generate
+    store = PointerStore(tmp_path, events, seen=seen, **store_kwargs)
+    analysis, decision, _ = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run(
+        "2026-11-21", "blueprint", offline_demo=True)
+    return SimpleNamespace(store=store, client=client, seen=seen, renders=renders,
+                           result=(analysis.word_of_the_day, analysis.explanation_phrase, decision.selected_mode),
+                           record=store.records[0][1] if store.records else None)
+
+
+def _cluster_lines(prompt):
+    return [line for line in prompt.split("\n") if line.startswith("- Cluster ")]
+
+
+def _published(run, root):
+    state = run.store.load_pulse_state()["published_pulse"]
+    return _published_state(run.store, root), {key: state.get(key) for key in sorted(state)
+                                              if key not in ("published_at", "updated_at", "run_id", "timestamp_utc")}
+
+
+@pytest.mark.parametrize("candidate, repair", [(None, "1"), ("0", "1"), ("1", None), ("1", "0")])
+def test_off_means_off_no_read_no_thread_and_the_same_bytes(tmp_path, monkeypatch, candidate, repair):
+    _switches(monkeypatch, None, None)
+    baseline = _candidate_edition(tmp_path / "base", monkeypatch)
+    _switches(monkeypatch, candidate, repair)
+    started = []
+
+    class _Thread(threading.Thread):
+        def start(self):
+            started.append(self.name)
+            super().start()
+
+    monkeypatch.setattr(own_group, "threading", SimpleNamespace(Thread=_Thread, Event=threading.Event))
+    run = _candidate_edition(tmp_path / "run", monkeypatch)
+    assert "load_run_records" not in run.store.events and started == []
+    if repair == "1":
+        assert run.client.prompts == baseline.client.prompts
+    assert run.result == baseline.result
+    assert run.record["reflector_candidate"] is None
+
+
+def test_a_pointed_group_beyond_the_five_is_one_more_plain_cluster_line_after_them(tmp_path, monkeypatch):
+    _switches(monkeypatch, "0")
+    off = _candidate_edition(tmp_path / "off", monkeypatch)
+    _switches(monkeypatch, "1")
+    on = _candidate_edition(tmp_path / "on", monkeypatch)
+    extra = on.seen[0][5]
+    [off_prompt], [on_prompt] = off.client.prompts, on.client.prompts
+    off_lines, on_lines = off_prompt.split("\n"), on_prompt.split("\n")
+    added = [line for line in on_lines if line not in off_lines]
+    assert added == [line for line in _cluster_lines(on_prompt) if line.startswith("- Cluster %s:" % extra.cluster_id)]
+    assert len(added) == 1
+    # The same prompt with that one line after the fifth group, and nothing else: no sentence, no marker.
+    at = on_lines.index(added[0])
+    assert on_lines[:at] + on_lines[at + 1:] == off_lines
+    assert on_lines[at - 1] == _cluster_lines(off_prompt)[-1]
+    assert on.record["reflector_candidate"] == {
+        "pointer_run_id": "daily_run:2026-11-20:local:1", "matched_cluster_id": str(extra.cluster_id),
+        "overlap": 1.0, "already_shown": False, "offered": True}
+    assert on.result == off.result
+
+
+def test_a_match_among_the_five_offers_nothing_and_says_so(tmp_path, monkeypatch):
+    _switches(monkeypatch, "0")
+    off = _candidate_edition(tmp_path / "off", monkeypatch)
+    _switches(monkeypatch, "1")
+    on = _candidate_edition(tmp_path / "on", monkeypatch, rank=2)
+    assert on.client.prompts == off.client.prompts
+    found = on.record["reflector_candidate"]
+    assert found["already_shown"] is True and found["offered"] is False
+    assert found["matched_cluster_id"] == str(on.seen[0][2].cluster_id)
+
+
+@pytest.mark.parametrize("case", ["raises", "stalls", "no_pointer"])
+def test_a_failing_or_stalled_lookup_leaves_the_edition_exactly_as_with_the_switch_off(tmp_path, monkeypatch, case,
+                                                                                       capsys):
+    _switches(monkeypatch, "0")
+    off = _candidate_edition(tmp_path / "off", monkeypatch)
+    off_out = capsys.readouterr()
+    _switches(monkeypatch, "1")
+    monkeypatch.setattr(reflector, "CANDIDATE_BUDGET_SECONDS", 0.2)
+    release = threading.Event()
+    kwargs = {"raises": {"fail": RuntimeError("Zqsecret store")}, "stalls": {"stall": release},
+              "no_pointer": {"rank": None}}[case]
+    started = time.monotonic()
+    try:
+        on = _candidate_edition(tmp_path / "on", monkeypatch, **kwargs)
+    finally:
+        release.set()
+    elapsed = time.monotonic() - started
+    on_out = capsys.readouterr()
+    assert elapsed < 5
+    assert on.result == off.result
+    assert on.client.prompts == off.client.prompts and len(on.client.prompts) == len(off.client.prompts) == 1
+    assert _published(on, tmp_path / "on")[1] == _published(off, tmp_path / "off")[1]
+    assert on.renders and [_figures(kw) for kw in on.renders] == [_figures(kw) for kw in off.renders]
+    assert on.record["reflector_candidate"]["offered"] is False
+    assert (on_out.out, on_out.err) == (off_out.out, off_out.err)
+
+
+def test_an_interrupt_while_the_edition_waits_on_the_lookup_propagates(tmp_path, monkeypatch):
+    import _thread
+
+    _switches(monkeypatch, "1")
+    release = threading.Event()
+
+    def lookup(store, clusters, now):
+        _thread.interrupt_main()
+        release.wait(10)
+
+    monkeypatch.setattr(reflector, "candidate_for_night", lookup)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            _candidate_edition(tmp_path, monkeypatch)
+    finally:
+        release.set()
+
+
+def _figures(kw):
+    return (kw["orbit_resonance_score"], kw["velocity_score"], kw["breakout_surge"], kw["cluster_silhouette"],
+            kw["cluster_keywords"])
+
+
+def _of(cluster):
+    return (float(cluster.orbit_resonance), float(cluster.velocity), bool(getattr(cluster, "breakout_surge", False)),
+            float(cluster.silhouette_score), public_keywords(list(cluster.cluster_keywords), cluster))
+
+
+def test_a_chosen_extra_group_publishes_its_own_keywords_and_figures(tmp_path, monkeypatch):
+    _switches(monkeypatch, "1")
+    run = _candidate_edition(tmp_path, monkeypatch, choose=lambda groups: groups[5].cluster_id)
+    extra = run.seen[0][5]
+    assert run.record["chosen_cluster_id"] == str(extra.cluster_id) and run.record["chosen_mapped"] is False
+    [kw] = run.renders
+    assert _figures(kw) == _of(extra)
+
+
+def test_with_the_switch_off_the_same_reply_is_mapped_to_the_top_group(tmp_path, monkeypatch):
+    _switches(monkeypatch, "0")
+    run = _candidate_edition(tmp_path, monkeypatch, choose=lambda groups: groups[5].cluster_id)
+    top = run.seen[0][0]
+    assert run.record["chosen_cluster_id"] == str(top.cluster_id) and run.record["chosen_mapped"] is True
+    [kw] = run.renders
+    assert _figures(kw) == _of(top)
+
+
+def test_the_own_group_check_and_the_reflector_inputs_take_a_chosen_extra_group(tmp_path, monkeypatch):
+    _switches(monkeypatch, "1")
+    monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR", "1")
+    checks = []
+    real_check = own_group.run_own_group_check
+
+    def check(store, run_id, **kwargs):
+        checks.append(kwargs)
+        return real_check(store, run_id, **kwargs)
+
+    monkeypatch.setattr(own_group, "run_own_group_check", check)
+    run = _candidate_edition(tmp_path, monkeypatch, choose=lambda groups: groups[5].cluster_id)
+    extra = run.seen[0][5]
+    [kwargs] = checks
+    assert kwargs["chosen_cluster_id"] == str(extra.cluster_id) and kwargs["extra_group"] is extra
+    tests = run.store.records[-1][1]["tests"]
+    # The offline edition has no live client, so the check stops before its paid call, not at the candidate.
+    assert tests["own_group"] == {"status": "skipped", "reason": "no_client"}
+    assert tests["reflector_inputs"]["chosen"]["cluster_id"] == str(extra.cluster_id)
+
+
+# ---- a chosen extra group through the staged run: published fields, roster bonus, photo recovery ----
+
+from src.zeitgeist.adk_pipeline import DirectorCommission  # noqa: E402
+from tests import test_director_cluster_choice as choice  # noqa: E402
+
+
+def _offer_sixth(monkeypatch, calls=None):
+    def lookup(store, clusters, now):
+        if calls is not None:
+            calls.append([c.cluster_id for c in clusters])
+        group = clusters[5]
+        return {"pointer_run_id": "daily_run:x", "matched_cluster_id": str(group.cluster_id), "overlap": 1.0,
+                "already_shown": False, "offered": True, "group": group}
+
+    monkeypatch.setattr(reflector, "candidate_for_night", lookup)
+
+
+@pytest.fixture
+def candidate_on(monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+
+
+def _choose_extra(clusters, kw):
+    assert kw["extra_group"] is clusters[5]
+    return clusters[5].cluster_id
+
+
+def test_a_chosen_extra_group_publishes_its_fields_in_the_staged_run(tmp_path, monkeypatch, candidate_on):
+    lookups = []
+    _offer_sixth(monkeypatch, lookups)
+    seen = choice._staged(tmp_path, monkeypatch, choose=_choose_extra)
+    clusters = seen["scored"][0]
+    assert len(clusters) > 5 and lookups == [[c.cluster_id for c in clusters]]
+    [kw] = seen["render"]
+    assert choice._figures(kw) == choice._of(clusters[5], public_keywords(list(clusters[5].cluster_keywords),
+                                                                         clusters[5]))
+
+
+def test_the_roster_bonus_goes_to_the_same_group_when_the_extra_group_is_chosen(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_UNDERSTANDING_V1", "1")
+    off = choice._staged(tmp_path / "off", monkeypatch, choose=lambda clusters, kw: clusters[0].cluster_id)
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_CANDIDATE", "1")
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    _offer_sixth(monkeypatch)
+    on = choice._staged(tmp_path / "on", monkeypatch, choose=_choose_extra)
+
+    def hashes(seen):
+        return [[getattr(item, "url_hash", None) for item in items] for items in seen["bonus"]]
+
+    assert on["bonus"] and hashes(on) == hashes(off)
+
+
+def _extra_photo_run(tmp_path, monkeypatch, *, revise_calls):
+    """The live photo branch with fake clients: the Director chooses the extra group; the photo needs a revision."""
+    import sys
+    import types
+
+    from src.zeitgeist import photo_recovery, spend_guard
+
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    fake_genai = types.ModuleType("google.genai")
+    fake_genai.Client = lambda **kw: object()
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    google = sys.modules.get("google")
+    if google is None:
+        google = types.ModuleType("google")
+        monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setattr(google, "genai", fake_genai, raising=False)
+    monkeypatch.setattr(spend_guard, "guard_genai_client", lambda client, **kw: client)
+    _offer_sixth(monkeypatch)
+
+    def commission(clusters, **kw):
+        if "max_retries" in kw:
+            revise_calls.append([c.cluster_id for c in clusters])
+            chosen = clusters[0].cluster_id
+        else:
+            chosen = kw["extra_group"].cluster_id
+        return DirectorCommission(word="Loom", gloss="steady weaving", commissioned_thesis="Looms keep time.",
+                                  selected_cluster_id=chosen, attempts_used=1, packet_used=True)
+
+    monkeypatch.setattr(pipeline, "commission_daily_zeitgeist", commission)
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets",
+                        lambda *a, **kw: _REAL_RENDER(*a, **{**kw, "offline_demo": True, "strict_photo_errors": False}))
+
+    def recover(current, *, render, revise, history, photo_required):
+        revised = revise(current, change_word=False)
+        return revised, render(revised), {"recovered": True}
+
+    monkeypatch.setattr(photo_recovery, "recover_visual", recover)
+    real_collect = pipeline.collect_96h_signals
+    monkeypatch.setattr(pipeline, "collect_96h_signals",
+                        lambda *a, **kw: real_collect(*a, **{**kw, "offline_demo": True}))
+    scored = []
+    monkeypatch.setattr(pipeline, "score_and_cluster_signals",
+                        lambda rows, **kw: scored.append(_REAL_SCORE(rows, **kw)) or scored[-1])
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config/orbit_sources.json").write_text("{}")
+    roster = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=choice._FakeStore(tmp_path, roster))
+    staged._run_staged("2026-11-21", None, offline_demo=False)
+    return staged, scored[0]
+
+
+def test_photo_recovery_after_an_extra_group_choice_revises_that_group_and_does_not_raise(
+        tmp_path, monkeypatch, candidate_on):
+    revise_calls = []
+    staged, clusters = _extra_photo_run(tmp_path, monkeypatch, revise_calls=revise_calls)
+    assert revise_calls == [[clusters[5].cluster_id]]
+    assert staged.last_commission.selected_cluster_id == clusters[5].cluster_id
+
+
+def test_with_the_packet_path_off_the_switch_reads_nothing(tmp_path, monkeypatch):
+    # The extra group is shown only on the packet path, so without it nothing is looked up.
+    _switches(monkeypatch, "1")
+    monkeypatch.delenv("ZEITGEIST_UNDERSTANDING_V1", raising=False)
+    lookups, kwargs = [], []
+    monkeypatch.setattr(reflector, "candidate_for_night", lambda *a: lookups.append(1))
+
+    def choose(clusters, kw):
+        kwargs.append(kw)
+        return clusters[0].cluster_id
+
+    seen = choice._staged(tmp_path, monkeypatch, choose=choose)
+    assert lookups == [] and seen["render"] and "extra_group" not in kwargs[0]

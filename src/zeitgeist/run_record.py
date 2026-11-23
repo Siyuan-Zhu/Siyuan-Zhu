@@ -166,13 +166,15 @@ def build_run_record(
     links: Optional[Sequence[Any]] = None,
     realm_counts: Optional[Mapping[str, Any]] = None,
     chosen_mapped: Optional[bool] = None,
+    reflector_candidate: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The record as plain values.
 
     `commission` is the published one (word, gloss, thesis, digest). `main_commission` is the
     Director's main pass when photo recovery revised it; the prompt path and attempts come from it.
     `links` and `realm_counts` are null unless the links switch gave them. `chosen_mapped` is null unless the
-    links or the repair switch checked the Director's choice.
+    links or the repair switch checked the Director's choice. `reflector_candidate` is null unless the
+    reflector's candidate switch looked for a pointed group before the Director call.
     """
     main = commission if main_commission is None else main_commission
     groups = [_group(rank, cluster) for rank, cluster in enumerate(list(clusters or ())[:MAX_GROUPS], 1)]
@@ -217,6 +219,7 @@ def build_run_record(
         "links": None if links is None else [_link(link) for link in links],
         "realm_counts": None if realm_counts is None else dict(realm_counts),
         "chosen_mapped": None if chosen_mapped is None else bool(chosen_mapped),
+        "reflector_candidate": None if reflector_candidate is None else dict(reflector_candidate),
     }
     return _plain(record)
 
