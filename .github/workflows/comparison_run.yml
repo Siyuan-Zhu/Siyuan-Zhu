@@ -31,7 +31,7 @@ permissions:
 jobs:
   comparison-run:
     if: >-
-      github.actor == 'Siyuan-Zhu' &&
+      github.actor == 'Siyuan-Zhu' && github.triggering_actor == 'Siyuan-Zhu' &&
       (github.repository == 'Siyuan-Zhu/readme-live-sandbox' || github.repository == 'Siyuan-Zhu/Siyuan-Zhu')
     runs-on: ubuntu-latest
     timeout-minutes: 25

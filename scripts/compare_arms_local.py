@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 DEFAULT_OUT_DIR = Path("~/egm-k1-private/compare").expanduser()
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 COUNTS_LINE = "[compare] arms=%d records=%d"
+FOOT_NOTE = "An engine may show fewer attempts when a call limit or a fallback was reached."
 RECORD_LIMIT = 1000
 
 
@@ -75,12 +76,16 @@ def _text(value: Any) -> str:
 
 
 def render_html(comparison: Dict[str, Any]) -> str:
-    """One page with the lettered arms side by side; it shows no arm name, model or prompt path. Pure."""
+    """One page with the lettered arms side by side. Pure.
+
+    It shows no arm name, model, prompt path or candidate words: candidate words exist only on the
+    packet slate prompt, so their presence alone would tell the arms apart. They stay in the key file's
+    comparison data, not on the page.
+    """
     columns = []
     for letter, entry in comparison["arms"].items():
         blocks = []
         for row in entry["repeats"]:
-            words = ", ".join(_text(word) for word in row["candidate_words"]) or "none"
             blocks.append(
                 '<section class="repeat">'
                 f"<h3>Repeat {_text(row['repeat'])}</h3>"
@@ -88,7 +93,6 @@ def render_html(comparison: Dict[str, Any]) -> str:
                 f'<p class="gloss">{_text(row["gloss"])}</p>'
                 f'<p class="thesis">{_text(row["thesis"])}</p>'
                 f"<p>Chosen candidate rank: {_text(row['chosen_rank'])}</p>"
-                f'<p class="slate">Candidate words: {words}</p>'
                 "</section>"
             )
         agree = "yes" if entry["same_choice"] else "no"
@@ -103,11 +107,12 @@ def render_html(comparison: Dict[str, Any]) -> str:
         ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:1.5rem}"
         ".engine{border:1px solid #cbd2d9;border-radius:6px;padding:1rem}"
         ".word{font-size:1.5rem;font-weight:600;margin:0.25rem 0}"
-        ".gloss{font-style:italic}.slate{color:#52606d}"
+        ".gloss{font-style:italic}.note{color:#52606d}"
         ".repeat{border-top:1px solid #e4e7eb;padding-top:0.5rem}"
         "</style></head><body>"
         f"<h1>Blind comparison</h1><p>Intake {_text(comparison['intake_hash'][:12])}</p>"
-        f'<div class="grid">{"".join(columns)}</div></body></html>\n'
+        f'<div class="grid">{"".join(columns)}</div>'
+        f'<p class="note">{FOOT_NOTE}</p></body></html>\n'
     )
 
 
@@ -125,9 +130,11 @@ def _store() -> Any:
 
 
 def _write_private(path: Path, text: str) -> None:
+    """Write the file readable by the owner only; a file that already existed keeps no wider mode."""
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(text)
+    os.chmod(path, 0o600)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -145,6 +152,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(COUNTS_LINE % (0, 0))
         return 1
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # mkdir leaves an existing directory's mode as it was.
+    os.chmod(out_dir, 0o700)
     stem = comparison["intake_hash"][:12]
     page = out_dir / f"comparison-{stem}.html"
     key_file = out_dir / f"key-{stem}.json"
