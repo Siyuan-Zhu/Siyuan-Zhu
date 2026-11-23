@@ -279,6 +279,7 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
             prompt_sha256=evidence["prompt_sha256"], cutoffs_source=grouping.cutoffs_source,
             links=links.links if links is not None else None,
             realm_counts=links.realm_counts if links is not None else None,
+            chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links if links is not None else None),
         )
         return run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
     except (KeyboardInterrupt, SystemExit):
@@ -505,6 +506,7 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
         chosen_cluster_id=commission.selected_cluster_id, prompt_sha256=evidence["prompt_sha256"],
         intake_hash=digest, arm=name, repeat=repeat, cutoffs_source=grouping.cutoffs_source,
         links=links.links, realm_counts=links.realm_counts,
+        chosen_mapped=pipeline.recorded_chosen_mapping(commission, links.links),
     )
     run_id = run_record.make_run_id("private_run", date_iso, arm=name, repeat=repeat)
     written = run_record.write_run_record(store, run_id, record)

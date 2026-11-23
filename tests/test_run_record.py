@@ -39,6 +39,7 @@ EXPECTED_KEYS = {
     "attempts_used", "groups", "evidence_text", "chosen_cluster_id", "chosen_rank", "candidate_words",
     "word", "gloss", "thesis", "commission_sha256", "prompt_sha256", "revised_by_photo_recovery",
     "main_pass", "intake_hash", "cutoffs_source", "arm", "repeat", "tests", "links", "realm_counts",
+    "chosen_mapped",
 }
 GROUP_KEYS = {
     "cluster_id", "rank", "commission_score", "velocity", "orbit_resonance", "s_intra",
@@ -554,3 +555,11 @@ def test_the_record_carries_each_link_and_the_realm_counts() -> None:
 def test_a_night_with_the_switch_on_and_no_links_records_an_empty_list() -> None:
     record = _build(links=[], realm_counts={"intake": {}, "candidates": {}})
     assert record["links"] == [] and record["realm_counts"] == {"intake": {}, "candidates": {}}
+
+
+
+@pytest.mark.parametrize("value", [None, True, False])
+def test_the_record_says_whether_the_chosen_candidate_was_mapped(value) -> None:
+    record = _build(chosen_mapped=value)
+    assert record["chosen_mapped"] is value
+    assert _build()["chosen_mapped"] is None

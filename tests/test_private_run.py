@@ -1490,10 +1490,10 @@ def test_the_links_arm_is_the_current_arm_with_the_links_the_edition_would_show(
                                     "realms": ["markets", "tech", "civic"], "source_count": 4,
                                     "mean_link_similarity": 0.93}]
     assert sum(with_links["realm_counts"]["intake"].values()) == 8
-    assert {k: v for k, v in current.items() if k not in ("arm", "links", "realm_counts", "evidence_text",
-                                                          "prompt_sha256", "written_at", "run_id")} == {
-        k: v for k, v in with_links.items() if k not in ("arm", "links", "realm_counts", "evidence_text",
-                                                         "prompt_sha256", "written_at", "run_id")}
+    differ = ("arm", "links", "realm_counts", "chosen_mapped", "evidence_text", "prompt_sha256", "written_at",
+              "run_id")
+    assert {k: v for k, v in current.items() if k not in differ} == {
+        k: v for k, v in with_links.items() if k not in differ}
 
 
 def test_a_failing_night_links_read_leaves_the_links_arm_running_without_links(monkeypatch, capsys):
@@ -1584,3 +1584,29 @@ def test_an_arm_whose_director_failed_is_not_checked(monkeypatch, capsys):
     # Only the previous arm's in-memory re-embedding; no own-group request.
     assert {model for model, _ in client.embeds} == {em.EMBED_001} and sum(size for _, size in client.embeds) == 8
     assert store.calls == ["save_run_record"] * 2
+
+
+
+def test_the_arm_records_say_whether_the_chosen_candidate_was_mapped(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    monkeypatch.setattr(private_run, "_orbit_config", lambda: {"feeds": []})
+    code, lines, _, store, _ = _arms_main(monkeypatch, capsys, ["--arms", "current,current_links", "--repeats", "1"])
+    assert code == 0
+    current, with_links = [record for _, record in store.records]
+    assert current["chosen_mapped"] is None and with_links["chosen_mapped"] is False
+
+
+def test_the_private_run_record_says_whether_the_chosen_candidate_was_mapped(monkeypatch):
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    monkeypatch.delenv("ZEITGEIST_LINKS", raising=False)
+    monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    store = RecordingStore()
+    _run(store, reply=_slate_reply())
+    assert store.records[-1][1]["chosen_mapped"] is None
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    store = RecordingStore()
+    _run(store, reply=_reply(selected_cluster_id="cluster_nowhere", candidate_words=SLATE))
+    [(_, record)] = store.records
+    assert record["chosen_mapped"] is True and record["chosen_cluster_id"] == "cluster_0"

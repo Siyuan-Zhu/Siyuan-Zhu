@@ -165,12 +165,14 @@ def build_run_record(
     cutoffs_source: Optional[str] = None,
     links: Optional[Sequence[Any]] = None,
     realm_counts: Optional[Mapping[str, Any]] = None,
+    chosen_mapped: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """The record as plain values.
 
     `commission` is the published one (word, gloss, thesis, digest). `main_commission` is the
     Director's main pass when photo recovery revised it; the prompt path and attempts come from it.
-    `links` and `realm_counts` are null unless the links switch gave them.
+    `links` and `realm_counts` are null unless the links switch gave them. `chosen_mapped` is null unless the
+    links or the repair switch checked the Director's choice.
     """
     main = commission if main_commission is None else main_commission
     groups = [_group(rank, cluster) for rank, cluster in enumerate(list(clusters or ())[:MAX_GROUPS], 1)]
@@ -214,6 +216,7 @@ def build_run_record(
         "tests": dict(extra or {}),
         "links": None if links is None else [_link(link) for link in links],
         "realm_counts": None if realm_counts is None else dict(realm_counts),
+        "chosen_mapped": None if chosen_mapped is None else bool(chosen_mapped),
     }
     return _plain(record)
 

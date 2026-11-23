@@ -877,3 +877,43 @@ def test_a_chosen_link_is_measured_by_the_own_group_check_from_the_published_com
     [(_, record)] = store.records
     assert kwargs["chosen_cluster_id"] == record["chosen_cluster_id"] == "link_1"
     assert [link.link_id for link in kwargs["links"]] == ["link_1"]
+
+
+
+# ---- the record says when the chosen candidate was mapped ----
+
+
+def _mapped_edition(tmp_path, monkeypatch, chosen):
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    client.replies = [_reply(selected_cluster_id=chosen, candidate_words=SLATE)]
+    store = _RecordingStore(tmp_path, events)
+    pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run("2026-11-21", "blueprint", offline_demo=True)
+    [(_, record)] = store.records
+    return record, client
+
+
+def test_with_neither_links_nor_the_repair_switch_chosen_mapped_is_null(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    record, _ = _mapped_edition(tmp_path, monkeypatch, "cluster_nowhere")
+    assert record["chosen_mapped"] is None and record["chosen_cluster_id"] == "cluster_nowhere"
+
+
+def test_with_the_repair_switch_an_unshown_id_on_the_last_attempt_is_recorded_as_mapped(tmp_path, monkeypatch):
+    _links_switch(monkeypatch, None)
+    monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    record, client = _mapped_edition(tmp_path, monkeypatch, "cluster_nowhere")
+    assert record["chosen_mapped"] is True
+    assert record["chosen_cluster_id"] == record["groups"][0]["cluster_id"]
+    assert record["attempts_used"] == len(client.prompts) > 1
+
+
+@pytest.mark.parametrize("links, repair", [("1", None), (None, "1"), ("1", "1")])
+def test_a_shown_choice_is_recorded_as_not_mapped(tmp_path, monkeypatch, links, repair):
+    _links_switch(monkeypatch, links)
+    if repair is None:
+        monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", repair)
+    record, _ = _mapped_edition(tmp_path, monkeypatch, "cluster_0")
+    assert record["chosen_mapped"] is False and record["chosen_cluster_id"] == "cluster_0"

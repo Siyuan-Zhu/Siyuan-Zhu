@@ -1503,7 +1503,7 @@ def _write_daily_run_record(
             clusters=clusters, evidence_text=evidence["evidence_text"], commission=commission,
             candidate_words=evidence["candidate_words"], chosen_cluster_id=main_commission.selected_cluster_id,
             main_commission=main_commission, prompt_sha256=evidence["prompt_sha256"],
-            links=links, realm_counts=realm_counts,
+            links=links, realm_counts=realm_counts, chosen_mapped=recorded_chosen_mapping(main_commission, links),
         )
         run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
@@ -1864,6 +1864,13 @@ _MAPPED_ATTR = "_chosen_id_mapped"
 def chosen_id_mapped(commission: Any) -> bool:
     """True when the Director's id was not offered and, on the last attempt, was mapped to the top group."""
     return getattr(commission, _MAPPED_ATTR, False) is True
+
+
+def recorded_chosen_mapping(commission: Any, links: Optional[Sequence[Any]]) -> Optional[bool]:
+    """The record's `chosen_mapped`: null unless links (given) or the repair switch checked the choice."""
+    if links is None and not repair_enabled():
+        return None
+    return chosen_id_mapped(commission)
 
 
 def _offered_ids(top_clusters: Sequence[Any], links: Optional[Sequence[Any]], extra_group: Any,
