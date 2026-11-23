@@ -599,3 +599,57 @@ def test_main_with_the_switch_on_prints_the_same_public_lines(monkeypatch, capsy
     _assert_public(lines_on)
     assert len(store.records) == 1
     assert not any(text in everything for text in PRIVATE)
+
+
+# ---- stored vectors are grouped with the cutoffs of the model that made them ----
+
+
+from src.zeitgeist import embedding_migration as em  # noqa: E402
+
+# Percentiles that, on the synthetic window, put the cutoffs between the two groups' similarities.
+CAL_PERCENTILES = (0.5, 0.4, 0.3, 0.6)
+
+
+def _accepted_calibration():
+    return em.calibration_document(em.Calibration("accepted", "2026-11-20", 120, CAL_PERCENTILES, 2, 0.3, 3))
+
+
+class CalibratedStore(ReadOnlyStore):
+    """The two reads and the calibration read; every write still fails the test."""
+
+    def __init__(self, *args, calibration=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calibration = calibration
+
+    def load_calibration(self, name):
+        self.reads.append(("load_calibration", name))
+        return self.calibration
+
+
+def _marked_rows(model):
+    return {key: dict(row, embedding_model=model, embedding_source="gemini") for key, row in _rows().items()}
+
+
+def _clusters(line):
+    return int(re.search(r" clusters=(\d+)", line).group(1))
+
+
+def test_embedding_2_rows_are_grouped_with_the_calibrated_cutoffs(monkeypatch):
+    _photo_world(monkeypatch)
+    legacy, _ = _run(CalibratedStore(rows=_marked_rows(em.EMBED_001), calibration=_accepted_calibration()))
+    store = CalibratedStore(rows=_marked_rows(em.EMBED_2), calibration=_accepted_calibration())
+    result, _ = _run(store)
+    _assert_public(result.lines)
+    assert result.exit_code == legacy.exit_code == 0
+    # The legacy cutoffs split the two groups into six; the calibrated ones find the two groups.
+    assert _clusters(legacy.lines[1]) == 6 and _clusters(result.lines[1]) == 2
+    assert ("load_calibration", em.CALIBRATION_DOCUMENT) in store.reads
+
+
+def test_embedding_001_rows_keep_the_legacy_cutoffs_and_read_no_calibration(monkeypatch):
+    _photo_world(monkeypatch)
+    unmarked, _ = _run(ReadOnlyStore())
+    store = CalibratedStore(rows=_marked_rows(em.EMBED_001), calibration=_accepted_calibration())
+    result, _ = _run(store)
+    assert result.lines == unmarked.lines and result.exit_code == 0
+    assert [read[0] for read in store.reads] == ["load_ingestion_cache", "load_pulse_feed_history"]

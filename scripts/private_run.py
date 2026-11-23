@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.zeitgeist import adk_pipeline as pipeline  # noqa: E402
+from src.zeitgeist import embedding_migration as em  # noqa: E402
 from src.zeitgeist import judge_calibration as jc  # noqa: E402
 from src.zeitgeist import run_record  # noqa: E402
 from src.zeitgeist import visual_router as vr  # noqa: E402
@@ -78,6 +79,21 @@ def _photo_line(scored: List[Dict[str, Any]], photo_ok: bool) -> str:
     )
 
 
+def _cluster_stored(store: Any, rows: List[Any], items: List[Any], now: datetime) -> List[Any]:
+    """Group the stored vectors with the cutoffs of the model that made them; reads only, writes nothing.
+
+    Rows that all carry embedding-2 vectors use the accepted calibration's cutoffs. Any other
+    window (embedding-001, unmarked or mixed rows, or no accepted calibration) keeps the legacy cutoffs.
+    """
+    models = {row.get("embedding_model") if isinstance(row, dict) else None for row in rows}
+    if models == {em.EMBED_2}:
+        plan = em.plan_embedding_run(store, em.EMBED_2)
+        if plan is not None and plan.mode == "migrated":
+            # Migrated mode never touches the store; it is given none so nothing can be written.
+            return em.cluster_for_run(items, plan, store=None, now_utc=now)
+    return pipeline.score_and_cluster_signals(items, now_utc=now)
+
+
 def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: RunModels) -> PrivateRun:
     """Never raises, not even KeyboardInterrupt or SystemExit: a failure ends the run with a numeric failed_stage line."""
     lines: List[str] = []
@@ -91,7 +107,7 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
             rows = list(cached.values()) if isinstance(cached, dict) else list(cached or ())
             items = [item for item in (pipeline._row_to_cached_item(row, index, now.isoformat())
                                        for index, row in enumerate(rows)) if item is not None]
-            clusters = pipeline.score_and_cluster_signals(items, now_utc=now)
+            clusters = _cluster_stored(store, rows, items, now)
             history = store.load_pulse_feed_history(days=30)
             entries = list(history.get("entries", [])) if isinstance(history, dict) else list(history or ())
 
