@@ -594,3 +594,69 @@ def test_the_kept_candidate_block_is_the_candidate_lines_only() -> None:
                                                    now_utc="2026-11-21T12:00:00Z", links=links)
     assert LINK_SENTENCE not in block
     assert block == render_evidence_packet(_night(), now_utc="2026-11-21T12:00:00Z", links=links)
+
+
+
+# ---- a link's published keywords: every member's handles, failing closed ----
+
+from src.zeitgeist import understanding  # noqa: E402
+from src.zeitgeist.understanding import public_keywords  # noqa: E402
+
+
+def _handle_link():
+    first = _group("g_first", 2.0, ("o3_ig_alpha_one", "o3_ig_beta_two"), 0, 10, ["Tide", "gamma_three", "Kelp"])
+    second = _group("g_second", 1.0, ("o3_ig_gamma_three", "o3_ig_delta_four"), 0, 11, ["reef", "alpha_one", "Foam"])
+    link = LinkCandidate("link_1", ("g_first", "g_second"), ("culture_and_community", "markets", "tech"), 4, 0.9,
+                         (first, second))
+    return link, first, second
+
+
+def test_a_handle_of_one_member_is_dropped_from_another_members_keywords() -> None:
+    link, first, second = _handle_link()
+    # Each group alone would keep the other's handle.
+    assert "gamma_three" in public_keywords(first.cluster_keywords, first)
+    assert "alpha_one" in public_keywords(second.cluster_keywords, second)
+    assert link_keywords(link) == ["Tide", "Kelp", "reef", "Foam"]
+
+
+def test_a_filter_that_raises_gives_no_keywords_from_that_member(monkeypatch) -> None:
+    link, first, second = _handle_link()
+    real = understanding._keywords_without_handles
+
+    def flaky(keywords, handles):
+        if "Tide" in keywords:
+            raise RuntimeError("synthetic filter failure")
+        return real(keywords, handles)
+
+    monkeypatch.setattr(understanding, "_keywords_without_handles", flaky)
+    assert link_keywords(link) == ["reef", "Foam"]
+
+
+def test_handles_that_cannot_be_read_give_the_link_no_keywords(monkeypatch) -> None:
+    link, _, _ = _handle_link()
+
+    def broken(item):
+        raise RuntimeError("synthetic handle failure")
+
+    monkeypatch.setattr(understanding, "item_handles", broken)
+    assert link_keywords(link) == []
+
+
+def test_the_single_group_path_is_unchanged(monkeypatch) -> None:
+    _, first, _ = _handle_link()
+    first.cluster_keywords = ["Tide", "alpha_one", "beta two", "Kelp"]
+    assert public_keywords(first.cluster_keywords, first) == ["Tide", "Kelp"]
+
+    def broken(keywords, handles):
+        raise RuntimeError("synthetic filter failure")
+
+    # A single group's filter still fails open, as today.
+    monkeypatch.setattr(understanding, "_keywords_without_handles", broken)
+    assert public_keywords(first.cluster_keywords, first) == first.cluster_keywords
+
+
+def test_a_chosen_link_with_no_keywords_left_publishes_an_empty_list_as_a_group_without_keywords_does() -> None:
+    link, first, second = _handle_link()
+    first.cluster_keywords, second.cluster_keywords = ["alpha_one"], ["gamma_three"]
+    member, published = pipeline._published_candidate("link_1", [first, second], [link], first)
+    assert member is first and published == []

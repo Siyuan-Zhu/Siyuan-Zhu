@@ -396,7 +396,7 @@ def test_a_chosen_links_published_keywords_drop_a_members_account_handle():
     groups = [first, second] + _groups()[2:]
     link = LinkCandidate("link_1", ("g_first", "g_second"), ("culture_and_community", "markets", "tech"), 4, 0.9,
                          (first, second))
-    # Each member's keywords go through public_keywords with its own group, in rank order.
+    # Each member's keywords lose the handles of every member's items, in rank order.
     assert public_keywords(first.cluster_keywords, first) == ["Tide", "Kelp", "salt"]
     assert public_keywords(second.cluster_keywords, second) == second.cluster_keywords
     field_group, published = pipeline._published_candidate("link_1", groups, [link], groups[0])

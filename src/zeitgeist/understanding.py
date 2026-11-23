@@ -245,25 +245,30 @@ def _handle_part_sets(risky: Sequence[str]) -> List[set]:
     return [{p for p in re.split(r"[^a-z]+", h.lower()) if len(p) >= 2} for h in risky]
 
 
+def _keywords_without_handles(keywords: Sequence[str], handles: Sequence[str]) -> List[str]:
+    """Drops any keyword that is, or (for risky handles) contains, one of the handles. May raise."""
+    handles = list(dict.fromkeys(h for h in handles if h))
+    risky = _risky_handles(handles)
+    part_sets = _handle_part_sets(risky)
+    kept: List[str] = []
+    for kw in keywords:
+        low = str(kw).strip().lower()
+        if low in handles or any(_handle_pattern(h).search(low) for h in risky):
+            continue
+        toks = re.findall(r"[a-z0-9']+", low)
+        if len(toks) >= 2 and any(set(toks) <= parts for parts in part_sets):
+            continue
+        kept.append(kw)
+    return kept
+
+
 def public_keywords(keywords: Sequence[str], cluster: Any) -> List[str]:
     """Keywords safe to publish: drops any that is, or (for risky handles) contains, an item handle."""
     try:
         handles: List[str] = []
         for it in getattr(cluster, "items", None) or []:
             handles.extend(item_handles(it))
-        handles = list(dict.fromkeys(h for h in handles if h))
-        risky = _risky_handles(handles)
-        part_sets = _handle_part_sets(risky)
-        kept: List[str] = []
-        for kw in keywords:
-            low = str(kw).strip().lower()
-            if low in handles or any(_handle_pattern(h).search(low) for h in risky):
-                continue
-            toks = re.findall(r"[a-z0-9']+", low)
-            if len(toks) >= 2 and any(set(toks) <= parts for parts in part_sets):
-                continue
-            kept.append(kw)
-        return kept
+        return _keywords_without_handles(keywords, handles)
     except Exception:
         return list(keywords)
 
@@ -435,11 +440,24 @@ def link_candidates(clusters: Sequence[Any], realm_map: Mapping[str, str]) -> Li
 
 
 def link_keywords(link: Any) -> List[str]:
-    """Members in rank order, each member's public keywords, duplicates dropped regardless of case; first eight."""
+    """Members in rank order, each member's keywords without the handles of every member's items, duplicates
+    dropped regardless of case; the first eight.
+
+    Fails closed: a member whose keywords cannot be filtered gives none, and unreadable handles give no keywords.
+    """
+    try:
+        handles = [h for member in link.members for it in (getattr(member, "items", None) or [])
+                   for h in item_handles(it)]
+    except Exception:
+        return []
     seen: set = set()
     kept: List[str] = []
     for member in link.members:
-        for kw in public_keywords(list(getattr(member, "cluster_keywords", None) or []), member):
+        try:
+            member_keywords = _keywords_without_handles(list(getattr(member, "cluster_keywords", None) or []), handles)
+        except Exception:
+            member_keywords = []
+        for kw in member_keywords:
             key = str(kw).strip().casefold()
             if key in seen:
                 continue
