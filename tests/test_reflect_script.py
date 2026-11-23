@@ -55,7 +55,8 @@ def _record(kind="daily_run", *, written=WRITTEN, director=mc.HYDROGEN, gloss=OW
     return {"record_schema": 1, "kind": kind, "date": date, "written_at": written.isoformat(),
             "models": {"director": director, "judge": director, "embedding": EMBED, "fallback_fired": False,
                        "unrecognized": False},
-            "word": "Zqword", "gloss": gloss, "arm": arm, "repeat": repeat, "tests": tests}
+            "word": "Zqword", "gloss": gloss, "arm": arm, "repeat": repeat, "tests": tests,
+            "prompt_sha256": "a" * 64, "evidence_text": CHOSEN_BLOCK, "candidate_words": []}
 
 
 class Store(JsonFileStateStore):
@@ -691,3 +692,30 @@ def test_main_prints_the_disputed_number(monkeypatch, capsys, tmp_path):
     store.put(_record())
     code, lines, _ = _main(monkeypatch, capsys, [], store, Client(embed_error=_refused()))
     assert code == 0 and lines == ["[reflector] status=10 plants_ok=1 agreement=1 arithmetic_named=0 calls=6"]
+
+
+# ---- a run whose Director gave no accepted reply ----
+
+
+@pytest.mark.parametrize("digest", [None, "", "  ", "missing"])
+def test_a_record_without_a_director_reply_is_skipped_without_a_paid_call(tmp_path, digest):
+    store, client = Store(tmp_path), Client()
+    record = _record()
+    if digest == "missing":
+        del record["prompt_sha256"]
+    else:
+        record["prompt_sha256"] = digest
+    run_id = store.put(record)
+    outcome = _reflect(store, client, allow_same_model=True)
+    assert (outcome["status"], outcome["reason"], outcome["calls"]) == ("skipped", "director_failed", 0)
+    _no_paid_call(client)
+    stored = _stored(store, run_id)
+    assert (stored["status"], stored["reason"]) == ("skipped", "director_failed")
+    assert ("load_pulse_feed_history", 30) not in store.calls
+
+
+def test_a_reply_on_the_older_prompt_with_no_candidate_words_still_runs(tmp_path):
+    store, client = Store(tmp_path), Client()
+    run_id = store.put(_record())
+    assert _reflect(store, client)["status"] == "pointer"
+    assert _stored(store, run_id)["status"] == "pointer"

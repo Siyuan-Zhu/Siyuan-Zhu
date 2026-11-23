@@ -204,6 +204,11 @@ def _reflect_on(store: Any, run_id: str, record: Dict[str, Any], calls: Optional
     # A night whose Director fell back to another model is not the reading the reflector checks.
     if models.get("fallback_fired") is True:
         return early("skipped", reason="fallback")
+    # The record keeps the digest of the prompt the accepted Director reply answered, on either prompt
+    # path; without it the Director gave no reply and the record's word and gloss are the fallback's.
+    digest = record.get("prompt_sha256")
+    if not isinstance(digest, str) or not digest.strip():
+        return early("skipped", reason="director_failed")
     if not isinstance(standing, dict) or not isinstance(standing.get("block"), str):
         return early("no_group")
     if not isinstance(chosen, dict) or not isinstance(chosen.get("block"), str) or not own_gloss:
