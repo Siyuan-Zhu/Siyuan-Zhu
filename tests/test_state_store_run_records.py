@@ -88,7 +88,8 @@ def test_saved_and_loaded_records_are_independent_copies(store) -> None:
     assert store.load_run_records() == [dict(OLDER, nested={"a": [1]})]
 
 
-BAD_IDS = ("", "a" * 151, "run/record", "../escape", "run record", "run\\record", "r\xe9cord", None, 7)
+BAD_IDS = ("", "a" * 151, "run/record", "../escape", "run record", "run\\record", "r\xe9cord", None, 7,
+           ".", "..", "...", "__", "__run__", "__daily_run:2026-11-22__")
 
 
 @pytest.mark.parametrize("bad", BAD_IDS)
@@ -99,6 +100,12 @@ def test_a_bad_run_id_raises_without_touching_the_store(store, bad, tmp_path) ->
     if isinstance(store, FirestoreStateStore):
         assert store._client.docs == {}
     assert not (tmp_path / "data").exists()
+
+
+@pytest.mark.parametrize("good", ("a.b", "_run_", "__run", "run__", ".run", "run."))
+def test_ids_with_dots_or_underscores_that_firestore_allows_are_accepted(store, good) -> None:
+    store.save_run_record(good, OLDER)
+    assert store.load_run_records() == [OLDER]
 
 
 def test_the_longest_allowed_run_id_is_accepted(store) -> None:

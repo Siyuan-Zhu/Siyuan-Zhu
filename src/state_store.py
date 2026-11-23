@@ -611,8 +611,13 @@ RUN_RECORD_ID_RE = re.compile(r"[A-Za-z0-9_.:-]{1,150}")
 
 
 def _run_record_id(run_id: Any) -> str:
-    """Return `run_id` when it is a safe private run-record id; refuse any other."""
+    """Return `run_id` when it is a safe private run-record id; refuse any other.
+
+    Firestore refuses ids made only of dots and ids that start and end with `__`.
+    """
     if not isinstance(run_id, str) or not RUN_RECORD_ID_RE.fullmatch(run_id):
+        raise ValueError("Invalid run record id")
+    if not run_id.strip(".") or (run_id.startswith("__") and run_id.endswith("__")):
         raise ValueError("Invalid run record id")
     return run_id
 
@@ -716,7 +721,10 @@ class StateStore(Protocol):
         """Remove `profile_state/{name}`; True when a document existed."""
 
     def save_run_record(self, run_id: str, document: dict[str, Any]) -> None:
-        """Replace the private run record `run_records/{run_id}` (never mirrored)."""
+        """Replace the private run record `run_records/{run_id}` (never mirrored).
+
+        A save replaces the whole document for that id; it never merges into a stored one.
+        """
 
     def load_run_records(
         self, *, kind: str | None = None, limit: int = 50
