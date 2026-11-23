@@ -1110,6 +1110,89 @@ def test_the_director_counter_refuses_the_twenty_fifth_call_before_dispatch():
     assert counter.calls == 24 and len(client.calls) == 24
 
 
+# ---- a spend guard that reports an uncertain call ends the comparison ----
+
+
+class UncertainOnSecondCall(ArmClient):
+    """The fake client; its second paid call, Director or embedding, raises a block after dispatch."""
+
+    def __init__(self, reply):
+        super().__init__(reply)
+        self.paid = 0
+
+    def _second(self):
+        self.paid += 1
+        if self.paid == 2:
+            raise _refusal(pre=False)
+
+    def generate_content(self, *, model, contents, config):
+        self._second()
+        return super().generate_content(model=model, contents=contents, config=config)
+
+    def embed_content(self, *, model, contents, config):
+        self._second()
+        return super().embed_content(model=model, contents=contents, config=config)
+
+
+def test_an_uncertain_director_call_ends_the_whole_comparison(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    client = UncertainOnSecondCall(_slate_reply())
+    code, lines, _, store, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "current,previous", "--repeats", "3"], client=client)
+    _assert_arms_public(lines)
+    assert code == 3
+    assert [line for line in lines if " repeat=" in line] == [
+        "[private_run] arm=1 repeat=1 director_ok=1 attempts=1 packet=1 fallback=0",
+        "[private_run] arm=1 repeat=2 failed_stage=3",
+        "[private_run] arm=1 repeat=3 skipped=1",
+        "[private_run] arm=2 repeat=1 skipped=1",
+        "[private_run] arm=2 repeat=2 skipped=1",
+        "[private_run] arm=2 repeat=3 skipped=1",
+    ]
+    # No Flash round after the block, no further repeat or arm, and the previous arm embeds nothing.
+    assert client.paid == 2 and client.calls == [mc.HYDROGEN] and client.embeds == []
+    assert [(record["arm"], record["repeat"]) for _, record in store.records] == [("current", 1)]
+    assert lines[-1] == "[private_run] records_written=1"
+
+
+def test_an_uncertain_embedding_call_ends_the_whole_comparison(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    table = dict(private_run.ARMS)
+    table["current_reflector"] = private_run.Arm(mc.FLASH, mc.FLASH, em.EMBED_001, packet=False)
+    monkeypatch.setattr(private_run, "ARMS", table)
+    client = UncertainOnSecondCall(_slate_reply())
+    code, lines, _, store, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "current,previous,current_reflector", "--repeats", "1"], client=client)
+    _assert_arms_public(lines)
+    assert code == 3
+    assert [line for line in lines if " repeat=" in line] == [
+        "[private_run] arm=1 repeat=1 director_ok=1 attempts=1 packet=1 fallback=0",
+        "[private_run] arm=2 repeat=0 failed_stage=2",
+        "[private_run] arm=2 repeat=1 skipped=1",
+        "[private_run] arm=3 repeat=1 skipped=1",
+    ]
+    assert client.paid == 2 and client.calls == [mc.HYDROGEN] and client.embeds == []
+    assert [(record["arm"], record["repeat"]) for _, record in store.records] == [("current", 1)]
+    assert lines[-1] == "[private_run] records_written=1"
+
+
+def test_a_refusal_before_dispatch_in_the_re_embedding_fails_that_arm_only(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+
+    class RefusingEmbeddings(ArmClient):
+        def embed_content(self, *, model, contents, config):
+            raise _refusal()
+
+    code, lines, _, store, _ = _arms_main(
+        monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "1"],
+        client=RefusingEmbeddings(_slate_reply()))
+    _assert_arms_public(lines)
+    assert code == 3
+    assert "[private_run] arm=1 repeat=0 failed_stage=2" in lines
+    assert "[private_run] arm=2 repeat=1 director_ok=1 attempts=1 packet=1 fallback=0" in lines
+    assert [record["arm"] for _, record in store.records] == ["current"]
+
+
 # ---- the switch-on run says by number whether its record was written ----
 
 

@@ -475,9 +475,11 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
 def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], repeats: int) -> PrivateRun:
     """Every arm and repeat on one frozen intake, writing only run records. Never raises.
 
-    One arm failing does not stop the others; an interrupt or exit stops the dispatch. Once
-    MAX_DIRECTOR_CALLS Director calls are made, the attempt that wants another call fails and every
-    remaining repeat is skipped by number.
+    One arm failing does not stop the others; an interrupt or exit stops the dispatch. So does a
+    SpendBlocked the guard raised after dispatch (an outcome it cannot vouch for), as it stops the
+    edition: the step that met it fails by number and every remaining repeat is skipped by number.
+    Once MAX_DIRECTOR_CALLS Director calls are made, the attempt that wants another call fails and
+    every remaining repeat is skipped by number.
     """
     lines: List[str] = []
     result = PrivateRun(lines, 3)
@@ -501,6 +503,14 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
 
     def capped() -> bool:
         return counter is not None and counter.calls >= MAX_DIRECTOR_CALLS
+
+    def uncertain(error: BaseException) -> bool:
+        return isinstance(error, SpendBlocked) and not refused_before_dispatch(error)
+
+    def skip_rest(index: int, first_repeat: int) -> None:
+        for later in range(index, len(names) + 1):
+            start = first_repeat if later == index else 1
+            lines.extend(ARM_SKIPPED_LINE % (later, repeat) for repeat in range(start, repeats + 1))
 
     # Before any paid call of the dispatch: an arm on the second embedding model needs the stored
     # embedding-2 vectors and an accepted calibration, and is grouped now; it never runs on legacy cutoffs.
@@ -540,6 +550,9 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
             failed = True
             if not isinstance(error, Exception):
                 break
+            if uncertain(error):
+                skip_rest(index, 1)
+                break
             continue
         for repeat in range(1, repeats + 1):
             if capped():
@@ -561,6 +574,10 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
                 lines.append(ARM_FAILED_LINE % (index, repeat, DIRECTOR))
                 failed = True
                 if not isinstance(error, Exception):
+                    stop = True
+                    break
+                if uncertain(error):
+                    skip_rest(index, repeat + 1)
                     stop = True
                     break
     lines.append(RECORDS_LINE % written)
