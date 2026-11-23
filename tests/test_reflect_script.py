@@ -300,7 +300,8 @@ def test_a_clean_pointer(tmp_path):
     assert stored["pointer_item_hashes"] == STANDING_HASHES
     assert stored["model"] == mc.FLASH and stored["written_at"] == NOW.isoformat()
     assert set(stored) == {"status", "arithmetic_named", "arithmetic_margin", "control_answers", "answers",
-                           "plants_ok", "agreement", "pointer_item_hashes", "model", "written_at"}
+                           "plants_ok", "agreement", "pointer_item_hashes", "model", "same_model", "written_at"}
+    assert stored["same_model"] is False
     after = JsonFileStateStore(repo_root=tmp_path).load_run_record(run_id)
     assert {k: v for k, v in after.items() if k != "tests"} == {k: v for k, v in before.items() if k != "tests"}
     assert after["tests"]["reflector_inputs"] == before["tests"]["reflector_inputs"]
@@ -563,3 +564,43 @@ def test_main_exits_0_and_prints_only_numbers_whatever_fails(monkeypatch, capsys
     assert not any(text in everything for text in PRIVATE)
     expected = "void" if case == "raising-client" else "failed"
     assert lines[0].startswith("[reflector] status=%d " % reflect.STATUS_NUMBERS[expected])
+
+
+# ---- a named model, and whether it is the Director's ----
+
+
+def test_the_stored_result_says_whether_the_reflector_answered_on_the_directors_model(tmp_path):
+    store = Store(tmp_path)
+    run_id = store.put(_record(director=mc.FLASH))
+    assert _reflect(store, Client())["same_model"] is True
+    assert _stored(store, run_id)["same_model"] is True
+    _reflect(store, Client(), allow_same_model=True)
+    assert _stored(store, run_id)["same_model"] is True
+    _reflect(store, Client(), model=mc.HYDROGEN)
+    assert _stored(store, run_id)["same_model"] is False
+
+
+def test_a_skip_before_the_record_is_read_has_no_same_model_answer(tmp_path):
+    store = Store(tmp_path)
+    assert _reflect(store, Client())["same_model"] is None
+    assert _reflect(store, Client(), model="gemini-1.0")["same_model"] is None
+
+
+def test_main_runs_on_a_named_model(monkeypatch, capsys, tmp_path):
+    store = Store(tmp_path)
+    run_id = store.put(_record("private_run", arm="current", repeat=1, director=mc.HYDROGEN))
+    client = Client()
+    code, lines, _ = _main(monkeypatch, capsys, ["--kind", "private_run", "--arm", "current", "--model", mc.HYDROGEN,
+                                                 "--allow-same-model"], store, client)
+    stored = _stored(store, run_id)
+    assert code == 0 and stored["status"] == "pointer" and stored["model"] == mc.HYDROGEN
+    assert stored["same_model"] is True
+    assert {model for model, _, _ in client.generates} == {mc.HYDROGEN}
+
+
+def test_main_still_refuses_a_model_outside_the_two(monkeypatch, capsys, tmp_path):
+    store, client = Store(tmp_path), Client()
+    run_id = store.put(_record())
+    code, lines, _ = _main(monkeypatch, capsys, ["--model", "gemini-9-unknown", "--allow-same-model"], store, client)
+    assert code == 0 and lines[0].startswith("[reflector] status=%d " % reflect.STATUS_NUMBERS["skipped"])
+    assert client.generates == [] and _stored(store, run_id) is None

@@ -87,14 +87,15 @@ class _Calls:
         return self._call("generate_content", kwargs)
 
 
-def _numbers(status: str, model: str, now: datetime, reason: Optional[str] = None) -> Dict[str, Any]:
+def _numbers(status: str, model: str, now: datetime, reason: Optional[str] = None,
+             same_model: Optional[bool] = None) -> Dict[str, Any]:
     numbers: Dict[str, Any] = {"status": status}
     if reason is not None:
         numbers["reason"] = reason
     numbers.update({
         "arithmetic_named": None, "arithmetic_margin": None, "control_answers": None, "answers": None,
         "plants_ok": None, "agreement": None, "pointer_item_hashes": None, "model": model,
-        "written_at": now.isoformat(),
+        "same_model": same_model, "written_at": now.isoformat(),
     })
     return numbers
 
@@ -193,18 +194,24 @@ def _reflect_on(store: Any, run_id: str, record: Dict[str, Any], calls: Optional
     inputs = record["tests"][rf.INPUTS_KEY]
     standing, chosen = inputs.get("standing"), inputs.get("chosen")
     own_gloss = " ".join(str(record.get("gloss") or "").split())
-    if not isinstance(standing, dict) or not isinstance(standing.get("block"), str):
-        return _numbers("no_group", model, now)
-    if not isinstance(chosen, dict) or not isinstance(chosen.get("block"), str) or not own_gloss:
-        return _numbers("no_control", model, now)
     models = record.get("models") if isinstance(record.get("models"), dict) else {}
-    if model == models.get("director") and not allow_same_model:
-        return _numbers("skipped", model, now, reason="same_model")
+    # Whether the reflector answers on the model that answered as Director that night.
+    same_model = model == models.get("director")
+
+    def early(status: str, reason: Optional[str] = None) -> Dict[str, Any]:
+        return _numbers(status, model, now, reason=reason, same_model=same_model)
+
+    if not isinstance(standing, dict) or not isinstance(standing.get("block"), str):
+        return early("no_group")
+    if not isinstance(chosen, dict) or not isinstance(chosen.get("block"), str) or not own_gloss:
+        return early("no_control")
+    if same_model and not allow_same_model:
+        return early("skipped", reason="same_model")
     past = _past_glosses(store, str(record.get("date") or "")[:10])
     if not past:
-        return _numbers("no_glosses", model, now)
+        return early("no_glosses")
     if calls is None:
-        return _numbers("skipped", model, now, reason="no_client")
+        return early("skipped", reason="no_client")
 
     arithmetic = _arithmetic(calls, inputs, past, own_gloss)
     past_texts = [gloss for _, gloss in past]
@@ -232,7 +239,7 @@ def _reflect_on(store: Any, run_id: str, record: Dict[str, Any], calls: Optional
             return identity
         return PLANT if identity == plant else past[identity][0]
 
-    numbers = _numbers(verdict["status"], model, now)
+    numbers = early(verdict["status"])
     numbers.update({
         "arithmetic_named": None if arithmetic is None else arithmetic["named"],
         "arithmetic_margin": None if arithmetic is None else arithmetic["margin"],
@@ -307,6 +314,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kind", default="daily_run", help="the record kind: daily_run or private_run")
     parser.add_argument("--arm", default=None, help="only records of this comparison arm")
+    parser.add_argument("--model", default=None, help="the reflector's model; only the two allowed models run")
     parser.add_argument("--allow-same-model", action="store_true",
                         help="run even when the reflector's model answered as Director")
     outcome: Dict[str, Any] = {"status": "failed"}
@@ -320,7 +328,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 store = _store()
                 genai_client = _genai_client()
                 outcome = reflect(store, genai_client=genai_client, kind=args.kind, arm=(args.arm or None),
-                                  allow_same_model=args.allow_same_model, now=_now())
+                                  model=(args.model or None), allow_same_model=args.allow_same_model, now=_now())
             except BaseException:
                 outcome = {"status": "failed"}
     finally:

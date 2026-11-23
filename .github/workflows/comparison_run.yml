@@ -29,6 +29,11 @@ on:
         type: string
         required: false
         default: "current"
+      reflect_model:
+        description: "The reflector's model, even when it answered as Director; empty keeps the default"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
   group: readme-state-writer
@@ -90,6 +95,7 @@ jobs:
           COMPARISON_REPEATS: ${{ inputs.repeats }}
           REFLECT: ${{ inputs.reflect }}
           REFLECT_ARM: ${{ inputs.reflect_arm }}
+          REFLECT_MODEL: ${{ inputs.reflect_model }}
         shell: python
         run: |
           import os
@@ -104,6 +110,8 @@ jobs:
               code = subprocess.run(command).returncode
           if os.environ.get("REFLECT", "") == "true":
               reflect = [sys.executable, "scripts/reflect.py", "--kind", "private_run", "--arm", os.environ.get("REFLECT_ARM", "")]
+              if os.environ.get("REFLECT_MODEL", "").strip():
+                  reflect += ["--model", os.environ.get("REFLECT_MODEL", "").strip(), "--allow-same-model"]
               reflect_code = subprocess.run(reflect).returncode
               code = code or reflect_code
           sys.exit(code)
