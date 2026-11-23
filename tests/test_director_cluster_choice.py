@@ -695,3 +695,25 @@ def test_the_extra_group_is_one_more_cluster_line_and_no_sentence(repair_on):
     _, without = _commission([_reply()], groups=groups)
     added = [line for line in with_extra[0].split("\n") if line not in without[0].split("\n")]
     assert len(added) == 1 and added[0].startswith("- Cluster g_5: ")
+
+
+
+def _echoing(groups, at):
+    groups[at].items.append({"url_hash": "orbit_%d" % at, "source_id": "o1_ig_demo", "bucket": "ORBIT", "title": "t",
+                             "summary": ECHO})
+    return groups
+
+
+def test_a_reply_that_echoes_the_offered_groups_private_text_is_rejected_as_a_top_five_echo_is(repair_on):
+    echoing = _reply(word="Echoword", commissioned_thesis="They wrote " + ECHO + " here.")
+    replies = [echoing, _reply(word="Cleanword")]
+    in_five = _echoing(_groups(), 0)
+    five, five_prompts = _commission(replies, groups=in_five)
+    extra_groups = _echoing(_groups(), 5)
+    extra, extra_prompts = _commission(replies, groups=extra_groups, extra_group=extra_groups[5])
+    for commission, prompts in ((five, five_prompts), (extra, extra_prompts)):
+        assert commission.echo_rejections == 1 and commission.attempts_used == 2 and commission.word == "Cleanword"
+        assert "Echoes source text" in prompts[1]
+    # The same group not offered is not shown, so its text is not checked.
+    unshown, _ = _commission(replies, groups=_echoing(_groups(), 5))
+    assert unshown.echo_rejections == 0 and unshown.word == "Echoword"
