@@ -159,7 +159,7 @@ def test_items_as_objects_are_read_too():
 
 # ---- the candidate for the night ----
 
-CANDIDATE_KEYS = {"pointer_run_id", "matched_cluster_id", "overlap", "already_shown", "offered", "group"}
+CANDIDATE_KEYS = {"pointer_run_id", "matched_cluster_id", "overlap", "already_shown", "offered", "group", "lookup"}
 
 
 def test_a_match_beyond_the_five_is_offered(tmp_path):
@@ -167,7 +167,8 @@ def test_a_match_beyond_the_five_is_offered(tmp_path):
     found = reflector.candidate_for_night(_store(tmp_path, _record()), night, NOW)
     assert set(found) == CANDIDATE_KEYS
     assert found == {"pointer_run_id": "daily_run:2026-11-21:local:0", "matched_cluster_id": "g_6",
-                     "overlap": pytest.approx(0.75), "already_shown": False, "offered": True, "group": night[6]}
+                     "overlap": pytest.approx(0.75), "already_shown": False, "offered": True, "group": night[6],
+                     "lookup": "ok"}
 
 
 def test_a_match_among_the_five_is_already_shown_and_nothing_is_offered(tmp_path):
@@ -181,11 +182,13 @@ def test_a_match_among_the_five_is_already_shown_and_nothing_is_offered(tmp_path
 def test_no_match_keeps_the_pointer_but_offers_nothing(tmp_path):
     found = reflector.candidate_for_night(_store(tmp_path, _record()), _night(extra_hashes=("p1",)), NOW)
     assert found == {"pointer_run_id": "daily_run:2026-11-21:local:0", "matched_cluster_id": None,
-                     "overlap": pytest.approx(0.25), "already_shown": False, "offered": False, "group": None}
+                     "overlap": pytest.approx(0.25), "already_shown": False, "offered": False, "group": None,
+                     "lookup": "ok"}
 
 
 NOTHING = {"pointer_run_id": None, "matched_cluster_id": None, "overlap": None, "already_shown": False,
-           "offered": False, "group": None}
+           "offered": False, "group": None, "lookup": "ok"}
+FAILED_LOOKUP = dict(NOTHING, lookup="failed")
 
 
 def test_no_pointer_offers_nothing(tmp_path):
@@ -199,9 +202,27 @@ def test_the_lookup_never_raises():
             raise RuntimeError("Zqsecret")
 
     store = SimpleNamespace(load_run_records=lambda **kw: [dict(_record(), run_id="daily_run:x")])
-    assert reflector.candidate_for_night(_Raising(), _night(), NOW) == NOTHING
-    assert reflector.candidate_for_night(store, [Unreadable(), Unreadable()], NOW)["offered"] is False
+    assert reflector.candidate_for_night(_Raising(), _night(), NOW) == FAILED_LOOKUP
+    assert reflector.candidate_for_night(object(), _night(), NOW) == FAILED_LOOKUP
+    assert reflector.candidate_for_night(store, [Unreadable(), Unreadable()], NOW) == FAILED_LOOKUP
     assert reflector.candidate_for_night(store, None, NOW)["offered"] is False
+
+
+def test_a_read_that_raises_for_one_kind_fails_the_whole_lookup():
+    class HalfRaising:
+        def load_run_records(self, *, kind=None, limit=50):
+            if kind == "private_run":
+                raise RuntimeError("Zqsecret store")
+            return [dict(_record(), run_id="daily_run:x")]
+
+    assert reflector.candidate_for_night(HalfRaising(), _night(), NOW) == FAILED_LOOKUP
+
+
+def test_a_finished_lookup_says_ok_whatever_it_found(tmp_path):
+    assert reflector.candidate_for_night(_store(tmp_path / "a", _record()), _night(), NOW)["lookup"] == "ok"
+    assert reflector.candidate_for_night(_store(tmp_path / "b"), _night(), NOW)["lookup"] == "ok"
+    junk = SimpleNamespace(load_run_records=lambda **kw: [1, "x", None])
+    assert reflector.candidate_for_night(junk, _night(), NOW)["lookup"] == "ok"
 
 
 def test_the_record_value_leaves_the_group_out(tmp_path):
@@ -354,7 +375,7 @@ def test_a_pointed_group_beyond_the_five_is_one_more_plain_cluster_line_after_th
     assert on_lines[at - 1] == _cluster_lines(off_prompt)[-1]
     assert on.record["reflector_candidate"] == {
         "pointer_run_id": "daily_run:2026-11-20:local:1", "matched_cluster_id": str(extra.cluster_id),
-        "overlap": 1.0, "already_shown": False, "offered": True}
+        "overlap": 1.0, "already_shown": False, "offered": True, "lookup": "ok"}
     assert on.result == off.result
 
 
@@ -393,6 +414,8 @@ def test_a_failing_or_stalled_lookup_leaves_the_edition_exactly_as_with_the_swit
     assert _published(on, tmp_path / "on")[1] == _published(off, tmp_path / "off")[1]
     assert on.renders and [_figures(kw) for kw in on.renders] == [_figures(kw) for kw in off.renders]
     assert on.record["reflector_candidate"]["offered"] is False
+    assert on.record["reflector_candidate"]["lookup"] == {"raises": "failed", "stalls": "timeout",
+                                                          "no_pointer": "ok"}[case]
     assert (on_out.out, on_out.err) == (off_out.out, off_out.err)
 
 
@@ -476,7 +499,7 @@ def _offer_sixth(monkeypatch, calls=None):
             calls.append([c.cluster_id for c in clusters])
         group = clusters[5]
         return {"pointer_run_id": "daily_run:x", "matched_cluster_id": str(group.cluster_id), "overlap": 1.0,
-                "already_shown": False, "offered": True, "group": group}
+                "already_shown": False, "offered": True, "group": group, "lookup": "ok"}
 
     monkeypatch.setattr(reflector, "candidate_for_night", lookup)
 
@@ -591,3 +614,44 @@ def test_with_the_packet_path_off_the_switch_reads_nothing(tmp_path, monkeypatch
 
     seen = choice._staged(tmp_path, monkeypatch, choose=choose)
     assert lookups == [] and seen["render"] and "extra_group" not in kwargs[0]
+
+
+
+# ---- the record says whether the lookup finished; the lookup's thread carries its own name ----
+
+
+def test_a_lookup_that_raises_in_its_thread_is_recorded_as_failed(tmp_path, monkeypatch):
+    _switches(monkeypatch, "1")
+
+    def lookup(store, clusters, now):
+        raise RuntimeError("Zqsecret lookup")
+
+    monkeypatch.setattr(reflector, "candidate_for_night", lookup)
+    run = _candidate_edition(tmp_path, monkeypatch)
+    assert run.record["reflector_candidate"]["lookup"] == "failed"
+    assert run.record["reflector_candidate"]["offered"] is False
+
+
+def test_a_budget_that_cannot_start_is_recorded_as_failed(tmp_path, monkeypatch):
+    _switches(monkeypatch, "1")
+
+    def broken(fn, seconds, name="own-group-check"):
+        raise RuntimeError("Zqsecret thread")
+
+    monkeypatch.setattr(own_group, "run_with_budget", broken)
+    run = _candidate_edition(tmp_path, monkeypatch)
+    assert run.record["reflector_candidate"]["lookup"] == "failed"
+
+
+def test_the_lookup_runs_on_a_thread_named_for_it(tmp_path, monkeypatch):
+    _switches(monkeypatch, "1")
+    names = []
+
+    class _Thread(threading.Thread):
+        def start(self):
+            names.append(self.name)
+            super().start()
+
+    monkeypatch.setattr(own_group, "threading", SimpleNamespace(Thread=_Thread, Event=threading.Event))
+    _candidate_edition(tmp_path, monkeypatch)
+    assert names == [reflector.LOOKUP_THREAD_NAME] and reflector.LOOKUP_THREAD_NAME == "reflector-candidate-lookup"

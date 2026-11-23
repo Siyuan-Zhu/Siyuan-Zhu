@@ -515,3 +515,20 @@ def test_the_check_passes_the_extra_group_through(monkeypatch):
     own_group.run_own_group_check(store, "r", word="w", gloss="g", chosen_cluster_id="g_9", clusters=[],
                                   embedding_model="m", genai_client=None, extra_group=extra)
     assert seen["extra_group"] is extra
+
+
+
+def test_the_budget_thread_takes_a_name_and_keeps_its_old_one_by_default(monkeypatch):
+    import threading
+
+    names = []
+
+    class _Thread(threading.Thread):
+        def start(self):
+            names.append(self.name)
+            super().start()
+
+    monkeypatch.setattr(own_group, "threading", SimpleNamespace(Thread=_Thread, Event=threading.Event))
+    assert own_group.run_with_budget(lambda: None, 5.0) is True
+    assert own_group.run_with_budget(lambda: None, 5.0, name="synthetic-lookup") is True
+    assert names == ["own-group-check", "synthetic-lookup"]

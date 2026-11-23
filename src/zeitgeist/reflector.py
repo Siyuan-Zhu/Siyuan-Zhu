@@ -277,6 +277,9 @@ POINTER_KINDS = ("daily_run", "private_run")
 POINTER_MAX_AGE_HOURS = 36
 POINTER_LOAD_LIMIT = 200
 MIN_OVERLAP = 0.5
+LOOKUP_THREAD_NAME = "reflector-candidate-lookup"
+# What the record says of the lookup: it finished, its budget ran out, or it raised.
+LOOKUP_OK, LOOKUP_TIMEOUT, LOOKUP_FAILED = "ok", "timeout", "failed"
 # The setting's result on a record; a trial's (tests["reflector_trial"]) is never read.
 KEY = "reflector"
 
@@ -299,43 +302,46 @@ def _pointer_hashes(result: Any) -> Optional[List[str]]:
     return list(dict.fromkeys(hashes))
 
 
+def _find_pointer(store: Any, now: datetime, max_age_hours: float) -> Optional[Dict[str, Any]]:
+    """The newest pointer in the window, or None; raises when a store read raises."""
+    from . import run_record
+
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    window = timedelta(hours=float(max_age_hours))
+    found = []
+    for kind in POINTER_KINDS:
+        records = store.load_run_records(kind=kind, limit=POINTER_LOAD_LIMIT)
+        for record in records or ():
+            if not isinstance(record, dict) or record.get("kind") != kind:
+                continue
+            tests, run_id = record.get("tests"), record.get("run_id")
+            if not isinstance(tests, dict) or not isinstance(run_id, str):
+                continue
+            result = tests.get(KEY)
+            if not isinstance(result, Mapping) or result.get("status") != "pointer":
+                continue
+            hashes = _pointer_hashes(result)
+            moment = run_record._written_at(record)
+            if hashes is None or moment is None or not timedelta(0) <= now - moment <= window:
+                continue
+            found.append((moment, run_id, hashes))
+    if not found:
+        return None
+    found.sort(key=lambda entry: entry[1])
+    found.sort(key=lambda entry: entry[0], reverse=True)
+    return {"run_id": found[0][1], "item_hashes": found[0][2]}
+
+
 def newest_pointer(store: Any, now: datetime, *, max_age_hours: float = POINTER_MAX_AGE_HOURS) -> Optional[Dict[str, Any]]:
     """The newest pointer of a daily or private run record written in the window; None when there is none.
 
     Only tests["reflector"] with status "pointer" counts, never tests["reflector_trial"]. The window is
-    read from the record's own written_at. Never raises; prints and logs nothing.
+    read from the record's own written_at. A store read that raises finds nothing. Never raises; prints
+    and logs nothing.
     """
-    from . import run_record
-
     try:
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=timezone.utc)
-        window = timedelta(hours=float(max_age_hours))
-        found = []
-        for kind in POINTER_KINDS:
-            try:
-                records = store.load_run_records(kind=kind, limit=POINTER_LOAD_LIMIT)
-            except Exception:
-                continue
-            for record in records or ():
-                if not isinstance(record, dict) or record.get("kind") != kind:
-                    continue
-                tests, run_id = record.get("tests"), record.get("run_id")
-                if not isinstance(tests, dict) or not isinstance(run_id, str):
-                    continue
-                result = tests.get(KEY)
-                if not isinstance(result, Mapping) or result.get("status") != "pointer":
-                    continue
-                hashes = _pointer_hashes(result)
-                moment = run_record._written_at(record)
-                if hashes is None or moment is None or not timedelta(0) <= now - moment <= window:
-                    continue
-                found.append((moment, run_id, hashes))
-        if not found:
-            return None
-        found.sort(key=lambda entry: entry[1])
-        found.sort(key=lambda entry: entry[0], reverse=True)
-        return {"run_id": found[0][1], "item_hashes": found[0][2]}
+        return _find_pointer(store, now, max_age_hours)
     except Exception:
         return None
 
@@ -357,21 +363,22 @@ def match_pointer(pointer: Mapping[str, Any], clusters: Sequence[Any]) -> tuple:
     return (best if best_share >= MIN_OVERLAP else None), float(best_share)
 
 
-def _no_candidate() -> Dict[str, Any]:
+def _no_candidate(lookup: str = LOOKUP_OK) -> Dict[str, Any]:
     return {"pointer_run_id": None, "matched_cluster_id": None, "overlap": None, "already_shown": False,
-            "offered": False, "group": None}
+            "offered": False, "group": None, "lookup": lookup}
 
 
 def candidate_for_night(store: Any, clusters: Sequence[Any], now: datetime) -> Dict[str, Any]:
     """The newest pointer matched to tonight's ranked groups. Never raises; prints and logs nothing.
 
     `already_shown` is true when the match is one of the first five groups; then nothing extra is offered.
-    Otherwise a match is offered, and `group` is that cluster.
+    Otherwise a match is offered, and `group` is that cluster. `lookup` is "ok" when it finished, whatever it
+    found, and "failed" when anything raised (a store read included); then nothing is offered.
     """
     from . import run_record
 
     try:
-        pointer = newest_pointer(store, now)
+        pointer = _find_pointer(store, now, POINTER_MAX_AGE_HOURS)
         if pointer is None:
             return _no_candidate()
         ranked = list(clusters or ())
@@ -385,7 +392,7 @@ def candidate_for_night(store: Any, clusters: Sequence[Any], now: datetime) -> D
                      offered=not shown, group=None if shown else group)
         return found
     except Exception:
-        return _no_candidate()
+        return _no_candidate(LOOKUP_FAILED)
 
 
 def candidate_record(found: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:

@@ -194,8 +194,8 @@ def run_own_group_check(
     return bool(stored) and numbers.get("status") == "ok"
 
 
-def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0) -> bool:
-    """Run fn on a daemon thread and wait at most `seconds`; True when it finished in time.
+def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0, *, name: str = "own-group-check") -> bool:
+    """Run fn on a daemon thread named `name` and wait at most `seconds`; True when it finished in time.
 
     When the time is up the thread is abandoned and False is returned. Whatever fn raises stays in
     its thread. An interrupt or an exit raised in the calling thread while it waits propagates.
@@ -211,7 +211,7 @@ def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0) -> bool:
         finally:
             done.set()
 
-    threading.Thread(target=target, name="own-group-check", daemon=True).start()
+    threading.Thread(target=target, name=name, daemon=True).start()
     return done.wait(seconds)
 
 

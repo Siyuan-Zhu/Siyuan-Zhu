@@ -1785,7 +1785,7 @@ def _offer_last(monkeypatch, calls):
         calls.append(([c.cluster_id for c in clusters], now))
         group = clusters[-1]
         return {"pointer_run_id": "daily_run:x", "matched_cluster_id": str(group.cluster_id), "overlap": 1.0,
-                "already_shown": False, "offered": True, "group": group}
+                "already_shown": False, "offered": True, "group": group, "lookup": "ok"}
 
     monkeypatch.setattr(reflector, "candidate_for_night", lookup)
 
@@ -1812,7 +1812,8 @@ def test_the_private_run_offers_the_pointed_group_as_the_edition_does(monkeypatc
     assert on_lines[:-1] == off_lines and on_lines[-1].startswith("- Cluster %s:" % ids[-1])
     [(_, record)] = store.records
     assert record["reflector_candidate"] == {"pointer_run_id": "daily_run:x", "matched_cluster_id": ids[-1],
-                                             "overlap": 1.0, "already_shown": False, "offered": True}
+                                             "overlap": 1.0, "already_shown": False, "offered": True,
+                                             "lookup": "ok"}
     assert baseline_store.records[0][1]["reflector_candidate"] is None
 
 
@@ -1842,6 +1843,8 @@ def test_a_store_without_run_records_offers_nothing_and_keeps_the_run(monkeypatc
     result, director = _run(store, reply=_slate_reply())
     assert result.lines == baseline.lines and director.prompts == baseline_director.prompts
     assert store.records[0][1]["reflector_candidate"]["offered"] is False
+    # The test store has no run records to read: the lookup raised inside and says so.
+    assert store.records[0][1]["reflector_candidate"]["lookup"] == "failed"
 
 
 def _reflector_arms(monkeypatch, capsys, names="current,current_reflector"):

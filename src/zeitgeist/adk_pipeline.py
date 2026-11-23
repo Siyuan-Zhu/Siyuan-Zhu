@@ -1588,8 +1588,9 @@ def _daily_reflector_inputs(
 def _reflector_candidate(store: Any, clusters: Sequence[Any]) -> Dict[str, Any]:
     """The night's candidate from the reflector's newest pointer, looked up within its budget.
 
-    Before the Director call, so it can never cost the edition: a timeout or any failure offers nothing.
-    An interrupt or an exit in the waiting thread propagates. Prints and logs nothing.
+    Before the Director call, so it can never cost the edition: a timeout or any failure offers nothing, and
+    the candidate's `lookup` says which ("timeout" or "failed"). An interrupt or an exit in the waiting
+    thread propagates. Prints and logs nothing.
     """
     found: Dict[str, Any] = {}
     ranked = list(clusters or ())
@@ -1598,15 +1599,18 @@ def _reflector_candidate(store: Any, clusters: Sequence[Any]) -> Dict[str, Any]:
         found["candidate"] = reflector.candidate_for_night(store, ranked, datetime.now(timezone.utc))
 
     try:
-        if own_group.run_with_budget(look, reflector.CANDIDATE_BUDGET_SECONDS):
-            candidate = found.get("candidate")
-            if isinstance(candidate, dict) and set(candidate) == set(reflector._no_candidate()):
-                return candidate
+        finished = own_group.run_with_budget(look, reflector.CANDIDATE_BUDGET_SECONDS,
+                                             name=reflector.LOOKUP_THREAD_NAME)
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:
-        pass
-    return reflector._no_candidate()
+        return reflector._no_candidate(reflector.LOOKUP_FAILED)
+    if not finished:
+        return reflector._no_candidate(reflector.LOOKUP_TIMEOUT)
+    candidate = found.get("candidate")
+    if isinstance(candidate, dict) and set(candidate) == set(reflector._no_candidate()):
+        return candidate
+    return reflector._no_candidate(reflector.LOOKUP_FAILED)
 
 
 def _night_links(store: Any, config: Any, clusters: Sequence[Any]) -> Tuple[List[Any], Any]:
