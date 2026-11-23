@@ -78,7 +78,7 @@ from . import embedding_migration
 from . import judge_calibration
 from . import own_group, run_record
 from .embedding_migration import EmbeddingRun
-from .model_choice import FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
+from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
 
 logger = logging.getLogger(__name__)
@@ -1922,6 +1922,9 @@ def commission_daily_zeitgeist(
     echo_rejections = 0
     packet_phase_over = False
     packet_attempts = 0
+    # The first reply valid in every respect but its id: if no reply passes, it is published, mapped to the
+    # top group, so the shown-candidate check never ends a run worse than today's code would.
+    kept: Optional[DirectorCommission] = None
 
     if llm_callable is not None or genai_client is not None:
         planned_packet = min(2, total_attempts - 1) if (evidence_packet and not constrained) else 0
@@ -1937,13 +1940,9 @@ def commission_daily_zeitgeist(
                 phase_plan = [False] * total_attempts
                 last_rejection_reason = None
                 gloss_rejected = False
-            for position, use_packet in enumerate(phase_plan):
+            for use_packet in phase_plan:
                 if use_packet and packet_phase_over:
                     continue
-                # The final attempt of the whole loop: the last of this round, with no Flash round to follow.
-                final_attempt = position == len(phase_plan) - 1 and (
-                    flash_round or llm_callable is not None or run_models is None
-                    or run_models.current("director") == FLASH)
                 if not use_packet and not in_legacy_phase:
                     # The packet phase is over: the legacy phase starts clean.
                     in_legacy_phase = True
@@ -2039,19 +2038,13 @@ def commission_daily_zeitgeist(
                           or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
                         is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
 
-                mapped = False
+                not_offered = False
                 if is_valid and (repair or links is not None):
                     chosen_id = str(commission.selected_cluster_id).strip()
                     offered = _offered_ids(top_clusters, links, extra_group, use_packet)
                     # With the repair switch every id is checked; with only links on, a link id.
                     checked = repair or _LINK_ID_RE.fullmatch(chosen_id) is not None
-                    if checked and chosen_id not in offered:
-                        if final_attempt and top_clusters:
-                            # The last attempt is accepted, mapped to the top group, so the check costs no edition.
-                            commission.selected_cluster_id = str(getattr(top_clusters[0], "cluster_id", "cluster_0"))
-                            mapped = True
-                        else:
-                            is_valid, reason = False, NOT_OFFERED_REASON
+                    not_offered = checked and chosen_id not in offered
 
                 if use_packet and is_valid:
                     try:
@@ -2067,6 +2060,17 @@ def commission_daily_zeitgeist(
                         is_valid, reason = False, echo_reason
                         echo_rejections += 1
 
+                if is_valid and not_offered:
+                    # Valid in every respect but its id: kept (the first such reply only), then retried.
+                    if kept is None:
+                        commission.fallback_used = False
+                        commission.packet_used = use_packet
+                        commission.slate_count = slate_count
+                        _keep_director_evidence(commission, slate_words, slate_block if slate_sent else block,
+                                                slate_prompt if slate_sent else prompt)
+                        kept = commission
+                    is_valid, reason = False, NOT_OFFERED_REASON
+
                 if is_valid:
                     commission.attempts_used = attempts_made
                     commission.fallback_used = False
@@ -2075,13 +2079,19 @@ def commission_daily_zeitgeist(
                     commission.slate_count = slate_count
                     _keep_director_evidence(commission, slate_words, slate_block if slate_sent else block,
                                             slate_prompt if slate_sent else prompt)
-                    if mapped:
-                        setattr(commission, _MAPPED_ATTR, True)
                     return commission
 
                 last_rejection_reason = reason
                 gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
 
+    if kept is not None:
+        # No reply passed: the kept one is published, mapped to the top group, before any refusal or fallback.
+        if top_clusters:
+            kept.selected_cluster_id = str(getattr(top_clusters[0], "cluster_id", "cluster_0"))
+        kept.attempts_used = attempts_made
+        kept.echo_rejections = echo_rejections
+        setattr(kept, _MAPPED_ATTR, True)
+        return kept
     if gloss_rejected:
         raise ValueError("Director gloss failed bounded validation retries; retain last publication")
     if constrained and (llm_callable is not None or genai_client is not None):

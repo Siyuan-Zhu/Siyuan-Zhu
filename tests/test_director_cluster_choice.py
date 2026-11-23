@@ -404,3 +404,91 @@ def test_a_chosen_links_published_keywords_drop_a_members_account_handle():
     # The handle is gone, "SALT" repeats "salt" regardless of case, and only the first eight are kept.
     assert published == ["Tide", "Kelp", "salt", "reef", "current", "shoal", "brine", "spray"]
     assert "handle_one" not in [word.lower() for word in published]
+
+
+
+# ---- an id that was not shown can never cost the edition ----
+
+LONG_GLOSS = "A gloss far too long to pass the bounded validation of fifty characters"
+
+
+def _kept_reply(chosen):
+    return _reply(selected_cluster_id=chosen, word="Firstword")
+
+
+def _assert_kept_and_mapped(commission, links=None):
+    assert commission.fallback_used is False
+    assert commission.word == "Firstword" and commission.word not in FALLBACK_WORDS
+    assert commission.selected_cluster_id == "g_0"
+    assert pipeline.chosen_id_mapped(commission) is True
+    assert pipeline.recorded_chosen_mapping(commission, links) is True
+
+
+class _ScriptedClient:
+    """A fake genai client answering by model and call count."""
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.models = self
+        self.calls = []
+
+    def generate_content(self, *, model, contents, config):
+        self.calls.append(model)
+        reply = self.answer(model, len(self.calls))
+        if isinstance(reply, BaseException):
+            raise reply
+        return SimpleNamespace(text=reply)
+
+
+def test_a_handover_to_flash_inside_the_last_attempt_keeps_an_unshown_reply(repair_on):
+    def answer(model, count):
+        if model == mc.HYDROGEN:
+            return "not json" if count < 5 else RuntimeError("synthetic Hydrogen failure")
+        return _kept_reply("g_nowhere")
+
+    client = _ScriptedClient(answer)
+    run_models = mc.RunModels(mc.HYDROGEN, mc.HYDROGEN, mc.EMBED_001)
+    commission = commission_daily_zeitgeist(
+        _groups(), ["Entropy"], genai_client=client, model_name=mc.HYDROGEN, run_models=run_models,
+        evidence_packet=True, now_utc=NOW,
+    )
+    # The fifth attempt's Hydrogen call fails and Flash answers it; no Flash round follows.
+    assert client.calls == [mc.HYDROGEN] * 5 + [mc.FLASH]
+    _assert_kept_and_mapped(commission)
+
+
+def test_an_unshown_id_then_four_malformed_replies_publishes_the_first_reply(repair_on):
+    commission, prompts = _commission([_kept_reply("g_nowhere")] + ["not json"] * 4)
+    assert len(prompts) == 5
+    _assert_kept_and_mapped(commission)
+
+
+def test_an_unshown_id_then_four_gloss_failures_publishes_the_first_reply(repair_on):
+    commission, prompts = _commission([_kept_reply("g_nowhere")] + [_reply(gloss=LONG_GLOSS)] * 4)
+    assert len(prompts) == 5
+    _assert_kept_and_mapped(commission)
+
+
+def test_with_links_on_and_the_switch_off_an_unshown_link_id_then_malformed_replies_publishes_the_first():
+    groups = _groups()
+    links = [_link(groups)]
+    commission, prompts = _commission([_kept_reply("link_9")] + ["not json"] * 4, groups=groups, links=links)
+    assert len(prompts) == 5
+    _assert_kept_and_mapped(commission, links)
+
+
+def test_a_later_reply_valid_in_every_respect_is_still_preferred(repair_on):
+    commission, prompts = _commission([_kept_reply("g_nowhere"), "not json", _reply(selected_cluster_id="g_3")])
+    assert commission.word == "Selvedge" and commission.selected_cluster_id == "g_3"
+    assert not pipeline.chosen_id_mapped(commission) and len(prompts) == 3
+
+
+def test_a_reply_that_also_echoes_is_not_kept(repair_on):
+    groups = _groups()
+    groups[0].items.append({"url_hash": "orbit", "source_id": "o1_ig_demo", "bucket": "ORBIT", "title": "t",
+                            "summary": "alpha bravo charlie delta echo foxtrot"})
+    echo = _reply(selected_cluster_id="g_nowhere", word="Firstword",
+                  commissioned_thesis="They wrote alpha bravo charlie delta echo foxtrot here.")
+    commission, _ = _commission([echo] + ["not json"] * 4, groups=groups)
+    assert commission.fallback_used is True and commission.word != "Firstword"
+
