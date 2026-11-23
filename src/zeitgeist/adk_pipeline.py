@@ -1860,7 +1860,6 @@ def _deterministic_fallback_commission(
 
 
 _LINK_ID_RE = re.compile(r"link_\d+")
-NOT_OFFERED_REASON = "The selected candidate id was not offered; choose one of the provided cluster IDs."
 _MAPPED_ATTR = "_chosen_id_mapped"
 _LINKS_SHOWN_ATTR = "_links_shown"
 
@@ -1922,7 +1921,8 @@ def commission_daily_zeitgeist(
     """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3).
 
     `links` (the night's links, given only with the links switch on) and `extra_group` are shown on the
-    packet path only; a link id is valid only on an attempt that showed that link. `check_shown_ids=False`
+    packet path only. With links or the repair switch on, a reply whose id the attempt did not show (a link id
+    included) is accepted at once and mapped to the top group; the check never retries. `check_shown_ids=False`
     turns the shown-candidate check off (photo recovery's revision, whose caller refuses another story).
     """
     owner = validate_owner_interjection(owner_override or {})
@@ -1935,10 +1935,6 @@ def commission_daily_zeitgeist(
     echo_rejections = 0
     packet_phase_over = False
     packet_attempts = 0
-    # The first reply valid in every respect but its id: if no reply passes, it is published, mapped to the
-    # top group, so the shown-candidate check never ends a run worse than today's code would.
-    kept: Optional[DirectorCommission] = None
-
     def shown_mark(commission: DirectorCommission) -> DirectorCommission:
         # Whether any attempt of the loop showed the night's links (a packet attempt, links given).
         setattr(commission, _LINKS_SHOWN_ATTR, links is not None and packet_attempts > 0)
@@ -2056,14 +2052,14 @@ def commission_daily_zeitgeist(
                           or not all(isinstance(q, str) and 2 <= len(q.split()) <= 8 for q in commission.unsplash_queries)):
                         is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
 
-                not_offered = chosen_checked = False
+                mapped = chosen_checked = False
                 # A night with no groups offers nothing to check against: as today, no id check.
                 if is_valid and check_shown_ids and top_clusters and (repair or links is not None):
                     chosen_id = str(commission.selected_cluster_id).strip()
                     offered = _offered_ids(top_clusters, links, extra_group, use_packet)
                     # With the repair switch every id is checked; with only links on, a link id.
                     checked = repair or _LINK_ID_RE.fullmatch(chosen_id) is not None
-                    not_offered = checked and chosen_id not in offered
+                    mapped = checked and chosen_id not in offered
                     chosen_checked = True
 
                 if use_packet and is_valid:
@@ -2080,19 +2076,13 @@ def commission_daily_zeitgeist(
                         is_valid, reason = False, echo_reason
                         echo_rejections += 1
 
-                if is_valid and not_offered:
-                    # Valid in every respect but its id: kept (the first such reply only), then retried.
-                    if kept is None:
-                        commission.fallback_used = False
-                        commission.packet_used = use_packet
-                        commission.slate_count = slate_count
-                        _keep_director_evidence(commission, slate_words, slate_block if slate_sent else block,
-                                                slate_prompt if slate_sent else prompt)
-                        kept = commission
-                    is_valid, reason = False, NOT_OFFERED_REASON
-
                 if is_valid:
-                    if chosen_checked:
+                    if mapped:
+                        # An id that was not shown: the reply is accepted at once, as today's code accepts it, and
+                        # mapped to the top group, whose fields today's code publishes. The check never retries.
+                        commission.selected_cluster_id = str(getattr(top_clusters[0], "cluster_id", "cluster_0"))
+                        setattr(commission, _MAPPED_ATTR, True)
+                    elif chosen_checked:
                         # Stored stripped, so the own-group check and photo recovery find it.
                         commission.selected_cluster_id = chosen_id
                     commission.attempts_used = attempts_made
@@ -2107,14 +2097,6 @@ def commission_daily_zeitgeist(
                 last_rejection_reason = reason
                 gloss_rejected = gloss_rejected or reason.startswith("Gloss must")
 
-    if kept is not None:
-        # No reply passed: the kept one is published, mapped to the top group, before any refusal or fallback.
-        if top_clusters:
-            kept.selected_cluster_id = str(getattr(top_clusters[0], "cluster_id", "cluster_0"))
-        kept.attempts_used = attempts_made
-        kept.echo_rejections = echo_rejections
-        setattr(kept, _MAPPED_ATTR, True)
-        return shown_mark(kept)
     if gloss_rejected:
         raise ValueError("Director gloss failed bounded validation retries; retain last publication")
     if constrained and (llm_callable is not None or genai_client is not None):

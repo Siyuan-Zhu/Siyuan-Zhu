@@ -907,7 +907,7 @@ def test_with_the_repair_switch_an_unshown_id_on_the_last_attempt_is_recorded_as
     record, client = _mapped_edition(tmp_path, monkeypatch, "cluster_nowhere")
     assert record["chosen_mapped"] is True
     assert record["chosen_cluster_id"] == record["groups"][0]["cluster_id"]
-    assert record["attempts_used"] == len(client.prompts) > 1
+    assert record["attempts_used"] == len(client.prompts) == 1
 
 
 @pytest.mark.parametrize("links, repair", [("1", None), (None, "1"), ("1", "1")])

@@ -449,28 +449,25 @@ def test_a_shown_link_id_is_accepted() -> None:
     assert commission.selected_cluster_id == "link_2"
 
 
-def test_an_unshown_link_id_is_rejected_and_retried() -> None:
+def test_an_unshown_link_id_is_accepted_at_once_and_mapped_to_the_top_group() -> None:
     links = link_candidates(_night(), _night_map())[:1]
-    commission, prompts = _commission([_reply(selected_cluster_id="link_2"), _reply(selected_cluster_id="link_1")],
-                                      links)
-    assert commission.selected_cluster_id == "link_1" and commission.attempts_used == 2
-    assert "PREVIOUS ATTEMPT REJECTED: " in prompts[1] and "not offered" in prompts[1]
+    commission, prompts = _commission([_reply(selected_cluster_id="link_2")], links)
+    assert commission.selected_cluster_id == "g_zeta" and commission.attempts_used == 1 and len(prompts) == 1
+    assert pipeline.chosen_id_mapped(commission) is True
 
 
-def test_a_link_id_where_no_link_was_shown_is_rejected() -> None:
-    commission, prompts = _commission([_reply(selected_cluster_id="link_1"), _reply()], [])
-    assert commission.selected_cluster_id == "g_zeta" and commission.attempts_used == 2
-    assert "not offered" in prompts[1]
+def test_a_link_id_where_no_link_was_shown_is_mapped_to_the_top_group() -> None:
+    commission, prompts = _commission([_reply(selected_cluster_id="link_1")], [])
+    assert commission.selected_cluster_id == "g_zeta" and commission.attempts_used == 1 and len(prompts) == 1
+    assert pipeline.chosen_id_mapped(commission) is True
 
 
-def test_a_link_id_on_the_older_prompt_is_rejected() -> None:
+def test_a_link_id_on_the_older_prompt_is_mapped_to_the_top_group() -> None:
     links = link_candidates(_night(), _night_map())
-    commission, prompts = _commission(
-        ["not json", "not json", _reply(selected_cluster_id="link_1"), _reply()], links)
+    commission, prompts = _commission(["not json", "not json", _reply(selected_cluster_id="link_1")], links)
     assert "- Link link_1" in prompts[0] and "- Link link_1" not in prompts[2]
-    assert commission.packet_used is False and commission.attempts_used == 4
-    assert commission.selected_cluster_id == "g_zeta"
-    assert "not offered" in prompts[3]
+    assert commission.packet_used is False and commission.attempts_used == 3
+    assert commission.selected_cluster_id == "g_zeta" and pipeline.chosen_id_mapped(commission) is True
 
 
 def test_without_links_a_link_id_is_as_today() -> None:

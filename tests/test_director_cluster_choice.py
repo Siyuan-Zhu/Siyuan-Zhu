@@ -15,7 +15,6 @@ from src.zeitgeist.understanding import LinkCandidate, link_keywords, public_key
 from tests.test_understanding_pipeline import _FakeStore
 
 NOW = "2026-11-21T12:00:00Z"
-FALLBACK_WORDS = {"Systole"}
 
 
 def _item(title, source_id="m1_src_a", bucket="MACRO"):
@@ -93,17 +92,20 @@ def test_the_switch_is_on_only_for_one(value, expected):
 # ---- the Director's choice is checked against what it was shown ----
 
 
-def test_an_unshown_id_is_retried_through_the_rejection_path(repair_on):
-    commission, prompts = _commission([_reply(selected_cluster_id="g_5"), _reply(selected_cluster_id="g_2")])
-    assert commission.selected_cluster_id == "g_2" and commission.attempts_used == 2
-    assert "PREVIOUS ATTEMPT REJECTED: " in prompts[1] and "not offered" in prompts[1]
-    assert not pipeline.chosen_id_mapped(commission)
+def test_an_unshown_id_is_accepted_at_once_and_mapped_to_the_top_group(repair_on):
+    commission, prompts = _commission([_reply(selected_cluster_id="g_5")])
+    assert len(prompts) == 1 and commission.attempts_used == 1
+    assert commission.word == "Selvedge" and commission.fallback_used is False
+    assert commission.selected_cluster_id == "g_0" and pipeline.chosen_id_mapped(commission) is True
+    assert "PREVIOUS ATTEMPT REJECTED" not in "".join(prompts)
+    assert "chosen_id_mapped" not in json.dumps(commission.to_dict())
 
 
 def test_a_shown_group_or_link_is_accepted_at_once(repair_on):
     groups = _groups()
     commission, _ = _commission([_reply(selected_cluster_id="g_4")], groups=groups)
     assert commission.selected_cluster_id == "g_4" and commission.attempts_used == 1
+    assert pipeline.chosen_id_mapped(commission) is False
     commission, _ = _commission([_reply(selected_cluster_id="link_1")], groups=groups, links=[_link(groups)])
     assert commission.selected_cluster_id == "link_1" and commission.attempts_used == 1
 
@@ -113,63 +115,13 @@ def test_an_extra_group_shown_on_the_packet_path_is_accepted(repair_on):
     commission, prompts = _commission([_reply(selected_cluster_id="g_5")], groups=groups, extra_group=groups[5])
     assert commission.selected_cluster_id == "g_5" and commission.attempts_used == 1
     assert "- Cluster g_5: " in prompts[0]
-
-
-def test_on_the_last_attempt_an_unshown_id_is_mapped_to_the_top_group(repair_on):
-    commission, prompts = _commission([_reply(selected_cluster_id="g_nowhere")])
-    # Two packet attempts and three on the older prompt: every one but the last is rejected.
-    assert len(prompts) == 5 and commission.attempts_used == 5
-    assert commission.fallback_used is False and commission.word == "Selvedge"
-    assert commission.word not in FALLBACK_WORDS
-    assert commission.selected_cluster_id == "g_0"
-    assert pipeline.chosen_id_mapped(commission) is True
-    assert "selected_cluster_id" in commission.to_dict() and "chosen_id_mapped" not in json.dumps(commission.to_dict())
-
-
-def test_a_link_id_on_the_older_prompt_is_not_offered(repair_on):
-    groups = _groups()
-    commission, prompts = _commission(
-        ["not json", "not json", _reply(selected_cluster_id="link_1"), _reply(selected_cluster_id="g_1")],
-        groups=groups, links=[_link(groups)])
-    assert commission.selected_cluster_id == "g_1" and commission.attempts_used == 4
-    assert "not offered" in prompts[3]
-
-
-class _Client:
-    def __init__(self, reply):
-        self.reply = reply
-        self.models = self
-        self.calls = []
-
-    def generate_content(self, *, model, contents, config):
-        self.calls.append(model)
-        return SimpleNamespace(text=self.reply)
-
-
-def test_the_last_attempt_is_the_last_of_the_whole_loop_across_the_flash_round(repair_on):
-    client = _Client(_reply(selected_cluster_id="g_nowhere"))
-    run_models = mc.RunModels(mc.HYDROGEN, mc.HYDROGEN, mc.EMBED_001)
-    commission = commission_daily_zeitgeist(
-        _groups(), ["Entropy"], genai_client=client, model_name=mc.HYDROGEN, run_models=run_models,
-        evidence_packet=True, now_utc=NOW,
-    )
-    # Hydrogen's five attempts are all rejected; the Flash round's third and last attempt is accepted and mapped.
-    assert client.calls == [mc.HYDROGEN] * 5 + [mc.FLASH] * 3
-    assert commission.fallback_used is False and commission.word == "Selvedge"
-    assert commission.selected_cluster_id == "g_0" and pipeline.chosen_id_mapped(commission) is True
+    assert pipeline.chosen_id_mapped(commission) is False
 
 
 def test_with_the_switch_off_an_unshown_id_is_accepted_as_today():
     commission, prompts = _commission([_reply(selected_cluster_id="g_nowhere")])
     assert commission.selected_cluster_id == "g_nowhere" and commission.attempts_used == 1 and len(prompts) == 1
     assert not pipeline.chosen_id_mapped(commission)
-
-
-def test_with_links_on_and_the_switch_off_a_link_id_on_the_last_attempt_still_keeps_the_edition():
-    groups = _groups()
-    commission, prompts = _commission([_reply(selected_cluster_id="link_7")], groups=groups, links=[_link(groups)])
-    assert len(prompts) == 5 and commission.fallback_used is False and commission.word == "Selvedge"
-    assert commission.selected_cluster_id == "g_0" and pipeline.chosen_id_mapped(commission) is True
 
 
 # ---- the published fields follow the chosen candidate ----
@@ -407,21 +359,15 @@ def test_a_chosen_links_published_keywords_drop_a_members_account_handle():
 
 
 
-# ---- an id that was not shown can never cost the edition ----
+# ---- a reply whose id was not shown is accepted at once: never worse than switches off ----
+
+import random  # noqa: E402
+
+from src.zeitgeist.spend_guard import SpendBlocked  # noqa: E402
 
 LONG_GLOSS = "A gloss far too long to pass the bounded validation of fifty characters"
-
-
-def _kept_reply(chosen):
-    return _reply(selected_cluster_id=chosen, word="Firstword")
-
-
-def _assert_kept_and_mapped(commission, links=None):
-    assert commission.fallback_used is False
-    assert commission.word == "Firstword" and commission.word not in FALLBACK_WORDS
-    assert commission.selected_cluster_id == "g_0"
-    assert pipeline.chosen_id_mapped(commission) is True
-    assert pipeline.recorded_chosen_mapping(commission, links) is True
+ECHO = "alpha bravo charlie delta echo foxtrot"
+NON_LATIN = chr(0x421) + chr(0x43B) + chr(0x43E) + chr(0x432) + chr(0x43E)
 
 
 class _ScriptedClient:
@@ -440,57 +386,141 @@ class _ScriptedClient:
         return SimpleNamespace(text=reply)
 
 
-def test_a_handover_to_flash_inside_the_last_attempt_keeps_an_unshown_reply(repair_on):
+def _blocked(pre):
+    error = SpendBlocked("Unregistered paid SDK method")
+    if pre:
+        error.refused_before_dispatch = True
+    return error
+
+
+def _echo_groups():
+    groups = _groups()
+    groups[0].items.append({"url_hash": "orbit", "source_id": "o1_ig_demo", "bucket": "ORBIT", "title": "t",
+                            "summary": ECHO})
+    return groups
+
+
+def _play(script, monkeypatch, *, repair, links, groups=None, owner=None, packet=True):
+    """Run one scripted reply sequence on Hydrogen; the outcome, the models called and the final models."""
+    if repair:
+        monkeypatch.setenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", "1")
+    else:
+        monkeypatch.delenv("ZEITGEIST_CHOSEN_GROUP_FIELDS", raising=False)
+
     def answer(model, count):
-        if model == mc.HYDROGEN:
-            return "not json" if count < 5 else RuntimeError("synthetic Hydrogen failure")
-        return _kept_reply("g_nowhere")
+        step = script[count - 1] if count <= len(script) else "not json"
+        return step(model) if callable(step) else step
 
     client = _ScriptedClient(answer)
     run_models = mc.RunModels(mc.HYDROGEN, mc.HYDROGEN, mc.EMBED_001)
-    commission = commission_daily_zeitgeist(
-        _groups(), ["Entropy"], genai_client=client, model_name=mc.HYDROGEN, run_models=run_models,
-        evidence_packet=True, now_utc=NOW,
-    )
-    # The fifth attempt's Hydrogen call fails and Flash answers it; no Flash round follows.
-    assert client.calls == [mc.HYDROGEN] * 5 + [mc.FLASH]
-    _assert_kept_and_mapped(commission)
+    try:
+        commission = commission_daily_zeitgeist(
+            _echo_groups() if groups is None else groups, ["Entropy"], genai_client=client,
+            model_name=mc.HYDROGEN, run_models=run_models, evidence_packet=packet, now_utc=NOW, links=links,
+            owner_override=owner,
+        )
+        outcome = ("published", commission.word, commission.fallback_used)
+    except Exception as error:  # noqa: BLE001 - the exception type is the outcome
+        commission, outcome = None, ("raised", type(error).__name__, None)
+    final = (run_models.director, run_models.judge, run_models.fallback_fired)
+    return outcome, client.calls, final, commission
 
 
-def test_an_unshown_id_then_four_malformed_replies_publishes_the_first_reply(repair_on):
-    commission, prompts = _commission([_kept_reply("g_nowhere")] + ["not json"] * 4)
-    assert len(prompts) == 5
-    _assert_kept_and_mapped(commission)
+def _same_as_off(script, monkeypatch, *, repair=True, links=None, groups=None, owner=None, packet=True):
+    off = _play(script, monkeypatch, repair=False, links=None, groups=groups, owner=owner, packet=packet)
+    on = _play(script, monkeypatch, repair=repair, links=links, groups=groups, owner=owner, packet=packet)
+    assert on[:3] == off[:3]
+    return off, on
 
 
-def test_an_unshown_id_then_four_gloss_failures_publishes_the_first_reply(repair_on):
-    commission, prompts = _commission([_kept_reply("g_nowhere")] + [_reply(gloss=LONG_GLOSS)] * 4)
-    assert len(prompts) == 5
-    _assert_kept_and_mapped(commission)
+def _assert_mapped(on, top="g_0"):
+    outcome, calls, final, commission = on
+    assert outcome[0] == "published" and outcome[2] is False
+    assert commission.selected_cluster_id == top and pipeline.chosen_id_mapped(commission) is True
 
 
-def test_with_links_on_and_the_switch_off_an_unshown_link_id_then_malformed_replies_publishes_the_first():
+def test_an_unshown_id_alone(monkeypatch):
+    off, on = _same_as_off([_reply(selected_cluster_id="g_nowhere", word="Firstword")], monkeypatch)
+    assert on[0] == ("published", "Firstword", False) and on[1] == [mc.HYDROGEN] and on[2][2] is False
+    _assert_mapped(on)
+
+
+def test_an_unshown_id_then_a_spend_block_after_dispatch_never_makes_the_second_call(monkeypatch):
+    off, on = _same_as_off([_reply(selected_cluster_id="g_nowhere", word="Firstword"), _blocked(pre=False)],
+                           monkeypatch)
+    assert on[1] == [mc.HYDROGEN] and on[0] == ("published", "Firstword", False) and on[2][2] is False
+    _assert_mapped(on)
+
+
+def test_an_unshown_id_then_two_transport_failures(monkeypatch):
+    off, on = _same_as_off([_reply(selected_cluster_id="g_nowhere", word="Firstword"),
+                            RuntimeError("synthetic"), RuntimeError("synthetic")], monkeypatch)
+    assert on[1] == [mc.HYDROGEN] and on[2] == (mc.HYDROGEN, mc.HYDROGEN, False)
+    _assert_mapped(on)
+
+
+def test_an_owner_word_night_with_an_unshown_id(monkeypatch):
+    owner = {"enabled": True, "override_word": "Selvedge", "personal_note": "A synthetic note."}
+    off, on = _same_as_off([_reply(selected_cluster_id="g_nowhere", word="SELVEDGE")], monkeypatch, owner=owner)
+    assert on[0] == ("published", "SELVEDGE", False) and on[1] == [mc.HYDROGEN] and on[2][2] is False
+    _assert_mapped(on)
+
+
+def test_a_link_shaped_id_with_links_on_and_repair_off(monkeypatch):
     groups = _groups()
     links = [_link(groups)]
-    commission, prompts = _commission([_kept_reply("link_9")] + ["not json"] * 4, groups=groups, links=links)
-    assert len(prompts) == 5
-    _assert_kept_and_mapped(commission, links)
+    off, on = _same_as_off([_reply(selected_cluster_id="link_7", word="Firstword")], monkeypatch, repair=False,
+                           links=links, groups=groups)
+    assert on[1] == [mc.HYDROGEN] and on[2][2] is False
+    _assert_mapped(on)
+    assert pipeline.recorded_chosen_mapping(on[3], links) is True
 
 
-def test_a_later_reply_valid_in_every_respect_is_still_preferred(repair_on):
-    commission, prompts = _commission([_kept_reply("g_nowhere"), "not json", _reply(selected_cluster_id="g_3")])
-    assert commission.word == "Selvedge" and commission.selected_cluster_id == "g_3"
-    assert not pipeline.chosen_id_mapped(commission) and len(prompts) == 3
+def test_hydrogen_handing_over_to_flash_inside_an_attempt_and_flash_replying_an_unshown_id(monkeypatch):
+    script = [lambda model: (RuntimeError("synthetic Hydrogen failure") if model == mc.HYDROGEN
+                             else _reply(selected_cluster_id="g_nowhere", word="Firstword"))] * 2
+    off, on = _same_as_off(script, monkeypatch)
+    assert on[1] == [mc.HYDROGEN, mc.FLASH] and on[0] == ("published", "Firstword", False)
+    _assert_mapped(on)
 
 
-def test_a_reply_that_also_echoes_is_not_kept(repair_on):
+def test_a_link_id_replied_on_an_older_prompt_attempt_is_accepted_and_mapped(monkeypatch):
     groups = _groups()
-    groups[0].items.append({"url_hash": "orbit", "source_id": "o1_ig_demo", "bucket": "ORBIT", "title": "t",
-                            "summary": "alpha bravo charlie delta echo foxtrot"})
-    echo = _reply(selected_cluster_id="g_nowhere", word="Firstword",
-                  commissioned_thesis="They wrote alpha bravo charlie delta echo foxtrot here.")
-    commission, _ = _commission([echo] + ["not json"] * 4, groups=groups)
-    assert commission.fallback_used is True and commission.word != "Firstword"
+    links = [_link(groups)]
+    off, on = _same_as_off(["not json", "not json", _reply(selected_cluster_id="link_1", word="Firstword")],
+                           monkeypatch, links=links, groups=groups)
+    assert on[1] == [mc.HYDROGEN] * 3 and on[3].packet_used is False and on[2][2] is False
+    _assert_mapped(on)
+    assert off[3].selected_cluster_id == "link_1"
+
+
+_KINDS = (
+    lambda r: _reply(selected_cluster_id=r.choice(["g_0", "g_1", "g_4"]), word="Shownword"),
+    lambda r: _reply(selected_cluster_id=r.choice(["g_5", "g_nowhere", "cluster_9"]), word="Unshownword"),
+    lambda r: _reply(selected_cluster_id=r.choice(["link_1", "link_7"]), word="Linkword"),
+    lambda r: _reply(selected_cluster_id=" g_2 ", word="Paddedword"),
+    lambda r: "not json",
+    lambda r: _reply(gloss=LONG_GLOSS, word="Glossword"),
+    lambda r: _reply(word="Entropy"),
+    lambda r: _reply(word=NON_LATIN),
+    lambda r: _reply(word="Echoword", commissioned_thesis="They wrote " + ECHO + " here."),
+    lambda r: RuntimeError("synthetic failure"),
+    lambda r: _blocked(pre=True),
+    lambda r: _blocked(pre=False),
+)
+
+
+def test_random_reply_sequences_end_exactly_as_with_the_switches_off(monkeypatch):
+    rng = random.Random(20261123)
+    configs = (dict(repair=True, links=None), dict(repair=False, links=[]), dict(repair=True, links=[]))
+    for _ in range(320):
+        script = [rng.choice(_KINDS)(rng) for _ in range(rng.randint(1, 10))]
+        packet = rng.random() < 0.8
+        off = _play(script, monkeypatch, repair=False, links=None, packet=packet)
+        for config in configs:
+            on = _play(script, monkeypatch, packet=packet, **config)
+            assert on[:3] == off[:3], (script, config)
+
 
 # ---- no id check on a night with no groups ----
 
