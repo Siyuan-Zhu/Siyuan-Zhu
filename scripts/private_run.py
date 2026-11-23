@@ -141,7 +141,10 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
 
 def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: RunModels,
                           clusters: List[Any], commission: Any) -> None:
-    """The private run record after the Director step. Never raises, prints or logs."""
+    """The private run record after the Director step. Prints and logs nothing.
+
+    Any failure is swallowed, except an interrupt or an exit, which end the run as any interrupt does.
+    """
     try:
         evidence = pipeline.director_evidence(commission)
         record = run_record.build_run_record(
@@ -152,7 +155,9 @@ def _write_private_record(store: Any, now: datetime, date_iso: str, run_models: 
             prompt_sha256=evidence["prompt_sha256"],
         )
         run_record.write_run_record(store, run_record.make_run_id("private_run", date_iso), record)
-    except Exception:
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
         pass
 
 

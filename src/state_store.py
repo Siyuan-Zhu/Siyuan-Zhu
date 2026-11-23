@@ -2803,6 +2803,7 @@ class FirestoreStateStore:
     def load_run_records(
         self, *, kind: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
+        """Read the whole `run_records` collection and sort in memory: for offline tools and small limits."""
         client = self._get_client()
         if client is None and self._fallback_store is not None:
             return self._fallback_store.load_run_records(kind=kind, limit=limit)

@@ -67,7 +67,8 @@ def _field(item: Any, key: str) -> Any:
 
 
 def is_instagram_item(item: Any) -> bool:
-    # Mirrors the pipeline's own Instagram test (adk_pipeline.py:327): the collectors give every
+    # Mirrors the pipeline's own Instagram test in require_live_coverage (adk_pipeline.py:327 on main,
+    # :329 once this branch's imports land): the collectors give every
     # Instagram item a source_id of the form "<tier>_ig_<handle>".
     return "_ig_" in str(_field(item, "source_id") or "")
 

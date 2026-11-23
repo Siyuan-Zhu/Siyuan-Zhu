@@ -560,6 +560,24 @@ def test_switch_on_with_a_failing_record_store_keeps_the_run(monkeypatch):
         _assert_public(result.lines)
 
 
+class _Halt(BaseException):
+    """A failure outside Exception, raised by the record store."""
+
+
+class HaltingStore(RecordingStore):
+    def save_run_record(self, run_id, document):
+        raise _Halt("Zqsecret halt")
+
+
+def test_a_base_exception_from_the_record_store_keeps_the_lines_and_exit_code(monkeypatch):
+    _photo_world(monkeypatch)
+    baseline, _ = _run(reply=_slate_reply())
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+    result, _ = _run(HaltingStore(), reply=_slate_reply())
+    assert result.lines == baseline.lines and result.exit_code == baseline.exit_code == 0
+    _assert_public(result.lines)
+
+
 def test_switch_on_records_a_director_fallback_and_still_exits_3(monkeypatch):
     _photo_world(monkeypatch)
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")

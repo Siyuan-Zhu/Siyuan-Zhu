@@ -100,7 +100,12 @@ def _packet_commission(replies):
     return commission, client
 
 
-def test_candidate_words_and_evidence_are_kept_off_the_public_commission():
+@pytest.fixture
+def record_on(monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
+
+
+def test_candidate_words_and_evidence_are_kept_off_the_public_commission(record_on):
     commission, client = _packet_commission([_reply(candidate_words=SLATE)])
     assert set(asdict(commission)) == COMMISSION_KEYS
     assert "candidate_words" not in commission.to_dict()
@@ -113,13 +118,13 @@ def test_candidate_words_and_evidence_are_kept_off_the_public_commission():
     assert evidence["prompt_sha256"] == _sha(client.prompts[-1])
 
 
-def test_the_evidence_comes_from_the_accepted_attempt():
+def test_the_evidence_comes_from_the_accepted_attempt(record_on):
     commission, client = _packet_commission(["not json", _reply(candidate_words=SLATE)])
     assert len(client.prompts) == 2 and "PREVIOUS ATTEMPT REJECTED" in client.prompts[1]
     assert pipeline.director_evidence(commission)["prompt_sha256"] == _sha(client.prompts[1])
 
 
-def test_the_older_prompt_path_keeps_its_cluster_lines_and_no_words():
+def test_the_older_prompt_path_keeps_its_cluster_lines_and_no_words(record_on):
     prompts = []
 
     def llm(prompt):
@@ -135,7 +140,20 @@ def test_the_older_prompt_path_keeps_its_cluster_lines_and_no_words():
     assert evidence["prompt_sha256"] == _sha(prompts[0])
 
 
-def test_a_fallback_commission_has_no_evidence():
+@pytest.mark.parametrize("switch", [None, "0"])
+def test_with_the_switch_off_nothing_is_kept_beside_the_commission(monkeypatch, switch):
+    if switch is None:
+        monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+    else:
+        monkeypatch.setenv("ZEITGEIST_RUN_RECORD", switch)
+    commission, _ = _packet_commission([_reply(candidate_words=SLATE)])
+    assert commission.slate_count == 10
+    assert not hasattr(commission, "_director_evidence")
+    assert pipeline.director_evidence(commission) == {"candidate_words": [], "evidence_text": None,
+                                                      "prompt_sha256": None}
+
+
+def test_a_fallback_commission_has_no_evidence(record_on):
     commission = commission_daily_zeitgeist(_clusters(), HISTORY, llm_callable=lambda prompt: "not json")
     assert commission.fallback_used is True
     assert pipeline.director_evidence(commission) == {"candidate_words": [], "evidence_text": None,
@@ -256,6 +274,56 @@ def test_a_store_that_raises_leaves_the_edition_unchanged(tmp_path, monkeypatch,
     assert on_store.load_pulse_state()["published_pulse"]["word"] == off_store.load_pulse_state()["published_pulse"]["word"]
     assert not (tmp_path / "on" / "data" / "publication_reconcile.json").exists()
     assert (on_out.out, on_out.err) == (off_out.out, off_out.err)
+
+
+class _Halt(BaseException):
+    """A failure outside Exception, as a library or the runtime might raise."""
+
+
+class _HaltingStore(_RecordingStore):
+    error = _Halt
+
+    def save_run_record(self, run_id, document):
+        self.events.append("save_run_record")
+        raise self.error("synthetic halt")
+
+
+class _InterruptingStore(_HaltingStore):
+    error = KeyboardInterrupt
+
+
+def _published_state(store, root):
+    return (store.load_pulse_state()["published_pulse"]["word"], store.needs_git_reconcile,
+            (root / "data" / "publication_reconcile.json").exists())
+
+
+def test_a_base_exception_from_the_record_store_leaves_the_published_edition(tmp_path, monkeypatch, capsys):
+    clean_store, _, clean = _edition(tmp_path / "clean", monkeypatch, _RecordingStore, switch="1")
+    clean_out = capsys.readouterr()
+    halted_store, _, halted = _edition(tmp_path / "halted", monkeypatch, _HaltingStore, switch="1")
+    halted_out = capsys.readouterr()
+    assert halted == clean
+    assert halted_store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+    assert _published_state(halted_store, tmp_path / "halted") == _published_state(clean_store, tmp_path / "clean")
+    assert _published_state(halted_store, tmp_path / "halted")[1:] == (False, False)
+    assert (halted_out.out, halted_out.err) == (clean_out.out, clean_out.err)
+
+
+def test_an_interrupt_during_the_record_write_is_not_a_failed_publication(tmp_path, monkeypatch):
+    from src.zeitgeist.publication_commit import PublicationMirrorError
+
+    holder = []
+
+    def make(root, events):
+        holder.append(_InterruptingStore(root, events))
+        return holder[0]
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        _edition(tmp_path, monkeypatch, make, switch="1")
+    assert not isinstance(raised.value, PublicationMirrorError)
+    [store] = holder
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+    assert _published_state(store, tmp_path) == ("Selvedge", False, False)
 
 
 def test_the_json_backend_record_lands_in_the_gitignored_folder(tmp_path, monkeypatch):

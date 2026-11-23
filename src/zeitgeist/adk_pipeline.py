@@ -702,9 +702,7 @@ class ZeitgeistADKOrchestrator:
             self.last_published_pulse = replace(
                 staged.last_published_pulse, mood_votes=state["visitor_mood_tally"]
             )
-            # Published, installed and the download confirmed: only now the private run record.
-            _write_pending_run_record(store, staged)
-            return (
+            result = (
                 analysis,
                 replace(decision, local_svg_path=str(self.svg_path)),
                 telemetry,
@@ -729,6 +727,10 @@ class ZeitgeistADKOrchestrator:
             raise
         finally:
             workspace.close()
+        # Published, installed and the download confirmed: only now, outside the publication's
+        # failure handler, the private run record.
+        _write_pending_run_record(store, staged)
+        return result
 
     def _run_staged(
         self,
@@ -1389,7 +1391,10 @@ def _keep_director_evidence(
     """Keep what the Director was shown and listed beside the commission, never as a dataclass field.
 
     `to_dict` is `asdict` and lands in the public state, so these stay a plain attribute. Never raises.
+    With the run-record switch off it does nothing.
     """
+    if not run_record.run_record_enabled():
+        return
     try:
         setattr(commission, _DIRECTOR_EVIDENCE_ATTR, {
             "candidate_words": [dict(entry) for entry in candidate_words],
@@ -1413,12 +1418,18 @@ def director_evidence(commission: Any) -> Dict[str, Any]:
 
 
 def _write_pending_run_record(store: Any, staged: Any) -> None:
-    """Write the record a staged run kept, if any. Never raises, prints or logs."""
+    """Write the record a staged run kept, if any. Prints and logs nothing.
+
+    Any failure is swallowed, except an interrupt or an exit, which are raised again; by then
+    the edition is published, so neither passes through the publication's failure handler.
+    """
     try:
         inputs = getattr(staged, "_run_record_inputs", None)
         if inputs is not None:
             _write_daily_run_record(store, **inputs)
-    except Exception:
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
         pass
 
 
