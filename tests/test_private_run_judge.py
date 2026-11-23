@@ -17,6 +17,12 @@ from src.zeitgeist import visual_router as vr
 from tests.test_private_run import NOW, Director, ReadOnlyStore, _models, _photo, _refusal
 from tests.test_understanding_pipeline import _reply
 
+
+@pytest.fixture(autouse=True)
+def _record_switch_off_unless_set(monkeypatch):
+    """A shell that exports ZEITGEIST_RUN_RECORD must not change these tests; those that want it set it."""
+    monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+
 LINE = re.compile(r"\[judge_calibration\] photos=\d+ flash_pass_meaning=\d+ flash_pass_composite=\d+ "
                   r"meaning_min=\d\.\d{2} composite_min=\d\.\d{2} written=[01]")
 DATE = NOW.strftime("%Y-%m-%d")

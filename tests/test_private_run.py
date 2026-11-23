@@ -38,6 +38,12 @@ PRIVATE = ("Zqtitle", "Zqsummary", "zqtitle", "zqsummary", "Selvedge", "finished
 SCORES = {"semantic_alignment": 0.9, "compositional_clarity": 0.9, "editorial_memorability": 0.9, "safety_pass": True}
 
 
+@pytest.fixture(autouse=True)
+def _record_switch_off_unless_set(monkeypatch):
+    """A shell that exports ZEITGEIST_RUN_RECORD must not change these tests; those that want it set it."""
+    monkeypatch.delenv("ZEITGEIST_RUN_RECORD", raising=False)
+
+
 def _rows():
     rng = np.random.default_rng(7)
     rows = {}
