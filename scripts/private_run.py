@@ -43,6 +43,7 @@ from src.zeitgeist import adk_pipeline as pipeline  # noqa: E402
 from src.zeitgeist import embedding_migration as em  # noqa: E402
 from src.zeitgeist import judge_calibration as jc  # noqa: E402
 from src.zeitgeist import own_group  # noqa: E402
+from src.zeitgeist import reflector  # noqa: E402
 from src.zeitgeist import run_record  # noqa: E402
 from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import (  # noqa: E402
@@ -208,6 +209,9 @@ def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: Run
                 if written and director_ok and not run_models.fallback_fired and own_group.own_group_enabled():
                     _check_own_group(store, run_record.make_run_id("private_run", date_iso), grouping, commission,
                                      genai_client, links.shown(commission))
+                if written and reflector.reflector_enabled():
+                    _store_reflector_inputs(store, run_record.make_run_id("private_run", date_iso), grouping,
+                                            commission)
             if not director_ok or run_models.fallback_fired:
                 # The run can only end as a failure now; do not spend on the critic.
                 return result
@@ -307,6 +311,12 @@ def _check_own_group(store: Any, run_id: str, grouping: Grouping, commission: An
         chosen_cluster_id=commission.selected_cluster_id, clusters=grouping.clusters,
         embedding_model=grouping.embedding_model, genai_client=genai_client, links=links,
     )
+
+
+def _store_reflector_inputs(store: Any, run_id: str, grouping: Grouping, commission: Any) -> bool:
+    """What the reflector needs from a written record's run; never raises but an interrupt or an exit, prints nothing."""
+    return reflector.store_reflector_inputs(store, run_id, grouping.clusters, commission.selected_cluster_id,
+                                            grouping.embedding_model)
 
 
 def _flash_scores(scored: List[Dict[str, Any]], commission: Any) -> List[Tuple[float, float]]:
@@ -524,6 +534,8 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
     ok = director_ok and not run_models.fallback_fired
     if written and ok and own_group.own_group_enabled():
         _check_own_group(store, run_id, grouping, commission, genai_client, links.shown(commission))
+    if written and reflector.reflector_enabled():
+        _store_reflector_inputs(store, run_id, grouping, commission)
     if ok and repeat == 1 and index <= MAX_PHOTO_ARMS:
         scored: List[Dict[str, Any]] = []
         photo_ok = False
