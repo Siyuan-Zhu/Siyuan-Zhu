@@ -1281,6 +1281,8 @@ def _own_group(record):
 
 def test_own_group_on_stores_the_numbers_after_the_record_and_keeps_the_lines(monkeypatch, capsys):
     _photo_world(monkeypatch)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
     monkeypatch.setenv("ZEITGEIST_RUN_RECORD", "1")
     baseline, _ = _own_group_run(OwnGroupStore())
     monkeypatch.setenv("ZEITGEIST_OWN_GROUP", "1")
