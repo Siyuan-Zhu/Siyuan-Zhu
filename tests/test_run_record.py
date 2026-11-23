@@ -477,3 +477,45 @@ def test_the_record_says_which_cutoffs_grouped_the_night() -> None:
     assert _build()["cutoffs_source"] is None
     assert _build(cutoffs_source="calibrated")["cutoffs_source"] == "calibrated"
     assert _build(cutoffs_source="legacy")["cutoffs_source"] == "legacy"
+
+
+# ---- lone surrogates never reach the store ----
+
+HIGH, LOW, OTHER_LOW, REPLACEMENT = chr(0xD800), chr(0xDFFF), chr(0xDC80), chr(0xFFFD)
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+
+
+def test_lone_surrogates_are_replaced_before_the_write() -> None:
+    candidates = [dict(entry) for entry in CANDIDATES]
+    candidates[1]["word"] = "synth" + HIGH + "word"
+    record = _build(candidate_words=candidates, evidence_text="synthetic " + LOW + " evidence block",
+                    extra={"key" + OTHER_LOW: {"n": 1}})
+    store = _Store()
+    assert rr.write_run_record(store, RUN_ID, record) is True
+    [(_, document)] = store.saved
+    for text in _strings(document):
+        text.encode("utf-8")
+    assert document["candidate_words"][1]["word"] == "synth" + REPLACEMENT + "word"
+    assert document["evidence_text"] == "synthetic " + REPLACEMENT + " evidence block"
+    assert document["tests"] == {"key" + REPLACEMENT: {"n": 1}}
+    expected = _build()
+    for key in set(document) - {"candidate_words", "evidence_text", "tests", "run_id"}:
+        assert document[key] == expected[key], key
+    assert document["candidate_words"][0] == CANDIDATES[0] and document["candidate_words"][2:] == CANDIDATES[2:]
+
+
+def test_the_callers_record_keeps_its_own_text() -> None:
+    record = _build(evidence_text="synthetic " + HIGH + " evidence")
+    rr.write_run_record(_Store(), RUN_ID, record)
+    assert record["evidence_text"] == "synthetic " + HIGH + " evidence"

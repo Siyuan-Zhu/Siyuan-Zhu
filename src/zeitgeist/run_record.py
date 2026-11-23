@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -200,10 +201,29 @@ def build_run_record(
     return _plain(record)
 
 
+_SURROGATE_RE = re.compile("[" + chr(0xD800) + "-" + chr(0xDFFF) + "]")
+_REPLACEMENT = chr(0xFFFD)
+
+
+def _without_surrogates(value: Any) -> Any:
+    """Every string, keys included, with each surrogate code point replaced by U+FFFD.
+
+    A Python string holds a surrogate only when it is unpaired as text; UTF-8 cannot encode one,
+    and Firestore refuses the whole document.
+    """
+    if isinstance(value, str):
+        return _SURROGATE_RE.sub(_REPLACEMENT, value)
+    if isinstance(value, dict):
+        return {_without_surrogates(key): _without_surrogates(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_without_surrogates(item) for item in value]
+    return value
+
+
 def write_run_record(store: Any, run_id: str, record: Dict[str, Any]) -> bool:
     """Write the record once; False when it is too large or anything fails. Never raises, never prints."""
     try:
-        document = _plain(record)
+        document = _without_surrogates(_plain(record))
         # The record carries its own id, so a later step that loads it can find it again.
         document["run_id"] = run_id
         size = len(json.dumps(document, allow_nan=False).encode("utf-8"))
