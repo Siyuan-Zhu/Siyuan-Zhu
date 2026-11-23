@@ -76,7 +76,11 @@ def test_condition_permissions_concurrency_timeout_and_setup_match_the_private_r
     text, private = _text(), PRIVATE.read_text(encoding="utf-8")
     for key in ("permissions", "concurrency"):
         assert _top_level(text, key) == _top_level(private, key), key
-    assert _job_header(text) == _job_header(private)
+    # The same job header but its timeout: a comparison makes up to 12 naming attempts, two photo
+    # paths and one re-embedding, so it gets 25 minutes where the private run has 15.
+    assert "    timeout-minutes: 15\n" in _job_header(private)
+    assert _job_header(text) == _job_header(private).replace("    timeout-minutes: 15\n", "    timeout-minutes: 25\n")
+    assert text.count("timeout-minutes:") == 1
     assert "contents: write" not in text and "contents: read" in text
     assert "github.actor == 'Siyuan-Zhu'" in _job_header(text)
     for banned in ("upload-artifact", "publish_readme", "git push", "git commit"):
