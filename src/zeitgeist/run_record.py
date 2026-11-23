@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
@@ -202,6 +202,8 @@ def write_run_record(store: Any, run_id: str, record: Dict[str, Any]) -> bool:
     """Write the record once; False when it is too large or anything fails. Never raises, never prints."""
     try:
         document = _plain(record)
+        # The record carries its own id, so a later step that loads it can find it again.
+        document["run_id"] = run_id
         size = len(json.dumps(document, allow_nan=False).encode("utf-8"))
         if size > MAX_RECORD_BYTES:
             return False
@@ -224,3 +226,40 @@ def add_test_numbers(store: Any, run_id: str, key: str, numbers: Dict[str, Any])
         return write_run_record(store, run_id, record)
     except Exception:
         return False
+
+
+PRUNE_LOAD_LIMIT = 100_000
+
+
+def _written_at(record: Any) -> Optional[datetime]:
+    try:
+        moment = datetime.fromisoformat(str(record.get("written_at")))
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def prune_run_records(store: Any, *, older_than_days: int = 180, now_utc: Optional[datetime] = None) -> int:
+    """Delete the records written more than `older_than_days` ago; the count deleted. Never raises, never prints.
+
+    A record without its id or a readable `written_at` is kept; a time without a zone is read as UTC.
+    """
+    try:
+        now = now_utc or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        cutoff = now - timedelta(days=int(older_than_days))
+        records = store.load_run_records(limit=PRUNE_LOAD_LIMIT)
+    except Exception:
+        return 0
+    deleted = 0
+    for record in records or ():
+        try:
+            run_id = record.get("run_id")
+            moment = _written_at(record)
+            if isinstance(run_id, str) and moment is not None and moment < cutoff:
+                store.delete_run_record(run_id)
+                deleted += 1
+        except Exception:
+            continue
+    return deleted

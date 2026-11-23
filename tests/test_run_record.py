@@ -271,7 +271,7 @@ def test_awkward_values_handed_straight_to_the_write_are_made_plain() -> None:
     record = {"written_at": NOW, "value": np.float64(1.5), "tags": {"x"}, "pair": (1, 2)}
     assert rr.write_run_record(store, "daily_run:2026-11-22:local:1", record) is True
     assert store.saved[0][1] == {"written_at": "2026-11-22T08:30:00+00:00", "value": 1.5, "tags": ["x"],
-                                 "pair": [1, 2]}
+                                 "pair": [1, 2], "run_id": "daily_run:2026-11-22:local:1"}
 
 
 def test_a_store_that_raises_returns_false() -> None:
@@ -332,7 +332,7 @@ def _stored(record=None):
     from src.state_store import InMemoryStateStore
 
     store = InMemoryStateStore()
-    store.save_run_record(RUN_ID, _build() if record is None else record)
+    rr.write_run_record(store, RUN_ID, _build() if record is None else record)
     return store
 
 
@@ -392,3 +392,82 @@ def test_add_test_numbers_with_unplain_numbers_returns_false_and_keeps_the_recor
     before = store.load_run_record(RUN_ID)
     assert rr.add_test_numbers(store, RUN_ID, "t", {"n": object()}) is False
     assert store.load_run_record(RUN_ID) == before
+
+
+# ---- records carry their id; pruning by age ----
+
+
+def test_a_written_record_carries_its_run_id() -> None:
+    store = _Store()
+    assert rr.write_run_record(store, RUN_ID, _build()) is True
+    [(run_id, document)] = store.saved
+    assert run_id == document["run_id"] == RUN_ID
+    assert {key: value for key, value in document.items() if key != "run_id"} == _build()
+
+
+def test_a_written_record_does_not_change_the_callers_record() -> None:
+    record = _build()
+    rr.write_run_record(_Store(), RUN_ID, record)
+    assert "run_id" not in record
+
+
+def _aged(store, run_id, written_at):
+    rr.write_run_record(store, run_id, dict(_build(), written_at=written_at))
+
+
+def test_prune_removes_only_records_older_than_the_cutoff() -> None:
+    from src.state_store import InMemoryStateStore
+
+    store = InMemoryStateStore()
+    _aged(store, "daily_run:2026-01-01:local:1", "2026-01-01T08:00:00+00:00")
+    _aged(store, "daily_run:2026-05-20:local:1", "2026-05-20T08:00:00+00:00")
+    _aged(store, "private_run:2026-11-01:local:1", "2026-11-01T08:00:00+00:00")
+    assert rr.prune_run_records(store, now_utc=NOW) == 2
+    assert [record["run_id"] for record in store.load_run_records()] == ["private_run:2026-11-01:local:1"]
+    assert rr.prune_run_records(store, older_than_days=10, now_utc=NOW) == 1
+    assert store.load_run_records() == []
+
+
+def test_prune_keeps_records_it_cannot_date_or_name() -> None:
+    from src.state_store import InMemoryStateStore
+
+    store = InMemoryStateStore()
+    store.save_run_record("daily_run:2026-01-01:local:1", dict(_build(), written_at="2026-01-01T08:00:00+00:00"))
+    _aged(store, "daily_run:2026-01-02:local:1", "not a date")
+    _aged(store, "daily_run:2026-01-03:local:1", "2026-01-03T08:00:00")
+    assert rr.prune_run_records(store, now_utc=NOW) == 1
+    assert sorted(record.get("run_id") or "-" for record in store.load_run_records()) == [
+        "-", "daily_run:2026-01-02:local:1"]
+
+
+def test_prune_defaults_to_the_current_time() -> None:
+    from src.state_store import InMemoryStateStore
+
+    store = InMemoryStateStore()
+    _aged(store, "daily_run:2020-01-01:local:1", "2020-01-01T08:00:00+00:00")
+    assert rr.prune_run_records(store) == 1
+
+
+class _PruneFailingStore:
+    def __init__(self, *, load_fails=False) -> None:
+        self.load_fails = load_fails
+        self.deleted = []
+
+    def load_run_records(self, *, kind=None, limit=50):
+        if self.load_fails:
+            raise RuntimeError("synthetic store failure")
+        return [{"run_id": "daily_run:2026-01-0%d:local:1" % day, "written_at": "2026-01-0%dT08:00:00+00:00" % day}
+                for day in (1, 2)]
+
+    def delete_run_record(self, run_id):
+        if run_id.startswith("daily_run:2026-01-01"):
+            raise RuntimeError("synthetic store failure")
+        self.deleted.append(run_id)
+
+
+def test_prune_never_raises_and_counts_only_what_it_deleted() -> None:
+    assert rr.prune_run_records(_PruneFailingStore(load_fails=True), now_utc=NOW) == 0
+    store = _PruneFailingStore()
+    assert rr.prune_run_records(store, now_utc=NOW) == 1
+    assert store.deleted == ["daily_run:2026-01-02:local:1"]
+    assert rr.prune_run_records(object(), now_utc=NOW) == 0
