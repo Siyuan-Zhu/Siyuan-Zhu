@@ -734,14 +734,15 @@ class ZeitgeistADKOrchestrator:
             workspace.close()
         # Published, installed and the download confirmed: only now, outside the publication's
         # failure handler, the private run record.
-        _write_pending_run_record(store, staged)
+        written = _write_pending_run_record(store, staged)
         # Then the own-group check on that record and then what the reflector needs from the run,
         # guarded as the record write is and held to one wall-clock budget, so a stalled provider
         # cannot cost the job's later steps (the README and the push). With their switches off no
         # inputs were kept and nothing is called.
         try:
             own_group_inputs = staged._own_group_inputs
-            reflector_inputs = staged._reflector_inputs
+            # The reflector's inputs go only on a record this run wrote.
+            reflector_inputs = staged._reflector_inputs if written else None
             if own_group_inputs is not None or reflector_inputs is not None:
                 checked = own_group.ClosableStore(store)
 
@@ -1100,7 +1101,7 @@ class ZeitgeistADKOrchestrator:
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission, "genai_client": genai_client,
             }
-        if reflector.reflector_enabled():
+        if run_record.run_record_enabled() and reflector.reflector_enabled():
             self._reflector_inputs = {
                 "date_iso": date_iso, "run_models": run_models, "embedding_run": embedding_run,
                 "clusters": scored_clusters, "commission": commission,
@@ -1458,8 +1459,8 @@ def director_evidence(commission: Any) -> Dict[str, Any]:
     }
 
 
-def _write_pending_run_record(store: Any, staged: Any) -> None:
-    """Write the record a staged run kept, if any. Prints and logs nothing.
+def _write_pending_run_record(store: Any, staged: Any) -> bool:
+    """Write the record a staged run kept, if any; True only when it was written. Prints and logs nothing.
 
     Any failure is swallowed, except an interrupt or an exit, which are raised again; by then
     the edition is published, so neither passes through the publication's failure handler.
@@ -1467,18 +1468,19 @@ def _write_pending_run_record(store: Any, staged: Any) -> None:
     try:
         inputs = getattr(staged, "_run_record_inputs", None)
         if inputs is not None:
-            _write_daily_run_record(store, **inputs)
+            return _write_daily_run_record(store, **inputs)
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:
         pass
+    return False
 
 
 def _write_daily_run_record(
     store: Any, date_iso: str, run_models: RunModels, embedding_run: Optional[EmbeddingRun],
     clusters: Sequence[Any], commission: DirectorCommission, main_commission: DirectorCommission,
-) -> None:
-    """The edition's private run record, after its state is saved. Never raises, prints or logs."""
+) -> bool:
+    """The edition's private run record, after its state is saved; True when written. Never raises, prints or logs."""
     try:
         evidence = director_evidence(main_commission)
         record = run_record.build_run_record(
@@ -1489,9 +1491,9 @@ def _write_daily_run_record(
             candidate_words=evidence["candidate_words"], chosen_cluster_id=main_commission.selected_cluster_id,
             main_commission=main_commission, prompt_sha256=evidence["prompt_sha256"],
         )
-        run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
+        return run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
-        pass
+        return False
 
 
 def _daily_own_group_check(

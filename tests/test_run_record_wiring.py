@@ -1090,3 +1090,66 @@ def test_the_private_and_comparison_workflows_pass_the_reflector_switch_and_mode
 
 def test_the_provider_canary_does_not_pass_the_reflector_switch_or_model():
     assert "ZEITGEIST_REFLECTOR" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
+
+
+# ---- the edition stores the reflector's inputs only when its record was written ----
+
+
+class _FailingSaveStore(_MemoryRecordStore):
+    """An older record of the same id is already stored; tonight's record write fails."""
+
+    def __init__(self, root, events):
+        super().__init__(root, events)
+        self.records.append(("daily_run:2026-11-21:local:1", {"tests": {}, "word": "Zqsecret older"}))
+
+    def save_run_record(self, run_id, document):
+        self.events.append("save_run_record")
+        raise RuntimeError("synthetic store failure")
+
+
+def _forbid_inputs(monkeypatch):
+    """Notes every call: an error raised in the budget's thread would stay there unseen."""
+    called = []
+    monkeypatch.setattr(reflector, "store_reflector_inputs", lambda *a, **k: called.append("store_reflector_inputs"))
+    monkeypatch.setattr(pipeline, "_daily_reflector_inputs", lambda *a, **k: called.append("_daily_reflector_inputs"))
+    return called
+
+
+def test_a_failed_record_write_leaves_no_reflector_store_access(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+    _reflector_switch(monkeypatch, "1")
+    called = _forbid_inputs(monkeypatch)
+    store, _, result = _edition(tmp_path, monkeypatch, _FailingSaveStore, switch="1")
+    assert result[0] == "Selvedge" and called == []
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
+
+
+@pytest.mark.parametrize("record", [None, "0"])
+def test_with_the_record_switch_off_the_reflector_keeps_and_stores_nothing(tmp_path, monkeypatch, record):
+    _reflector_switch(monkeypatch, "1")
+    called = _forbid_inputs(monkeypatch)
+    store, _, _ = _edition(tmp_path, monkeypatch, _MemoryRecordStore, switch=record)
+    assert called == []
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned"]
+
+
+@pytest.mark.parametrize("record, value, kept", [("1", None, False), ("1", "0", False), ("1", "1", True),
+                                                 ("0", "1", False), (None, "1", False)])
+def test_a_staged_run_keeps_the_reflector_inputs_only_with_both_switches_on(tmp_path, monkeypatch, record, value,
+                                                                           kept):
+    _reflector_switch(monkeypatch, value)
+    _, events = _edition_setup(tmp_path, monkeypatch, switch=record)
+    store = _RecordingStore(tmp_path, events)
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store)
+    staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
+    assert (staged._reflector_inputs is not None) is kept
+
+
+def test_the_pending_record_write_reports_whether_it_wrote(tmp_path, monkeypatch):
+    _, events = _edition_setup(tmp_path, monkeypatch, switch="1")
+    staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=_RecordingStore(tmp_path, events))
+    staged._run_staged("2026-11-21", "blueprint", offline_demo=True)
+    assert pipeline._write_pending_run_record(_MemoryRecordStore(tmp_path, []), staged) is True
+    assert pipeline._write_pending_run_record(_FailingSaveStore(tmp_path, []), staged) is False
+    assert pipeline._write_pending_run_record(_MemoryRecordStore(tmp_path, []), object()) is False
