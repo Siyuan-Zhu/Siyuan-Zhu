@@ -394,6 +394,9 @@ def test_the_private_run_workflow_passes_the_switch():
 
 # ---- the own-group check runs after the record, only with its switch on ----
 
+import threading  # noqa: E402
+import time  # noqa: E402
+
 from src.zeitgeist import own_group  # noqa: E402
 
 OWN_GROUP_LINE = "ZEITGEIST_OWN_GROUP: " + DOLLAR + "{{ vars.ZEITGEIST_OWN_GROUP || '0' }}"
@@ -509,23 +512,164 @@ def test_a_failing_check_leaves_the_published_edition(tmp_path, monkeypatch, cap
     assert (out.out, out.err) == (clean_out.out, clean_out.err)
 
 
-def test_an_interrupt_during_the_check_is_not_a_failed_publication(tmp_path, monkeypatch):
+def test_an_exception_inside_the_check_never_reaches_the_edition(tmp_path, monkeypatch):
+    # Raised in the check's own thread, even an interrupt or an exit stays there.
+    _own_group_switch(monkeypatch, "1")
+    for error in (KeyboardInterrupt(), SystemExit(1)):
+        store, _, result = _spied_edition(tmp_path / type(error).__name__, monkeypatch, error=error)
+        assert result[0] == "Selvedge"
+        assert store.events[-2:] == ["save_run_record", "own_group_check"]
+
+
+def test_an_interrupt_while_the_edition_waits_is_not_a_failed_publication(tmp_path, monkeypatch):
+    import _thread
+
     from src.zeitgeist.publication_commit import PublicationMirrorError
 
     _own_group_switch(monkeypatch, "1")
+    release = threading.Event()
     holder = []
+
+    def check(store, run_id, **kwargs):
+        holder[0].events.append("own_group_check")
+        _thread.interrupt_main()
+        release.wait(10)
 
     def make(root, events):
         holder.append(_MemoryRecordStore(root, events))
-        _spy_check(monkeypatch, events, KeyboardInterrupt())
+        monkeypatch.setattr(own_group, "run_own_group_check", check)
         return holder[0]
 
-    with pytest.raises(KeyboardInterrupt) as raised:
-        _edition(tmp_path, monkeypatch, make, switch="1")
+    try:
+        with pytest.raises(KeyboardInterrupt) as raised:
+            _edition(tmp_path, monkeypatch, make, switch="1")
+    finally:
+        release.set()
     assert not isinstance(raised.value, PublicationMirrorError)
     [store] = holder
     assert store.events[-2:] == ["save_run_record", "own_group_check"]
     assert _published_state(store, tmp_path) == ("Selvedge", False, False)
+
+
+# ---- what runs after publication has a hard time budget ----
+
+
+def _clean_edition(tmp_path, monkeypatch, capsys):
+    _own_group_switch(monkeypatch, "0")
+    store, _, result = _edition(tmp_path / "clean", monkeypatch, _MemoryRecordStore, switch="1")
+    out = capsys.readouterr()
+    return store, result, out
+
+
+def _saved_state(store, root):
+    state = store.load_pulse_state()
+    return state, store.needs_git_reconcile, (root / "data" / "publication_reconcile.json").exists()
+
+
+def _comparable(state):
+    """The saved pulse state without the fields that differ between any two runs (ids and moments)."""
+    published = dict(state["published_pulse"])
+    return {"word": published.get("word"), "keys": sorted(state), "published_keys": sorted(published),
+            "tally": state.get("visitor_mood_tally")}
+
+
+def test_a_check_past_its_budget_leaves_the_edition_as_a_clean_run_and_stores_nothing(tmp_path, monkeypatch, capsys):
+    clean_store, clean, clean_out = _clean_edition(tmp_path, monkeypatch, capsys)
+    _own_group_switch(monkeypatch, "1")
+    monkeypatch.setattr(own_group, "BUDGET_SECONDS", 0.2)
+    release, late = threading.Event(), []
+    real = own_group.run_own_group_check
+
+    def stalled(store, run_id, **kwargs):
+        release.wait(10)
+        # Once the edition has moved on, the abandoned check stores nothing.
+        late.append(real(store, run_id, **{**kwargs, "genai_client": None}))
+
+    monkeypatch.setattr(own_group, "run_own_group_check", stalled)
+    started = time.monotonic()
+    store, _, result = _edition(tmp_path / "slow", monkeypatch, _MemoryRecordStore, switch="1")
+    elapsed = time.monotonic() - started
+    out = capsys.readouterr()
+    events_at_return = list(store.events)
+    release.set()
+    deadline = time.monotonic() + 5
+    while not late and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert late == [False]
+    assert elapsed < 5
+    assert result == clean
+    assert events_at_return == clean_store.events == ["publish_bundle:called", "publish_bundle:returned",
+                                                      "save_run_record"]
+    slow_state, slow_flag, slow_journal = _saved_state(store, tmp_path / "slow")
+    clean_state, clean_flag, clean_journal = _saved_state(clean_store, tmp_path / "clean")
+    assert _comparable(slow_state) == _comparable(clean_state)
+    assert (slow_flag, slow_journal) == (clean_flag, clean_journal) == (False, False)
+    assert len(store.records) == 1 and store.records[0][1]["tests"] == {}
+    assert "save_run_record" not in store.events[3:]
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+class _EmbedClient:
+    """A fake embedding endpoint: one fixed vector per text."""
+
+    def __init__(self):
+        self.models = self
+        self.requests = []
+
+    def embed_content(self, *, model, contents, config):
+        self.requests.append(model)
+        vector = [0.0] * 768
+        vector[0] = 1.0
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=vector) for _ in contents])
+
+
+def test_a_check_inside_its_budget_returns_true_and_its_numbers_are_stored(tmp_path, monkeypatch, capsys):
+    clean_store, clean, clean_out = _clean_edition(tmp_path, monkeypatch, capsys)
+    _own_group_switch(monkeypatch, "1")
+    real_check, real_budget = own_group.run_own_group_check, own_group.run_with_budget
+    client, budgets, measured = _EmbedClient(), [], []
+
+    def check(store, run_id, **kwargs):
+        measured.append(kwargs)
+        return real_check(store, run_id, **{**kwargs, "genai_client": client})
+
+    def budget(fn, seconds):
+        budgets.append((seconds, real_budget(fn, seconds)))
+        return budgets[-1][1]
+
+    monkeypatch.setattr(own_group, "run_own_group_check", check)
+    monkeypatch.setattr(own_group, "run_with_budget", budget)
+    store, _, result = _edition(tmp_path / "on", monkeypatch, _MemoryRecordStore, switch="1")
+    out = capsys.readouterr()
+    assert budgets == [(own_group.BUDGET_SECONDS, True)] and own_group.BUDGET_SECONDS == 45.0
+    assert result == clean
+    [kwargs] = measured
+    clusters = list(kwargs["clusters"])[:5]
+    own = next(c for c in clusters if str(c.cluster_id) == str(kwargs["chosen_cluster_id"]))
+    numbers = own_group.own_group_numbers([1.0] + [0.0] * 767, own.items, [c.items for c in clusters if c is not own])
+    stored = store.records[-1][1]["tests"]["own_group"]
+    assert stored["status"] == numbers["status"] == "ok" and client.requests == [kwargs["embedding_model"]]
+    assert stored["own"] == pytest.approx(numbers["own"], abs=1e-3)
+    assert stored["others"] == pytest.approx(numbers["others"], abs=1e-3)
+    assert stored["margin"] == pytest.approx(numbers["margin"], abs=1e-3)
+    assert (out.out, out.err) == (clean_out.out, clean_out.err)
+
+
+def test_with_the_switch_off_no_thread_is_started(tmp_path, monkeypatch):
+    _own_group_switch(monkeypatch, "0")
+    started = []
+
+    class _Thread(threading.Thread):
+        def start(self):
+            started.append(self.name)
+            super().start()
+
+    monkeypatch.setattr(own_group, "threading", SimpleNamespace(Thread=_Thread, Event=threading.Event))
+    budgets = []
+    monkeypatch.setattr(own_group, "run_with_budget", lambda *a, **k: budgets.append(a))
+    store, _, _ = _edition(tmp_path, monkeypatch, _MemoryRecordStore, switch="1")
+    assert started == [] and budgets == []
+    assert store.events == ["publish_bundle:called", "publish_bundle:returned", "save_run_record"]
 
 
 def test_a_failed_publication_runs_no_check(tmp_path, monkeypatch):

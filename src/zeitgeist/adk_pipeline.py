@@ -732,12 +732,17 @@ class ZeitgeistADKOrchestrator:
         # Published, installed and the download confirmed: only now, outside the publication's
         # failure handler, the private run record.
         _write_pending_run_record(store, staged)
-        # Then the own-group check on that record, guarded as the record write is. With its switch
-        # off no inputs were kept and nothing is called.
+        # Then the own-group check on that record, guarded as the record write is and held to a
+        # wall-clock budget, so a stalled provider cannot cost the job's later steps (the README
+        # and the push). With its switch off no inputs were kept and nothing is called.
         try:
             own_group_inputs = staged._own_group_inputs
             if own_group_inputs is not None:
-                _daily_own_group_check(store, **own_group_inputs)
+                checked = own_group.ClosableStore(store)
+                if not own_group.run_with_budget(lambda: _daily_own_group_check(checked, **own_group_inputs),
+                                                 own_group.BUDGET_SECONDS):
+                    # The abandoned check may still finish; it stores nothing.
+                    checked.close()
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:

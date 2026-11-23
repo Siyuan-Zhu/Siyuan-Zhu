@@ -352,3 +352,83 @@ def test_a_missing_word_or_gloss_is_skipped_without_a_call():
         ok, store, client = _check(**over)
         assert ok is False and client.requests == []
         assert _stored(store) == {"status": "skipped", "reason": "no_text"}
+
+
+# ---- the time budget ----
+
+
+import signal  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+
+def test_a_function_that_finishes_in_time_returns_true_on_a_daemon_thread():
+    seen = []
+    assert own_group.run_with_budget(lambda: seen.append(threading.current_thread()), seconds=5.0) is True
+    [thread] = seen
+    assert thread is not threading.main_thread() and thread.daemon is True
+
+
+def test_the_default_budget_is_forty_five_seconds():
+    assert own_group.BUDGET_SECONDS == 45.0
+    assert own_group.run_with_budget.__defaults__ == (45.0,)
+
+
+def test_a_function_past_the_budget_returns_false_quickly(capsys):
+    release = threading.Event()
+    started = time.monotonic()
+    try:
+        assert own_group.run_with_budget(lambda: release.wait(10), seconds=0.1) is False
+        assert time.monotonic() - started < 2
+    finally:
+        release.set()
+    out = capsys.readouterr()
+    assert out.out == out.err == ""
+
+
+@pytest.mark.parametrize("error", [RuntimeError("Zqsecret failure"), _Halt("Zqsecret halt"), KeyboardInterrupt(),
+                                   SystemExit(1)])
+def test_an_exception_inside_the_function_is_swallowed_in_its_thread(error, capsys):
+    def fn():
+        raise error
+
+    assert own_group.run_with_budget(fn, seconds=5.0) is True
+    out = capsys.readouterr()
+    assert out.out == out.err == ""
+
+
+def test_an_interrupt_in_the_main_thread_while_waiting_propagates():
+    import _thread
+
+    release = threading.Event()
+
+    def fn():
+        _thread.interrupt_main()
+        release.wait(10)
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            own_group.run_with_budget(fn, seconds=5.0)
+    finally:
+        release.set()
+
+
+def test_an_exit_in_the_main_thread_while_waiting_propagates():
+    import _thread
+
+    def leave(signum, frame):
+        raise SystemExit(3)
+
+    previous = signal.signal(signal.SIGUSR1, leave)
+    release = threading.Event()
+
+    def fn():
+        _thread.interrupt_main(signal.SIGUSR1)
+        release.wait(10)
+
+    try:
+        with pytest.raises(SystemExit):
+            own_group.run_with_budget(fn, seconds=5.0)
+    finally:
+        release.set()
+        signal.signal(signal.SIGUSR1, previous)

@@ -6,13 +6,16 @@ Arithmetic on unit vectors, so a word that fits any candidate shows up as a numb
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+import threading
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
 from .methodology import _extract_unit_embedding_f32
 
 SWITCH_ENV = "ZEITGEIST_OWN_GROUP"
+# The wall-clock limit on what the edition runs after publication, so a stalled provider cannot cost the push.
+BUDGET_SECONDS = 45.0
 
 
 def own_group_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
@@ -154,3 +157,43 @@ def run_own_group_check(
     except BaseException:
         return False
     return bool(stored) and numbers.get("status") == "ok"
+
+
+def run_with_budget(fn: Callable[[], Any], seconds: float = 45.0) -> bool:
+    """Run fn on a daemon thread and wait at most `seconds`; True when it finished in time.
+
+    When the time is up the thread is abandoned and False is returned. Whatever fn raises stays in
+    its thread. An interrupt or an exit raised in the calling thread while it waits propagates.
+    Prints and logs nothing.
+    """
+    done = threading.Event()
+
+    def target() -> None:
+        try:
+            fn()
+        except BaseException:
+            pass
+        finally:
+            done.set()
+
+    threading.Thread(target=target, name="own-group-check", daemon=True).start()
+    return done.wait(seconds)
+
+
+class ClosableStore:
+    """The store as a budgeted check sees it: once closed, every run-record save is refused."""
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+        self._closed = threading.Event()
+
+    def close(self) -> None:
+        self._closed.set()
+
+    def save_run_record(self, run_id: str, document: Dict[str, Any]) -> None:
+        if self._closed.is_set():
+            raise RuntimeError("own-group budget spent")
+        self._store.save_run_record(run_id, document)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
