@@ -5,8 +5,10 @@ It reads the newest run record of one kind (and arm) written in the last 36 hour
 reflector's inputs, and the published glosses of the last 30 days. It answers twice: by arithmetic,
 on one embedding call of the kind the collection step makes, and as a pointing task on a second model
 with two planted answers, three times with the glosses shuffled (six small calls at most). Its numbers,
-and the standing group's item hashes when it found the group unnamed, are stored on that record under
-tests["reflector"]. It prints one line of numbers and always exits 0.
+and the standing group's item hashes when both answers found the group unnamed, are stored on that
+record under tests["reflector"] (tests["reflector_trial"] for a model named with --model, never with a
+pointer). A record that already holds the result is left alone unless --force. It prints one line of
+numbers and always exits 0.
 """
 from __future__ import annotations
 
@@ -33,6 +35,10 @@ from src.zeitgeist.model_choice import FLASH, HYDROGEN  # noqa: E402
 from src.zeitgeist.spend_guard import SpendBlocked, refused_before_dispatch  # noqa: E402
 
 KEY = "reflector"
+# A run on a model named for it, not the setting's: kept apart, and it never carries a pointer.
+TRIAL_KEY = "reflector_trial"
+PRIVATE_KIND = "private_run"
+DEFAULT_ARM = "current"
 MODEL_ENV = "ZEITGEIST_REFLECTOR_MODEL"
 MODELS = (FLASH, HYDROGEN)
 MAX_AGE = timedelta(hours=36)
@@ -44,7 +50,7 @@ MAX_QUESTIONS = 6
 TEMPERATURE = 0.3
 LOAD_LIMIT = 500
 STATUS_NUMBERS = {"pointer": 1, "named": 2, "void": 3, "skipped": 4, "no_group": 5, "no_glosses": 6,
-                  "no_control": 7, "no_record": 8, "failed": 9, "disputed": 10}
+                  "no_control": 7, "no_record": 8, "failed": 9, "disputed": 10, "done": 11}
 LINE = "[reflector] status=%d plants_ok=%d agreement=%d arithmetic_named=%d calls=%d"
 PLANT = "plant"
 
@@ -265,14 +271,21 @@ def _reflect_on(store: Any, run_id: str, record: Dict[str, Any], calls: Optional
 
 
 def reflect(store: Any, *, genai_client: Any, kind: str = "daily_run", arm: Optional[str] = None,
-            model: Optional[str] = None, allow_same_model: bool = False,
+            model: Optional[str] = None, allow_same_model: bool = False, force: bool = False,
             now: Optional[datetime] = None) -> Dict[str, Any]:
     """Run the reflector on the newest matching record; the numbers stored, plus `calls`, the paid calls made.
 
-    Never raises but KeyboardInterrupt and SystemExit; prints and logs nothing.
+    The setting's model (ZEITGEIST_REFLECTOR_MODEL, else Flash) stores under tests["reflector"]; a model
+    named in `model` is a trial and stores under tests["reflector_trial"], never with a pointer. A record
+    that already holds the key is left as it is ("done"), unless `force`. A private run without an arm
+    reads the "current" arm. Never raises but KeyboardInterrupt and SystemExit; prints and logs nothing.
     """
     now = now or datetime.now(timezone.utc)
+    trial = bool(model)
+    key = TRIAL_KEY if trial else KEY
     chosen_model = str(model or os.environ.get(MODEL_ENV) or FLASH)
+    if kind == PRIVATE_KIND and not arm:
+        arm = DEFAULT_ARM
     if chosen_model not in MODELS:
         return dict(_numbers("skipped", chosen_model, now, reason="model"), calls=0)
     calls = _Calls(genai_client) if genai_client is not None else None
@@ -281,13 +294,18 @@ def reflect(store: Any, *, genai_client: Any, kind: str = "daily_run", arm: Opti
         if found is None:
             return dict(_numbers("no_record", chosen_model, now), calls=0)
         run_id, record = found
+        if key in record["tests"] and not force:
+            # Reflected already: a second run would only spend again on the same night.
+            return dict(_numbers("done", chosen_model, now), calls=0)
         try:
             numbers = _reflect_on(store, run_id, record, calls, chosen_model, allow_same_model, now)
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
             numbers = _numbers("failed", chosen_model, now)
-        run_record.add_test_numbers(store, run_id, KEY, numbers)
+        if trial:
+            numbers["pointer_item_hashes"] = None
+        run_record.add_test_numbers(store, run_id, key, numbers)
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:
@@ -329,6 +347,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--model", default=None, help="the reflector's model; only the two allowed models run")
     parser.add_argument("--allow-same-model", action="store_true",
                         help="run even when the reflector's model answered as Director")
+    parser.add_argument("--force", action="store_true", help="run again on a record that already holds the result")
     outcome: Dict[str, Any] = {"status": "failed"}
     # Library prints, log records and argument errors can carry private text; none of it leaves this process.
     hidden = StringIO()
@@ -340,7 +359,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 store = _store()
                 genai_client = _genai_client()
                 outcome = reflect(store, genai_client=genai_client, kind=args.kind, arm=(args.arm or None),
-                                  model=(args.model or None), allow_same_model=args.allow_same_model, now=_now())
+                                  model=(args.model or None), allow_same_model=args.allow_same_model,
+                                  force=args.force, now=_now())
             except BaseException:
                 outcome = {"status": "failed"}
     finally:

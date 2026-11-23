@@ -241,7 +241,7 @@ def test_the_directors_own_model_is_skipped_unless_allowed(tmp_path):
     _no_paid_call(client)
     stored = _stored(store, run_id)
     assert (stored["status"], stored["reason"]) == ("skipped", "same_model")
-    allowed = _reflect(store, client, allow_same_model=True)
+    allowed = _reflect(store, client, allow_same_model=True, force=True)
     assert allowed["status"] == "pointer" and len(client.generates) == 6
 
 
@@ -350,7 +350,7 @@ def test_the_orders_are_shuffled_by_run_and_fixed_by_the_run_id(tmp_path):
     store.put(_record())
     first, second = Client(), Client()
     _reflect(store, first)
-    _reflect(store, second)
+    _reflect(store, second, force=True)
     assert [q for _, q, _ in first.generates] == [q for _, q, _ in second.generates]
     controls = [_lines(q) for _, q, _ in first.generates[0::2]]
     assert len({json.dumps(sorted(order.items())) for order in controls}) == 3
@@ -415,7 +415,7 @@ def test_the_arithmetic_answer_is_stored_beside_the_pointing_one(tmp_path):
     stored = _stored(store, run_id)
     assert stored["arithmetic_named"] is True and stored["arithmetic_margin"] == pytest.approx(0.0, abs=1e-3)
     far = Client(vectors={OWN_GLOSS: _axis(0)})
-    _reflect(store, far)
+    _reflect(store, far, force=True)
     stored = _stored(store, run_id)
     assert stored["arithmetic_named"] is False and stored["arithmetic_margin"] == pytest.approx(-1.0, abs=1e-3)
 
@@ -538,7 +538,7 @@ def test_main_reads_kind_arm_and_the_same_model_override(monkeypatch, capsys, tm
                       inputs=_inputs(standing=False)))
     code, lines, _ = _main(monkeypatch, capsys, ["--kind", "private_run", "--arm", "current"], store, Client())
     assert code == 0 and _stored(store, run_id)["reason"] == "same_model"
-    code, lines, _ = _main(monkeypatch, capsys, ["--kind", "private_run", "--arm", "current", "--allow-same-model"],
+    code, lines, _ = _main(monkeypatch, capsys, ["--kind", "private_run", "--arm", "current", "--allow-same-model", "--force"],
                            store, Client())
     assert code == 0 and _stored(store, run_id)["status"] == "pointer"
 
@@ -546,7 +546,7 @@ def test_main_reads_kind_arm_and_the_same_model_override(monkeypatch, capsys, tm
 def test_the_status_numbers_are_fixed_and_distinct():
     assert reflect.STATUS_NUMBERS == {"pointer": 1, "named": 2, "void": 3, "skipped": 4, "no_group": 5,
                                       "no_glosses": 6, "no_control": 7, "no_record": 8, "failed": 9,
-                                      "disputed": 10}
+                                      "disputed": 10, "done": 11}
 
 
 @pytest.mark.parametrize("case", ["raising-store", "store-setup", "raising-client", "interrupt", "bad-argument"])
@@ -579,10 +579,10 @@ def test_the_stored_result_says_whether_the_reflector_answered_on_the_directors_
     run_id = store.put(_record(director=mc.FLASH))
     assert _reflect(store, Client())["same_model"] is True
     assert _stored(store, run_id)["same_model"] is True
-    _reflect(store, Client(), allow_same_model=True)
+    _reflect(store, Client(), allow_same_model=True, force=True)
     assert _stored(store, run_id)["same_model"] is True
     _reflect(store, Client(), model=mc.HYDROGEN)
-    assert _stored(store, run_id)["same_model"] is False
+    assert _trial(store, run_id)["same_model"] is False
 
 
 def test_a_skip_before_the_record_is_read_has_no_same_model_answer(tmp_path):
@@ -597,9 +597,9 @@ def test_main_runs_on_a_named_model(monkeypatch, capsys, tmp_path):
     client = Client()
     code, lines, _ = _main(monkeypatch, capsys, ["--kind", "private_run", "--arm", "current", "--model", mc.HYDROGEN,
                                                  "--allow-same-model"], store, client)
-    stored = _stored(store, run_id)
+    stored = _trial(store, run_id)
     assert code == 0 and stored["status"] == "pointer" and stored["model"] == mc.HYDROGEN
-    assert stored["same_model"] is True
+    assert stored["same_model"] is True and stored["pointer_item_hashes"] is None
     assert {model for model, _, _ in client.generates} == {mc.HYDROGEN}
 
 
@@ -627,7 +627,7 @@ def test_a_record_whose_director_fell_back_is_skipped_without_a_paid_call(tmp_pa
     outcome = _reflect(store, client, **kwargs)
     assert (outcome["status"], outcome["reason"], outcome["calls"]) == ("skipped", "fallback", 0)
     _no_paid_call(client)
-    stored = _stored(store, run_id)
+    stored = (_trial if "model" in kwargs else _stored)(store, run_id)
     assert (stored["status"], stored["reason"]) == ("skipped", "fallback")
     assert ("load_pulse_feed_history", 30) not in store.calls
 
@@ -683,7 +683,7 @@ def test_the_arithmetic_does_not_change_a_named_or_void_verdict(tmp_path):
     run_id = store.put(_record())
     _reflect(store, Client(real="gloss:" + PAST[3][1], vectors={OWN_GLOSS: _axis(0), PAST[2][1]: _axis(1)}))
     assert _stored(store, run_id)["status"] == "named"
-    _reflect(store, Client(real="plant", vectors={OWN_GLOSS: _axis(0)}))
+    _reflect(store, Client(real="plant", vectors={OWN_GLOSS: _axis(0)}), force=True)
     assert _stored(store, run_id)["status"] == "void"
 
 
@@ -719,3 +719,95 @@ def test_a_reply_on_the_older_prompt_with_no_candidate_words_still_runs(tmp_path
     run_id = store.put(_record())
     assert _reflect(store, client)["status"] == "pointer"
     assert _stored(store, run_id)["status"] == "pointer"
+
+
+# ---- results by model, a default arm, and no second spend on one record ----
+
+
+def _trial(store, run_id):
+    return JsonFileStateStore(repo_root=store.repo_root).load_run_record(run_id)["tests"].get("reflector_trial")
+
+
+@pytest.mark.parametrize("arm", [None, ""])
+def test_an_empty_arm_for_a_private_run_reads_the_current_arm(tmp_path, arm):
+    store, client = Store(tmp_path), Client()
+    current = store.put(_record("private_run", arm="current", repeat=1, written=NOW - timedelta(hours=4)))
+    other = store.put(_record("private_run", arm="previous", repeat=1, written=NOW - timedelta(hours=1)))
+    _reflect(store, client, kind="private_run", arm=arm)
+    assert _stored(store, current)["status"] == "pointer" and _stored(store, other) is None
+
+
+def test_the_settings_model_stores_under_reflector_and_a_named_model_under_trial(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZEITGEIST_REFLECTOR_MODEL", mc.FLASH)
+    store = Store(tmp_path)
+    run_id = store.put(_record())
+    _reflect(store, Client())
+    setting = _stored(store, run_id)
+    assert setting["status"] == "pointer" and setting["pointer_item_hashes"] == STANDING_HASHES
+    assert _trial(store, run_id) is None
+    outcome = _reflect(store, Client(), model=mc.FLASH)
+    trial = _trial(store, run_id)
+    # A trial keeps its status but never carries a pointer: only the setting's model can lead to a candidate.
+    assert outcome["status"] == trial["status"] == "pointer" and trial["pointer_item_hashes"] is None
+    assert outcome["pointer_item_hashes"] is None and trial["model"] == mc.FLASH
+    assert _stored(store, run_id) == setting
+
+
+def test_a_record_already_reflected_is_done_without_a_paid_call(tmp_path):
+    store = Store(tmp_path)
+    run_id = store.put(_record())
+    _reflect(store, Client())
+    before = _stored(store, run_id)
+    client = Client(real="plant")
+    outcome = _reflect(store, client)
+    assert (outcome["status"], outcome["calls"]) == ("done", 0)
+    _no_paid_call(client)
+    assert _stored(store, run_id) == before
+    forced = Client(real="plant")
+    assert _reflect(store, forced, force=True)["status"] == "void" and len(forced.generates) == 6
+    assert _stored(store, run_id)["status"] == "void"
+
+
+def test_a_stored_skip_is_also_done(tmp_path):
+    store = Store(tmp_path)
+    store.put(_record(director=mc.FLASH))
+    assert _reflect(store, Client())["reason"] == "same_model"
+    assert _reflect(store, Client(), allow_same_model=True)["status"] == "done"
+
+
+def test_the_setting_and_a_trial_do_not_block_each_other(tmp_path):
+    store = Store(tmp_path)
+    run_id = store.put(_record())
+    assert _reflect(store, Client(), model=mc.FLASH)["status"] == "pointer"
+    assert _reflect(store, Client())["status"] == "pointer"
+    assert _reflect(store, Client(), model=mc.FLASH)["status"] == "done"
+    assert _stored(store, run_id)["pointer_item_hashes"] == STANDING_HASHES
+    assert _trial(store, run_id)["pointer_item_hashes"] is None
+
+
+def test_main_prints_done_and_force_runs_again(monkeypatch, capsys, tmp_path):
+    store = Store(tmp_path)
+    store.put(_record())
+    _main(monkeypatch, capsys, [], store, Client())
+    code, lines, _ = _main(monkeypatch, capsys, [], store, Client())
+    assert code == 0 and lines == ["[reflector] status=11 plants_ok=0 agreement=0 arithmetic_named=0 calls=0"]
+    code, lines, _ = _main(monkeypatch, capsys, ["--force"], store, Client())
+    assert code == 0 and lines[0].startswith("[reflector] status=1 ") and lines[0].endswith(" calls=7")
+
+
+def test_main_keeps_whatever_reflect_prints_or_logs_out_of_the_process_output(monkeypatch, capsys, tmp_path):
+    import logging
+    import sys
+
+    def noisy(*args, **kwargs):
+        print("Zqsecret on stdout")
+        print("Zqsecret on stderr", file=sys.stderr)
+        sys.stdout.write("Zqsecret written\n")
+        sys.stderr.write("Zqsecret written to stderr\n")
+        logging.getLogger("zeitgeist").error("Zqsecret logged")
+        return {"status": "pointer", "plants_ok": True, "agreement": True, "arithmetic_named": False, "calls": 7}
+
+    monkeypatch.setattr(reflect, "reflect", noisy)
+    code, lines, everything = _main(monkeypatch, capsys, [], Store(tmp_path), Client())
+    assert code == 0
+    assert everything == "[reflector] status=1 plants_ok=1 agreement=1 arithmetic_named=0 calls=7\n"
