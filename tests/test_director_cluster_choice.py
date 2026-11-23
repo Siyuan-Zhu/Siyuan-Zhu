@@ -383,3 +383,24 @@ def test_the_private_and_comparison_workflows_pass_the_repair_switch(name):
 
 def test_the_provider_canary_does_not_pass_the_repair_switch():
     assert "ZEITGEIST_CHOSEN_GROUP_FIELDS" not in (ROOT / ".github/workflows/provider_canary.yml").read_text()
+
+
+
+# ---- a chosen link's published keywords pass the handle filter per member ----
+
+
+def test_a_chosen_links_published_keywords_drop_a_members_account_handle():
+    first = _group("g_first", 3.0, ["Tide", "handle_one", "Kelp", "salt"])
+    first.items.append(_item("first account post", source_id="o3_ig_handle_one", bucket="ORBIT"))
+    second = _group("g_second", 2.0, ["SALT", "reef", "current", "shoal", "brine", "spray", "foam"])
+    groups = [first, second] + _groups()[2:]
+    link = LinkCandidate("link_1", ("g_first", "g_second"), ("culture_and_community", "markets", "tech"), 4, 0.9,
+                         (first, second))
+    # Each member's keywords go through public_keywords with its own group, in rank order.
+    assert public_keywords(first.cluster_keywords, first) == ["Tide", "Kelp", "salt"]
+    assert public_keywords(second.cluster_keywords, second) == second.cluster_keywords
+    field_group, published = pipeline._published_candidate("link_1", groups, [link], groups[0])
+    assert field_group is first
+    # The handle is gone, "SALT" repeats "salt" regardless of case, and only the first eight are kept.
+    assert published == ["Tide", "Kelp", "salt", "reef", "current", "shoal", "brine", "spray"]
+    assert "handle_one" not in [word.lower() for word in published]
