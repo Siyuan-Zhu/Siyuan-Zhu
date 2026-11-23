@@ -319,7 +319,8 @@ def _may_supply_pointer(record: Mapping[str, Any], result: Mapping[str, Any]) ->
     if kind == "private_run":
         if record.get("arm") not in POINTER_ARMS:
             return False
-    elif kind != "daily_run":
+    elif kind != "daily_run" or record.get("arm") is not None:
+        # The edition writes its records without an arm; a daily record that carries one is not the edition's.
         return False
     return result.get("same_model") is False
 

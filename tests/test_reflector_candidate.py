@@ -180,6 +180,17 @@ def test_a_reflector_on_the_directors_own_model_never_supplies_a_pointer(tmp_pat
     assert _supplier(_store(tmp_path, record)) is None
 
 
+@pytest.mark.parametrize("arm", ["current", "previous", ""])
+def test_a_daily_record_carrying_any_arm_supplies_no_pointer(tmp_path, arm):
+    assert _supplier(_store(tmp_path, _record("daily_run", arm=arm))) is None
+
+
+def test_duplicate_hashes_count_once(tmp_path):
+    night = _night(extra_hashes=("p1", "p2"))
+    found = reflector.candidate_for_night(_store(tmp_path, _record(hashes=["p1", "p1", "p2"])), night, NOW)
+    assert found["matched_cluster_id"] == "g_6" and found["overlap"] == 1.0
+
+
 def test_an_excluded_newer_pointer_leaves_the_older_eligible_one(tmp_path):
     store = _store(tmp_path, _record("daily_run", hours=5), _record("private_run", hours=1, arm="previous"),
                    _record("private_run", hours=2, same_model=True))
