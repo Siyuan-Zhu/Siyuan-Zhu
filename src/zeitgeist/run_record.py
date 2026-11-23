@@ -209,3 +209,18 @@ def write_run_record(store: Any, run_id: str, record: Dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
+
+
+def add_test_numbers(store: Any, run_id: str, key: str, numbers: Dict[str, Any]) -> bool:
+    """Set `tests[key]` on the stored record and save it; no other key changes.
+
+    False when the record is absent or anything fails. Never raises, never prints.
+    """
+    try:
+        record = store.load_run_record(run_id)
+        if not isinstance(record, dict) or not isinstance(record.get("tests"), dict):
+            return False
+        record["tests"][str(key)] = _plain(numbers)
+        return write_run_record(store, run_id, record)
+    except Exception:
+        return False

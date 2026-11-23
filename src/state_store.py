@@ -731,6 +731,12 @@ class StateStore(Protocol):
     ) -> list[dict[str, Any]]:
         """Private run records, newest first by `written_at`, filtered by `kind` when given."""
 
+    def load_run_record(self, run_id: str) -> dict[str, Any] | None:
+        """The private run record `run_records/{run_id}`, or None when absent."""
+
+    def delete_run_record(self, run_id: str) -> None:
+        """Remove `run_records/{run_id}`; removing an absent record is not an error."""
+
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         """Persist daily commissioned entry to `pulse_history/{date_str}` and `data/pulse_feed.json` (365-day window)."""
 
@@ -910,6 +916,13 @@ class InMemoryStateStore:
 
     def save_run_record(self, run_id: str, document: dict[str, Any]) -> None:
         self._run_records[_run_record_id(run_id)] = copy.deepcopy(document)
+
+    def load_run_record(self, run_id: str) -> dict[str, Any] | None:
+        document = self._run_records.get(_run_record_id(run_id))
+        return copy.deepcopy(document) if document is not None else None
+
+    def delete_run_record(self, run_id: str) -> None:
+        self._run_records.pop(_run_record_id(run_id), None)
 
     def load_run_records(
         self, *, kind: str | None = None, limit: int = 50
@@ -1165,6 +1178,15 @@ class JsonFileStateStore:
         path = self.run_records_dir / f"{_run_record_id(run_id)}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+    def load_run_record(self, run_id: str) -> dict[str, Any] | None:
+        path = self.run_records_dir / f"{_run_record_id(run_id)}.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def delete_run_record(self, run_id: str) -> None:
+        (self.run_records_dir / f"{_run_record_id(run_id)}.json").unlink(missing_ok=True)
 
     def load_run_records(
         self, *, kind: str | None = None, limit: int = 50
@@ -2799,6 +2821,24 @@ class FirestoreStateStore:
             self._fallback_store.save_run_record(doc_id, document)
             return
         client.collection(self._col("run_records")).document(doc_id).set(copy.deepcopy(document))
+
+    def load_run_record(self, run_id: str) -> dict[str, Any] | None:
+        doc_id = _run_record_id(run_id)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            return self._fallback_store.load_run_record(doc_id)
+        doc = client.collection(self._col("run_records")).document(doc_id).get()
+        if not getattr(doc, "exists", False):
+            return None
+        return copy.deepcopy(doc.to_dict() or {})
+
+    def delete_run_record(self, run_id: str) -> None:
+        doc_id = _run_record_id(run_id)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            self._fallback_store.delete_run_record(doc_id)
+            return
+        client.collection(self._col("run_records")).document(doc_id).delete()
 
     def load_run_records(
         self, *, kind: str | None = None, limit: int = 50

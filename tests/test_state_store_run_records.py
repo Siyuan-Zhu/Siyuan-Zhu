@@ -169,3 +169,73 @@ def test_json_run_records_are_gitignored(tmp_path) -> None:
         check=False,
     )
     assert result.returncode == 0
+
+
+# ---- one record by id: read and delete ----
+
+
+def test_every_store_has_the_single_record_read_and_delete(store) -> None:
+    for method in ("load_run_record", "delete_run_record"):
+        assert hasattr(StateStore, method)
+        assert callable(getattr(store, method))
+
+
+def test_one_record_round_trips_by_id(store) -> None:
+    store.save_run_record(OLDER_ID, OLDER)
+    store.save_run_record(NEWER_ID, NEWER)
+    assert store.load_run_record(OLDER_ID) == OLDER
+    assert store.load_run_record(NEWER_ID) == NEWER
+
+
+def test_a_missing_id_loads_none(store) -> None:
+    assert store.load_run_record(OLDER_ID) is None
+    store.save_run_record(NEWER_ID, NEWER)
+    assert store.load_run_record(OLDER_ID) is None
+
+
+def test_a_loaded_record_is_an_independent_copy(store) -> None:
+    store.save_run_record(OLDER_ID, dict(OLDER, nested={"a": [1]}))
+    loaded = store.load_run_record(OLDER_ID)
+    loaded["nested"]["a"].append(2)
+    assert store.load_run_record(OLDER_ID) == dict(OLDER, nested={"a": [1]})
+
+
+def test_delete_removes_only_that_record_and_a_second_delete_does_not_raise(store) -> None:
+    store.save_run_record(OLDER_ID, OLDER)
+    store.save_run_record(NEWER_ID, NEWER)
+    assert store.delete_run_record(OLDER_ID) is None
+    assert store.load_run_record(OLDER_ID) is None
+    assert store.load_run_records() == [NEWER]
+    store.delete_run_record(OLDER_ID)
+    assert store.load_run_records() == [NEWER]
+
+
+@pytest.mark.parametrize("bad", BAD_IDS)
+def test_a_bad_id_is_refused_by_the_single_read_and_delete(store, bad) -> None:
+    store.save_run_record(OLDER_ID, OLDER)
+    with pytest.raises(ValueError):
+        store.load_run_record(bad)
+    with pytest.raises(ValueError):
+        store.delete_run_record(bad)
+    assert store.load_run_records() == [OLDER]
+
+
+def test_firestore_single_read_and_delete_use_the_run_records_document() -> None:
+    client = _RecordingFirestoreClient()
+    store = FirestoreStateStore(
+        client=client, project_id="test-proj", canonical_only=True, collection_prefix="staging_"
+    )
+    store.save_run_record(OLDER_ID, OLDER)
+    assert store.load_run_record(OLDER_ID) == OLDER
+    store.delete_run_record(OLDER_ID)
+    assert client.docs == {}
+
+
+def test_firestore_single_read_and_delete_without_client_use_the_fallback(monkeypatch) -> None:
+    fallback = InMemoryStateStore()
+    store = FirestoreStateStore(project_id="test-proj", fallback_store=fallback)
+    monkeypatch.setattr(store, "_get_client", lambda: None)
+    store.save_run_record(OLDER_ID, OLDER)
+    assert store.load_run_record(OLDER_ID) == OLDER
+    store.delete_run_record(OLDER_ID)
+    assert fallback.load_run_records() == []

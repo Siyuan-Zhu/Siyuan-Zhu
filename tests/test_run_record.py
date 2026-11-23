@@ -323,3 +323,72 @@ def test_the_module_makes_no_network_or_provider_call(monkeypatch) -> None:
     for forbidden in ("import socket", "urllib", "requests", "genai", "generate_content", "embed_content",
                       "print(", "logging", "logger"):
         assert forbidden not in source
+
+
+# ---- adding test numbers to a stored record ----
+
+
+def _stored(record=None):
+    from src.state_store import InMemoryStateStore
+
+    store = InMemoryStateStore()
+    store.save_run_record(RUN_ID, _build() if record is None else record)
+    return store
+
+
+RUN_ID = "daily_run:2026-11-22:777:2"
+
+
+def test_add_test_numbers_sets_only_that_test_key() -> None:
+    store = _stored()
+    before = store.load_run_record(RUN_ID)
+    assert rr.add_test_numbers(store, RUN_ID, "specificity", {"margin": 0.25, "groups": 5}) is True
+    after = store.load_run_record(RUN_ID)
+    assert after["tests"] == {"specificity": {"margin": 0.25, "groups": 5}}
+    assert {key: value for key, value in after.items() if key != "tests"} == {
+        key: value for key, value in before.items() if key != "tests"}
+
+
+def test_add_test_numbers_keeps_the_other_tests() -> None:
+    store = _stored(_build(extra={"first": {"n": 1}}))
+    assert rr.add_test_numbers(store, RUN_ID, "second", {"n": 2.5}) is True
+    assert store.load_run_record(RUN_ID)["tests"] == {"first": {"n": 1}, "second": {"n": 2.5}}
+
+
+def test_add_test_numbers_on_a_missing_record_returns_false_and_writes_nothing() -> None:
+    store = _stored()
+    assert rr.add_test_numbers(store, "daily_run:2026-11-22:local:9", "t", {"n": 1}) is False
+    assert store.load_run_record("daily_run:2026-11-22:local:9") is None
+
+
+class _FailingRecordStore:
+    def __init__(self, *, load_fails=False, record=None) -> None:
+        self.load_fails = load_fails
+        self.record = record
+
+    def load_run_record(self, run_id: str) -> dict:
+        if self.load_fails:
+            raise RuntimeError("synthetic store failure")
+        return self.record
+
+    def save_run_record(self, run_id: str, document: dict) -> None:
+        raise RuntimeError("synthetic store failure")
+
+
+@pytest.mark.parametrize("store", [
+    _FailingRecordStore(load_fails=True),
+    _FailingRecordStore(record={"tests": {}}),
+    _FailingRecordStore(record={"tests": "not a mapping"}),
+    _FailingRecordStore(record="not a record"),
+    _Store(),
+    object(),
+], ids=["load-raises", "save-raises", "tests-not-a-mapping", "not-a-record", "no-load", "no-methods"])
+def test_add_test_numbers_on_a_failing_store_returns_false(store) -> None:
+    assert rr.add_test_numbers(store, RUN_ID, "t", {"n": 1}) is False
+
+
+def test_add_test_numbers_with_unplain_numbers_returns_false_and_keeps_the_record() -> None:
+    store = _stored()
+    before = store.load_run_record(RUN_ID)
+    assert rr.add_test_numbers(store, RUN_ID, "t", {"n": object()}) is False
+    assert store.load_run_record(RUN_ID) == before
