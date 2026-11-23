@@ -2039,7 +2039,8 @@ def commission_daily_zeitgeist(
                         is_valid, reason = False, "Owner commissioning requires a physical anchor and three concrete queries"
 
                 not_offered = False
-                if is_valid and (repair or links is not None):
+                # A night with no groups offers nothing to check against: as today, no id check.
+                if is_valid and top_clusters and (repair or links is not None):
                     chosen_id = str(commission.selected_cluster_id).strip()
                     offered = _offered_ids(top_clusters, links, extra_group, use_packet)
                     # With the repair switch every id is checked; with only links on, a link id.

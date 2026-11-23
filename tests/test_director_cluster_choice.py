@@ -492,3 +492,12 @@ def test_a_reply_that_also_echoes_is_not_kept(repair_on):
     commission, _ = _commission([echo] + ["not json"] * 4, groups=groups)
     assert commission.fallback_used is True and commission.word != "Firstword"
 
+# ---- no id check on a night with no groups ----
+
+
+@pytest.mark.parametrize("links", [None, []])
+def test_with_no_groups_any_id_is_accepted_as_today(repair_on, links):
+    commission, prompts = _commission([_reply(selected_cluster_id="g_anything")], groups=[], links=links)
+    assert len(prompts) == 1 and commission.attempts_used == 1
+    assert commission.selected_cluster_id == "g_anything" and commission.fallback_used is False
+    assert not pipeline.chosen_id_mapped(commission)
