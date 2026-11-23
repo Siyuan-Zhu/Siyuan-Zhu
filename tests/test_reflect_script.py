@@ -111,7 +111,9 @@ class Client:
     def __init__(self, control="own", real="none", embed_error=None, generate_error=None, vectors=None):
         self.control, self.real = control, real
         self.embed_error, self.generate_error = embed_error, generate_error
-        self.vectors = vectors or {}
+        # By default tonight's gloss sits on its candidate's axis and no past gloss near the standing group,
+        # so the arithmetic says "not named" unless a test says otherwise.
+        self.vectors = {OWN_GLOSS: _axis(0)} if vectors is None else vectors
         self.generates, self.embeds = [], []
         self.models = self
 
@@ -425,7 +427,8 @@ def test_a_record_without_one_embedding_model_has_no_arithmetic_answer_and_no_em
     stored = _stored(store, run_id)
     assert client.embeds == [] and len(client.generates) == 6
     assert stored["arithmetic_named"] is None and stored["arithmetic_margin"] is None
-    assert stored["status"] == "pointer"
+    # Without an arithmetic answer a clean "none" is not enough for a pointer.
+    assert stored["status"] == "disputed" and stored["pointer_item_hashes"] is None
 
 
 # ---- spend and failures ----
@@ -470,7 +473,7 @@ def test_an_embedding_refused_before_dispatch_leaves_the_pointing_task(tmp_path)
     store, client = Store(tmp_path), Client(embed_error=_refused())
     run_id = store.put(_record())
     outcome = _reflect(store, client)
-    assert outcome["calls"] == 6 and outcome["status"] == "pointer"
+    assert outcome["calls"] == 6 and outcome["status"] == "disputed"
     assert _stored(store, run_id)["arithmetic_named"] is None
 
 
@@ -541,7 +544,8 @@ def test_main_reads_kind_arm_and_the_same_model_override(monkeypatch, capsys, tm
 
 def test_the_status_numbers_are_fixed_and_distinct():
     assert reflect.STATUS_NUMBERS == {"pointer": 1, "named": 2, "void": 3, "skipped": 4, "no_group": 5,
-                                      "no_glosses": 6, "no_control": 7, "no_record": 8, "failed": 9}
+                                      "no_glosses": 6, "no_control": 7, "no_record": 8, "failed": 9,
+                                      "disputed": 10}
 
 
 @pytest.mark.parametrize("case", ["raising-store", "store-setup", "raising-client", "interrupt", "bad-argument"])
@@ -639,3 +643,51 @@ def test_a_record_without_a_models_block_is_not_a_fallback(tmp_path):
     record["models"] = None
     store.put(record)
     assert _reflect(store, client)["status"] == "pointer"
+
+
+# ---- a pointer needs the arithmetic to agree ----
+
+
+def test_a_clean_none_with_arithmetic_saying_not_named_is_a_pointer(tmp_path):
+    store, client = Store(tmp_path), Client(vectors={OWN_GLOSS: _axis(0)})
+    run_id = store.put(_record())
+    _reflect(store, client)
+    stored = _stored(store, run_id)
+    assert stored["arithmetic_named"] is False
+    assert stored["status"] == "pointer" and stored["pointer_item_hashes"] == STANDING_HASHES
+
+
+def test_a_clean_none_with_arithmetic_saying_named_is_disputed(tmp_path):
+    store, client = Store(tmp_path), Client(vectors={OWN_GLOSS: _axis(0), PAST[2][1]: _axis(1)})
+    run_id = store.put(_record())
+    outcome = _reflect(store, client)
+    stored = _stored(store, run_id)
+    assert stored["arithmetic_named"] is True and stored["plants_ok"] is True and stored["agreement"] is True
+    assert outcome["status"] == stored["status"] == "disputed" and stored["pointer_item_hashes"] is None
+
+
+@pytest.mark.parametrize("client", [lambda: Client(embed_error=RuntimeError("Zqsecret")),
+                                    lambda: Client(embed_error=_refused())], ids=["failed", "refused"])
+def test_a_clean_none_without_an_arithmetic_answer_is_disputed(tmp_path, client):
+    store = Store(tmp_path)
+    run_id = store.put(_record())
+    _reflect(store, client())
+    stored = _stored(store, run_id)
+    assert stored["arithmetic_named"] is None
+    assert stored["status"] == "disputed" and stored["pointer_item_hashes"] is None
+
+
+def test_the_arithmetic_does_not_change_a_named_or_void_verdict(tmp_path):
+    store = Store(tmp_path)
+    run_id = store.put(_record())
+    _reflect(store, Client(real="gloss:" + PAST[3][1], vectors={OWN_GLOSS: _axis(0), PAST[2][1]: _axis(1)}))
+    assert _stored(store, run_id)["status"] == "named"
+    _reflect(store, Client(real="plant", vectors={OWN_GLOSS: _axis(0)}))
+    assert _stored(store, run_id)["status"] == "void"
+
+
+def test_main_prints_the_disputed_number(monkeypatch, capsys, tmp_path):
+    store = Store(tmp_path)
+    store.put(_record())
+    code, lines, _ = _main(monkeypatch, capsys, [], store, Client(embed_error=_refused()))
+    assert code == 0 and lines == ["[reflector] status=10 plants_ok=1 agreement=1 arithmetic_named=0 calls=6"]

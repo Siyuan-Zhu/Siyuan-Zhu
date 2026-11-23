@@ -309,8 +309,8 @@ def test_an_arithmetic_answer_needs_usable_vectors(args):
 def test_the_prompt_head_is_fixed():
     assert reflector.PROMPT_HEAD == (
         "Below is one group of items and a numbered list of short glosses. Reply with JSON of the form "
-        '{"answer": N}, where N is the number of the gloss that was written about this group, or "none" if no '
-        "gloss was.")
+        '{"answer": N}, where N is the number of the gloss that describes what this group is about, or "none" if '
+        "no gloss describes it.")
 
 
 def test_the_question_is_the_head_the_block_then_the_glosses_numbered_in_the_given_order():

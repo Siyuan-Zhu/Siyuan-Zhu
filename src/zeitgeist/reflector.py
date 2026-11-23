@@ -195,8 +195,8 @@ def named_by_arithmetic(
 
 PROMPT_HEAD = (
     "Below is one group of items and a numbered list of short glosses. Reply with JSON of the form "
-    '{"answer": N}, where N is the number of the gloss that was written about this group, or "none" if no '
-    "gloss was."
+    '{"answer": N}, where N is the number of the gloss that describes what this group is about, or "none" if '
+    "no gloss describes it."
 )
 
 

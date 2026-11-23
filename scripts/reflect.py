@@ -44,7 +44,7 @@ MAX_QUESTIONS = 6
 TEMPERATURE = 0.3
 LOAD_LIMIT = 500
 STATUS_NUMBERS = {"pointer": 1, "named": 2, "void": 3, "skipped": 4, "no_group": 5, "no_glosses": 6,
-                  "no_control": 7, "no_record": 8, "failed": 9}
+                  "no_control": 7, "no_record": 8, "failed": 9, "disputed": 10}
 LINE = "[reflector] status=%d plants_ok=%d agreement=%d arithmetic_named=%d calls=%d"
 PLANT = "plant"
 
@@ -242,7 +242,11 @@ def _reflect_on(store: Any, run_id: str, record: Dict[str, Any], calls: Optional
             return identity
         return PLANT if identity == plant else past[identity][0]
 
-    numbers = early(verdict["status"])
+    status = verdict["status"]
+    if status == "pointer" and (arithmetic is None or arithmetic["named"] is not False):
+        # The pointing task found no gloss, but the arithmetic found one or could not answer: no pointer.
+        status = "disputed"
+    numbers = early(status)
     numbers.update({
         "arithmetic_named": None if arithmetic is None else arithmetic["named"],
         "arithmetic_margin": None if arithmetic is None else arithmetic["margin"],
@@ -250,7 +254,7 @@ def _reflect_on(store: Any, run_id: str, record: Dict[str, Any], calls: Optional
         "answers": [label(identity) for identity in real],
         "plants_ok": verdict["plants_ok"],
         "agreement": verdict["agreement"],
-        "pointer_item_hashes": (list(standing.get("item_hashes") or ()) if verdict["status"] == "pointer" else None),
+        "pointer_item_hashes": (list(standing.get("item_hashes") or ()) if status == "pointer" else None),
     })
     return numbers
 
