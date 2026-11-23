@@ -18,6 +18,7 @@ from .methodology import (
     _is_personal_orbit_item,
     legacy_top_cluster,
 )
+from .undercurrents import source_realms_from_feeds
 
 SWITCH_ENV = "ZEITGEIST_UNDERSTANDING_V1"
 
@@ -250,3 +251,109 @@ def ranking_stats(clusters: Sequence[Any]) -> Tuple[int, int]:
             return (0, 1) if rank == 1 else (1, rank)
         remaining = [c for c in remaining if c is not top]
     return (0, 0)
+
+
+# ---- realms: the night's realm map ----
+
+CULTURE_AND_COMMUNITY = "culture_and_community"
+REALMS = (CULTURE_AND_COMMUNITY, "design", "tech", "markets", "civic", "science")
+_LAYER_CULTURE = "culture"
+
+
+class RealmMap(dict):
+    """Realm by `source_id`. Feeds are stored entries; an Instagram source id
+    (one containing `_ig_`) is answered by rule from its handle on lookup.
+
+    Its text form never shows an entry, because the private map feeds it.
+    """
+
+    def __init__(self, feed_realms: Mapping[str, str], handle_realms: Mapping[str, str]) -> None:
+        super().__init__(feed_realms)
+        self._handle_realms = dict(handle_realms)
+
+    def _instagram_realm(self, source_id: Any) -> Optional[str]:
+        if not isinstance(source_id, str) or "_ig_" not in source_id:
+            return None
+        m = _OWNER_HANDLE_RE.fullmatch(source_id.lower())
+        if m and m.group(1) in self._handle_realms:
+            return self._handle_realms[m.group(1)]
+        return CULTURE_AND_COMMUNITY
+
+    def __missing__(self, source_id: Any) -> str:
+        realm = self._instagram_realm(source_id)
+        if realm is None:
+            raise KeyError("no realm")
+        return realm
+
+    def get(self, source_id: Any, default: Any = None) -> Any:
+        if dict.__contains__(self, source_id):
+            return dict.__getitem__(self, source_id)
+        realm = self._instagram_realm(source_id)
+        return default if realm is None else realm
+
+    def __contains__(self, source_id: Any) -> bool:
+        return dict.__contains__(self, source_id) or self._instagram_realm(source_id) is not None
+
+    def __repr__(self) -> str:
+        return f"RealmMap({len(self)} feeds)"
+
+    __str__ = __repr__
+
+
+def _bare_handle(value: Any) -> str:
+    return str(value).strip().lstrip("@").lower()
+
+
+def source_realm_map(feeds: Any, private_realms: Any, roster: Any) -> RealmMap:
+    """The night's realm for each source: feeds by category (the layer's "culture" is
+    culture and community), every Instagram source culture and community, a private
+    entry first (by feed id, or by bare handle for Instagram), and a discovered account
+    the realm all its roster parents share. Never prints or logs."""
+    feed_list = [f for f in (feeds if isinstance(feeds, (list, tuple)) else []) if isinstance(f, Mapping)]
+    feed_ids = {f.get("id") for f in feed_list if f.get("id") is not None}
+    private: dict = {}
+    if isinstance(private_realms, Mapping):
+        private = {k: v for k, v in private_realms.items() if isinstance(k, str) and v in REALMS}
+    feed_private = {k: v for k, v in private.items() if k in feed_ids}
+    handle_private = {_bare_handle(k): v for k, v in private.items() if k not in feed_ids}
+
+    feed_realms = {
+        source_id: (CULTURE_AND_COMMUNITY if realm == _LAYER_CULTURE else realm)
+        for source_id, realm in source_realms_from_feeds(feed_list).items()
+    }
+    feed_realms.update(feed_private)
+
+    def parent_realm(parent: Any) -> Optional[str]:
+        parent = str(parent)
+        if parent in feed_realms:
+            return feed_realms[parent]
+        if "_ig_" not in parent:
+            return None
+        m = _OWNER_HANDLE_RE.fullmatch(parent.lower())
+        if m and m.group(1) in handle_private:
+            return handle_private[m.group(1)]
+        return CULTURE_AND_COMMUNITY
+
+    discovered: dict = {}
+    records = roster.get("handles") if isinstance(roster, Mapping) else None
+    for handle, record in (records.items() if isinstance(records, Mapping) else []):
+        if not isinstance(record, Mapping):
+            continue
+        parents = record.get("parent_sources") or record.get("distinct_parent_sources") or []
+        if not isinstance(parents, (list, tuple, set)) or not parents:
+            continue
+        found = {parent_realm(p) for p in parents}
+        realm = found.pop() if len(found) == 1 else None
+        discovered[_bare_handle(handle)] = realm if realm is not None else CULTURE_AND_COMMUNITY
+
+    return RealmMap(feed_realms, {**discovered, **handle_private})
+
+
+def realm_counts(items: Sequence[Any], realm_map: Mapping[str, str]) -> dict:
+    """Items per realm; an item with no realm is counted under "none"."""
+    counts: dict = {}
+    for item in items or []:
+        realm = realm_map.get(_get_item_field(item, "source_id"))
+        key = realm if realm is not None else "none"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
