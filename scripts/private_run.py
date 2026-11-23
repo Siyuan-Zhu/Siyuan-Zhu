@@ -44,6 +44,7 @@ from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import (  # noqa: E402
     EMBED_001, EMBED_2, FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
 )
+from src.zeitgeist.spend_guard import SpendBlocked, refused_before_dispatch  # noqa: E402
 from src.zeitgeist.understanding import understanding_v1_enabled  # noqa: E402
 
 DIRECTOR_LINE = "[private_run] director_ok=%d attempts=%d packet=%d fallback=%d items=%d clusters=%d"
@@ -59,12 +60,15 @@ SETUP, READ, DIRECTOR, PHOTO = 1, 2, 3, 4
 # the count of records written, and the refusal of a dispatch before any call.
 ARM_LINE = "[private_run] arm=%d repeat=%d director_ok=%d attempts=%d packet=%d fallback=%d"
 ARM_FAILED_LINE = "[private_run] arm=%d repeat=%d failed_stage=%d"
+ARM_SKIPPED_LINE = "[private_run] arm=%d repeat=%d skipped=1"
 RECORDS_LINE = "[private_run] records_written=%d"
 REFUSED_LINE = "[private_run] arms_refused=%d"
 REFUSE_REPEATS, REFUSE_UNKNOWN, REFUSE_NOT_BUILT, REFUSE_OVER_CAP, REFUSE_DUPLICATE = 1, 2, 3, 4, 5
 MAX_REPEATS = 3
 MAX_NAMING_ATTEMPTS = 12
 MAX_PHOTO_ARMS = 2
+# Once this many Director model calls (every try, retries and the Flash round included) are made, no attempt starts.
+MAX_DIRECTOR_CALLS = 24
 SHOWN_GROUPS = 5
 INTAKE_FIELDS = ("url_hash", "source_id", "tier", "published_at", "title", "summary")
 
@@ -332,6 +336,35 @@ class ArmStore:
         raise ArmWriteRefused("arm store write refused")
 
 
+class DirectorCounter:
+    """The genai client as the Director sees it, counting each generate_content call that was made.
+
+    A call the spend guard refused before dispatch was not made and is not counted; any other
+    outcome, a failure included, is. Every other attribute is the client's own.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+        self.calls = 0
+        self.models = self
+
+    def generate_content(self, **kwargs: Any) -> Any:
+        try:
+            reply = self._client.models.generate_content(**kwargs)
+        except SpendBlocked as error:
+            if not refused_before_dispatch(error):
+                self.calls += 1
+            raise
+        except BaseException:
+            self.calls += 1
+            raise
+        self.calls += 1
+        return reply
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client.models, name)
+
+
 def parse_arms(arms: str, repeats: Optional[str]) -> Tuple[List[str], int, int]:
     """(arm names, repeats, refusal code); a refusal code of 0 means the dispatch may run."""
     text = (repeats or "").strip() or str(MAX_REPEATS)
@@ -433,7 +466,8 @@ def _arm_repeat(store: ArmStore, *, index: int, name: str, arm: Arm, repeat: int
 def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], repeats: int) -> PrivateRun:
     """Every arm and repeat on one frozen intake, writing only run records. Never raises.
 
-    One arm failing does not stop the others; an interrupt or exit stops the dispatch.
+    One arm failing does not stop the others; an interrupt or exit stops the dispatch. Once
+    MAX_DIRECTOR_CALLS Director calls are made, every remaining repeat is skipped by number.
     """
     lines: List[str] = []
     result = PrivateRun(lines, 3)
@@ -451,6 +485,13 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
     written = 0
     stop = False
     stores = [ArmStore(store) for _ in names]
+    # The Director sees a counting client; embeddings use the client itself.
+    counter = DirectorCounter(genai_client) if genai_client is not None else None
+    director_client = counter if counter is not None else genai_client
+
+    def capped() -> bool:
+        return counter is not None and counter.calls >= MAX_DIRECTOR_CALLS
+
     # Before any paid call of the dispatch: an arm on the second embedding model needs the stored
     # embedding-2 vectors and an accepted calibration, and is grouped now; it never runs on legacy cutoffs.
     groupings: Dict[int, Optional[Grouping]] = {}
@@ -475,7 +516,11 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
                 grouping = groupings[index]
                 if grouping is None:
                     raise ArmNotReady("arm not ready")
-            else:
+            if capped():
+                lines.extend(ARM_SKIPPED_LINE % (index, repeat) for repeat in range(1, repeats + 1))
+                failed = True
+                continue
+            if index not in groupings:
                 with activate(RunModels(arm.director, arm.judge, arm.embedding)):
                     grouping = _reembedded_grouping(arm_store, rows, arm, genai_client, now)
             if arm_store.refused:
@@ -487,11 +532,15 @@ def run_arms(store: Any, *, genai_client: Any, now: datetime, names: List[str], 
                 break
             continue
         for repeat in range(1, repeats + 1):
+            if capped():
+                lines.append(ARM_SKIPPED_LINE % (index, repeat))
+                failed = True
+                continue
             refused_before = arm_store.refused
             try:
                 ok, wrote = _arm_repeat(arm_store, index=index, name=name, arm=arm, repeat=repeat,
                                         grouping=grouping, digest=digest, history_entries=entries,
-                                        genai_client=genai_client, now=now, lines=lines)
+                                        genai_client=director_client, now=now, lines=lines)
                 written += int(wrote)
                 if arm_store.refused != refused_before:
                     lines.append(ARM_FAILED_LINE % (index, repeat, DIRECTOR))

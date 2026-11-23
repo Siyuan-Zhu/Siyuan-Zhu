@@ -1017,3 +1017,54 @@ def test_the_previous_arm_on_first_model_rows_makes_no_embedding_call(monkeypatc
     assert code == 0 and client.embeds == []
     [(_, record)] = store.records
     assert record["cutoffs_source"] == "legacy" and record["models"]["embedding"] == em.EMBED_001
+
+
+# ---- a comparison stops after 24 Director calls ----
+
+
+ARM_FORMATS.append(re.compile(r"\[private_run\] arm=\d+ repeat=[1-3] skipped=1"))
+
+
+def test_a_comparison_starts_no_attempt_after_24_director_calls(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    client = ArmClient("not json")
+    code, lines, _, store, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "previous,current", "--repeats", "3"], client=client)
+    _assert_arms_public(lines)
+    assert code == 3
+    # Every try counts: the previous arm makes 3 per attempt, the current arm 5 on Hydrogen and 3 on Flash.
+    assert client.calls == [mc.FLASH] * 9 + ([mc.HYDROGEN] * 5 + [mc.FLASH] * 3) * 2
+    assert "[private_run] arm=2 repeat=3 skipped=1" in lines
+    assert not any(line.startswith("[private_run] arm=2 repeat=3 director_ok") for line in lines)
+    assert [(record["arm"], record["repeat"]) for _, record in store.records] == [
+        ("previous", 1), ("previous", 2), ("previous", 3), ("current", 1), ("current", 2)]
+    assert lines[-1] == "[private_run] records_written=5"
+
+
+def test_an_arm_reached_after_the_cap_is_skipped_without_embedding(monkeypatch, capsys):
+    _photo_world(monkeypatch)
+    table = dict(private_run.ARMS)
+    table["current_links"] = private_run.Arm(mc.HYDROGEN, mc.HYDROGEN, em.EMBED_2, packet=True)
+    table["current_reflector"] = private_run.Arm(mc.FLASH, mc.FLASH, em.EMBED_001, packet=False)
+    monkeypatch.setattr(private_run, "ARMS", table)
+    client = ArmClient("not json")
+    code, lines, _, _, client = _arms_main(
+        monkeypatch, capsys, ["--arms", "current,current_links,current_reflector", "--repeats", "2"], client=client)
+    _assert_arms_public(lines)
+    assert code == 3 and len(client.calls) == 24 and client.embeds == []
+    assert [line for line in lines if "skipped" in line] == [
+        "[private_run] arm=2 repeat=2 skipped=1", "[private_run] arm=3 repeat=1 skipped=1",
+        "[private_run] arm=3 repeat=2 skipped=1"]
+
+
+def test_the_director_counter_counts_every_made_call_but_not_a_refusal_before_dispatch():
+    replies = iter([_slate_reply(), RuntimeError("Zqsecret timeout"), _refusal(), _refusal(pre=False)])
+    client = ArmClient(lambda model: next(replies))
+    counter = private_run.DirectorCounter(client)
+    counter.models.generate_content(model=mc.FLASH, contents="x", config={})
+    for _ in range(3):
+        with pytest.raises(Exception):
+            counter.models.generate_content(model=mc.FLASH, contents="x", config={})
+    assert counter.calls == 3
+    counter.models.embed_content(model=em.EMBED_001, contents=["Zqtitle00"], config={})
+    assert counter.calls == 3 and client.embeds == [(em.EMBED_001, 1)]
