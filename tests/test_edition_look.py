@@ -266,6 +266,63 @@ def test_router_uses_edition_look_when_switched_on(tmp_path: Path) -> None:
     assert f'viewBox="0 0 {size[0]} {size[1]}"' in svg
 
 
+def test_router_writes_double_resolution_plates(tmp_path: Path, monkeypatch) -> None:
+    drawn = []
+    real = L.render_edition_pair
+
+    def keep(*a, **k):
+        plates = real(*a, **k)
+        drawn.extend(plates)
+        return plates
+
+    monkeypatch.setattr(L, "render_edition_pair", keep)
+    _router_run(tmp_path)
+    assets = tmp_path / "assets"
+    for name, plate in zip(("daily_pulse_light.webp", "daily_pulse_dark.webp"), drawn):
+        data = (assets / name).read_bytes()
+        assert len(data) < 1_500_000
+        with Image.open(assets / name) as img:
+            assert img.format == "WEBP"
+            assert img.size == plate.size and img.size[0] == 2400
+        buf = BytesIO()
+        plate.save(buf, format="WEBP", quality=92, method=6)
+        assert data == buf.getvalue()          # encoded WebP quality 92, method 6
+    w, h = drawn[1].size
+    svg = (assets / "daily_pulse.svg").read_text(encoding="utf-8")
+    assert f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}"' in svg
+    assert f'<image width="{w}" height="{h}" href="data:image/webp;base64,' in svg
+
+
+def test_unsplash_crop_requests_2400(monkeypatch) -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    from src.zeitgeist import visual_router as vr
+
+    detail = {"id": "winner", "urls": {"raw": "https://images.unsplash.com/winner_raw?ixid=keep&w=400&q=60"},
+              "links": {"download_location": "https://api.unsplash.com/photos/winner/download"},
+              "user": {"name": "Actual Photographer", "links": {"html": "https://unsplash.com/@actual"}},
+              "exif": {"make": "Actual Camera", "model": "Real metadata"}}
+    buf = BytesIO()
+    _photo("light").save(buf, format="JPEG", quality=90)
+    asked = []
+
+    class _Response:
+        status_code, content = 200, buf.getvalue()
+
+    def get(_client, url, **_kw):
+        asked.append(url)
+        return _Response()
+
+    monkeypatch.setattr("httpx.Client.get", get)
+    _hero, info = vr._download_winning_unsplash_photo({"photo_id": "winner", "_source_detail": detail},
+                                                       access_key="fixture")
+    assert asked == [info["raw_crop_url"]]
+    params = parse_qs(urlsplit(asked[0]).query)
+    assert params["w"] == ["2400"] and params["h"] == ["1600"] and params["q"] == ["90"]
+    assert params["fit"] == ["crop"] and params["crop"] == ["entropy,edges"] and params["fm"] == ["jpg"]
+    assert params["ixid"] == ["keep"]
+
+
 def test_router_keeps_current_look_without_switch(tmp_path: Path) -> None:
     published = _router_run(tmp_path, switch=False)
     assert published.curatorial_archetype not in L.TEMPLATES

@@ -386,7 +386,7 @@ def _render_edition_look(hero_img, *, word: str, gloss: str, date_iso: str, hist
         encoded = []
         for plate in (light, dark):
             buf = BytesIO()
-            plate.save(buf, format="WEBP", quality=86, method=4)
+            plate.save(buf, format="WEBP", quality=92, method=6)
             encoded.append(buf.getvalue())
         return plan.template, encoded[0], encoded[1]
     except Exception:  # never lose an edition to the new look
@@ -1241,7 +1241,7 @@ def _download_winning_unsplash_photo(candidate, *, access_key=None):
                 or urlsplit(download).hostname != 'api.unsplash.com'):
             raise ValueError('Winning photograph metadata is incomplete or invalid')
         params = [(key, value) for key, value in parse_qsl(raw.query) if key not in {'w', 'h', 'fit', 'crop', 'q', 'fm'}]
-        params.extend([('w', '1800'), ('h', '1200'), ('fit', 'crop'), ('crop', 'entropy,edges'), ('q', '85'), ('fm', 'jpg')])
+        params.extend([('w', '2400'), ('h', '1600'), ('fit', 'crop'), ('crop', 'entropy,edges'), ('q', '90'), ('fm', 'jpg')])
         crop_url = urlunsplit(raw._replace(query=urlencode(params)))
         image = client.get(crop_url)
         if image.status_code != 200 or not image.content:
