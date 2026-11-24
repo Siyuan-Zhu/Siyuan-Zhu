@@ -418,3 +418,30 @@ def test_history_ignores_a_state_from_the_same_date(tmp_path: Path) -> None:
     (tmp_path / "data" / "zeitgeist_state.json").write_text(json.dumps({"date": "2026-11-25", "curatorial_archetype": "S1_BLEED"}), encoding="utf-8")
     assert _edition_history(tmp_path, [], "2026-11-25") == []
     assert _edition_history(tmp_path, [], "2026-11-26") == ["S1_BLEED"]
+
+
+def test_plates_fit_the_byte_budget_on_a_textured_photograph() -> None:
+    from src.zeitgeist.visual_router import PLATE_BYTE_BUDGET, encode_plate
+
+    rng = np.random.default_rng(7)
+    base = rng.integers(0, 255, (400, 600, 3), dtype=np.uint8)
+    photo = Image.fromarray(base).resize((2400, 1600), Image.Resampling.BICUBIC)
+    plan = L.NightPlan("S1_BLEED", "wide", "italic", False, "none", False)
+    light, dark = L.render_edition_pair(photo, word="Breach", gloss=GLOSS, date_iso="2026-12-02", credit=CREDIT, plan=plan)
+    for img in (light, dark):
+        assert len(encode_plate(img)) <= PLATE_BYTE_BUDGET
+
+
+def test_encode_plate_raises_when_nothing_fits(monkeypatch) -> None:
+    from src.zeitgeist import visual_router as V
+
+    monkeypatch.setattr(V, "PLATE_BYTE_BUDGET", 10)
+    with pytest.raises(ValueError):
+        V.encode_plate(_photo("busy"))
+
+
+def test_fonts_use_basic_layout_everywhere() -> None:
+    from PIL import ImageFont
+
+    st = L.voice_style("italic")
+    assert st.font.layout_engine == ImageFont.Layout.BASIC

@@ -374,6 +374,32 @@ def _edition_credit(attribution: Mapping[str, Any], visual_medium: str, credit_l
     return str(credit_label or "Editorial Synthesis")
 
 
+PLATE_BYTE_BUDGET = 900_000  # per plate; each night's plates are committed to the public repository
+PLATE_QUALITIES = (92, 88, 84, 80, 76)
+
+
+PLATE_FALLBACK_WIDTHS = (1800, 1200)
+
+
+def encode_plate(plate) -> bytes:
+    """WebP at the highest quality that fits the byte budget.
+
+    A very textured photograph can exceed the budget even at the lowest quality; the plate is then
+    reduced to 1800 and finally 1200 px wide before giving up (which falls back to the classic look).
+    """
+    candidates = [plate] + [
+        plate.resize((w, round(plate.height * w / plate.width)), Image.Resampling.LANCZOS)
+        for w in PLATE_FALLBACK_WIDTHS if w < plate.width
+    ]
+    for img in candidates:
+        for quality in PLATE_QUALITIES:
+            buf = BytesIO()
+            img.save(buf, format="WEBP", quality=quality, method=6)
+            if buf.tell() <= PLATE_BYTE_BUDGET:
+                return buf.getvalue()
+    raise ValueError("plate exceeds the byte budget at every quality and size")
+
+
 def _render_edition_look(hero_img, *, word: str, gloss: str, date_iso: str, history, credit: str):
     """Plan and draw the S1 plates; any failure returns None so the current look renders instead."""
     try:
@@ -383,11 +409,7 @@ def _render_edition_look(hero_img, *, word: str, gloss: str, date_iso: str, hist
         light, dark = edition_look.render_edition_pair(
             hero_img, word=word, gloss=gloss, date_iso=date_iso, credit=credit, plan=plan
         )
-        encoded = []
-        for plate in (light, dark):
-            buf = BytesIO()
-            plate.save(buf, format="WEBP", quality=92, method=6)
-            encoded.append(buf.getvalue())
+        encoded = [encode_plate(plate) for plate in (light, dark)]
         return plan.template, encoded[0], encoded[1]
     except Exception:  # never lose an edition to the new look
         logger.exception("edition look failed; rendering the current look instead")

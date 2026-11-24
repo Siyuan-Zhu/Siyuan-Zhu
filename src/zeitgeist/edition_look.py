@@ -74,7 +74,10 @@ FONT_FILES = {
 
 @lru_cache(maxsize=256)
 def _font(key: str, weight: Optional[int], size: int) -> ImageFont.FreeTypeFont:
-    font = ImageFont.truetype(str(FONT_DIR / FONT_FILES[key]), size)
+    # Basic layout everywhere: the same metrics on the Mac where plates are designed and on the
+    # Linux runner where they are published (raqm, when present, would add kerning and ligatures
+    # that glyph-by-glyph drawing at double resolution cannot reproduce).
+    font = ImageFont.truetype(str(FONT_DIR / FONT_FILES[key]), size, layout_engine=ImageFont.Layout.BASIC)
     if weight is not None:
         font.set_variation_by_axes([weight])
     return font
