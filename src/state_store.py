@@ -622,6 +622,14 @@ def _run_record_id(run_id: Any) -> str:
     return run_id
 
 
+def _evidence_archive_id(doc_id: Any) -> str:
+    """Return `doc_id` when it is a safe evidence-archive document id (the run-record rule); refuse any other."""
+    try:
+        return _run_record_id(doc_id)
+    except ValueError:
+        raise ValueError("Invalid evidence archive id") from None
+
+
 def _newest_run_records(
     documents: Any, *, kind: str | None, limit: int
 ) -> list[dict[str, Any]]:
@@ -737,6 +745,12 @@ class StateStore(Protocol):
     def delete_run_record(self, run_id: str) -> None:
         """Remove `run_records/{run_id}`; removing an absent record is not an error."""
 
+    def save_evidence_archive_doc(self, doc_id: str, document: dict[str, Any]) -> None:
+        """Replace the private archive document `evidence_archive/{doc_id}` (never mirrored, never read by a run)."""
+
+    def load_evidence_archive_doc(self, doc_id: str) -> dict[str, Any] | None:
+        """The private archive document `evidence_archive/{doc_id}`, or None when absent: for offline tools."""
+
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         """Persist daily commissioned entry to `pulse_history/{date_str}` and `data/pulse_feed.json` (365-day window)."""
 
@@ -785,6 +799,7 @@ class InMemoryStateStore:
         }
         self._calibrations: dict[str, dict[str, Any]] = {}
         self._run_records: dict[str, dict[str, Any]] = {}
+        self._evidence_archive: dict[str, dict[str, Any]] = {}
         self._bot_memory: dict[str, Any] = {
             "state_version": 0,
             "games_learned": 0,
@@ -929,6 +944,13 @@ class InMemoryStateStore:
     ) -> list[dict[str, Any]]:
         return _newest_run_records(self._run_records.values(), kind=kind, limit=limit)
 
+    def save_evidence_archive_doc(self, doc_id: str, document: dict[str, Any]) -> None:
+        self._evidence_archive[_evidence_archive_id(doc_id)] = copy.deepcopy(document)
+
+    def load_evidence_archive_doc(self, doc_id: str) -> dict[str, Any] | None:
+        document = self._evidence_archive.get(_evidence_archive_id(doc_id))
+        return copy.deepcopy(document) if document is not None else None
+
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         item = _strip_transient_keys(entry)
         item["date"] = str(date_str)[:10]
@@ -972,6 +994,8 @@ class JsonFileStateStore:
         }
         # Private run records, one file per run; the folder is gitignored.
         self.run_records_dir = self.repo_root / "data" / "run_records"
+        # The private evidence archive, one file per document; the folder is gitignored.
+        self.evidence_archive_dir = self.repo_root / "data" / "evidence_archive"
         self.pulse_feed_path = self.repo_root / "data" / "pulse_feed.json"
         self.bot_memory_path = self.repo_root / "data" / "bot_brain.json"
         self.elo_ledger_path = self.repo_root / "data" / "hall_of_records.json"
@@ -1198,6 +1222,17 @@ class JsonFileStateStore:
             for path in sorted(self.run_records_dir.glob("*.json"))
         ]
         return _newest_run_records(documents, kind=kind, limit=limit)
+
+    def save_evidence_archive_doc(self, doc_id: str, document: dict[str, Any]) -> None:
+        path = self.evidence_archive_dir / f"{_evidence_archive_id(doc_id)}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+
+    def load_evidence_archive_doc(self, doc_id: str) -> dict[str, Any] | None:
+        path = self.evidence_archive_dir / f"{_evidence_archive_id(doc_id)}.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def save_pulse_feed_entry(self, date_str: str, entry: dict[str, Any]) -> None:
         item = _strip_transient_keys(entry)
@@ -2876,6 +2911,25 @@ class FirestoreStateStore:
         return _newest_run_records(
             (snapshot.to_dict() or {} for snapshot in snapshots), kind=kind, limit=limit
         )
+
+    # The evidence archive is private too: its own collection, never mirrored to the checkout.
+    def save_evidence_archive_doc(self, doc_id: str, document: dict[str, Any]) -> None:
+        doc_id = _evidence_archive_id(doc_id)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            self._fallback_store.save_evidence_archive_doc(doc_id, document)
+            return
+        client.collection(self._col("evidence_archive")).document(doc_id).set(copy.deepcopy(document))
+
+    def load_evidence_archive_doc(self, doc_id: str) -> dict[str, Any] | None:
+        doc_id = _evidence_archive_id(doc_id)
+        client = self._get_client()
+        if client is None and self._fallback_store is not None:
+            return self._fallback_store.load_evidence_archive_doc(doc_id)
+        doc = client.collection(self._col("evidence_archive")).document(doc_id).get()
+        if not getattr(doc, "exists", False):
+            return None
+        return copy.deepcopy(doc.to_dict() or {})
 
     def load_pulse_feed_history(self, days: int = 30) -> list[dict[str, Any]]:
         """Read authoritative dated history, never a potentially stale Git mirror."""
