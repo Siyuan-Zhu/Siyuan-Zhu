@@ -473,7 +473,7 @@ class PublishedPulse:
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
 
-    def to_feed_entry(self, *, include_curatorial_metadata: bool = True) -> Dict[str, Any]:
+    def to_feed_entry(self, *, include_curatorial_metadata: bool = False) -> Dict[str, Any]:
         """Serialize to the canonical Section 7.1 v2 feed projection (with backward-compatible feed keys) enforced by firestore.rules."""
         date_str = str(self.date)[:10]
         word_str = str(self.word or "Equilibrium")[:60]
@@ -590,8 +590,10 @@ class PublishedPulse:
             entry['media_correction'] = public_media_correction(self.attribution['media_correction'])
         from .public_schema import photo_policy_projection
         photo_policy_projection(entry)
+        # The template name always travels with the entry: the pipeline rebuilds the template
+        # history from feed entries, and without it the rotation cannot avoid repeats.
+        entry["curatorial_archetype"] = str(self.curatorial_archetype or "POETIC_CINEMA")[:32]
         if include_curatorial_metadata:
-            entry["curatorial_archetype"] = str(self.curatorial_archetype or "POETIC_CINEMA")[:32]
             entry["text_quadrant"] = str(self.text_quadrant or "upper_left")[:24]
         return entry
 
