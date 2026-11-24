@@ -371,6 +371,56 @@ def test_photo_candidates_keep_every_judge_score_and_the_chosen_one_without_imag
     assert night["published"][0]["chosen_photo"] == {"render_call": 1, "selected_candidate_index": 0}
 
 
+def test_the_chosen_photo_is_the_one_the_router_published(tmp_path, monkeypatch, capsys):
+    """The real router scores three Unsplash candidates and publishes one; the archive marks that one chosen."""
+    from src.zeitgeist import visual_router as vr
+    from tests.test_private_run import _jpeg, _photo, _photo_world
+
+    _photo_world(monkeypatch)
+    # Published only: no acknowledgement leaves the process.
+    monkeypatch.setattr(vr, "_ping_unsplash_download_location", lambda *a, **k: True)
+    monkeypatch.setenv("ZEITGEIST_LIVE_UNSPLASH", "1")
+    monkeypatch.setenv("UNSPLASH_ACCESS_KEY", "synthetic-key")
+    scores = {"q0": 0.80, "q1": 0.95, "q2": 0.85}
+
+    def candidates():
+        rows = []
+        for photo_id, score in scores.items():
+            row = vr._candidate_from_unsplash(_photo(photo_id), _jpeg((8, 8)))
+            row.update(semantic_alignment=score, compositional_clarity=score, editorial_memorability=score,
+                       safety_pass=True, _vision_verified=True)
+            rows.append(row)
+        return rows
+
+    real_render = pipeline.select_and_render_pulse_assets
+
+    def render(*args, **kwargs):
+        # The pipeline's own arguments, scored_candidates_out included; only the candidate source is faked.
+        return real_render(*args, **{**kwargs, "candidates": candidates(), "offline_demo": False})
+
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets", render)
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="0")
+    monkeypatch.setenv(evidence_archive.SWITCH_ENV, "1")
+    store = _ArchiveStore(tmp_path, events)
+    _, decision, _ = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run(
+        "2026-11-21", None, offline_demo=True)
+    capsys.readouterr()
+    assert decision.selected_mode == "CURATED_PHOTO"
+    night = evidence_archive.assemble(store.archive, META_ID)
+    [published] = night["published"]
+    published_id = published["attribution"]["photo_id"]
+    assert published_id == "q1"
+    assert published_id in store.load_pulse_state()["published_pulse"]["image_url"] + json.dumps(
+        store.load_pulse_state()["published_pulse"])
+    candidates_seen = night["photo_candidates"]
+    assert sorted(c["photo_id"] for c in candidates_seen) == ["q0", "q1", "q2"]
+    assert all("thumb_bytes" not in c for c in candidates_seen)
+    assert [c["photo_id"] for c in candidates_seen if c["chosen"]] == [published_id]
+    [chosen] = [c for c in candidates_seen if c["chosen"]]
+    assert chosen["index"] == published["chosen_photo"]["selected_candidate_index"]
+    assert chosen["composite_score"] == max(c["composite_score"] for c in candidates_seen)
+
+
 @pytest.mark.parametrize("store_cls, error_class", [(_RaisingArchiveStore, "RuntimeError"),
                                                     (_SpendBlockedArchiveStore, "SpendBlocked")])
 def test_a_failing_archive_store_prints_the_failed_line_and_leaves_the_edition(tmp_path, monkeypatch, capsys,
