@@ -19,6 +19,7 @@ from .methodology import (
     ScoredCluster,
     _extract_unit_embedding_f32,
     _get_item_hash,
+    is_captionless,
     score_and_cluster_signals,
 )
 
@@ -279,10 +280,12 @@ def embedding_line(run: EmbeddingRun) -> str:
     )
 
 
-def _usable_similarities(items: Sequence[Any]) -> np.ndarray:
+def _usable_similarities(items: Sequence[Any], exclude_captionless: bool = False) -> np.ndarray:
     """Pairwise similarities of the items that carry a finite, nonzero vector of the common size."""
     usable: List[Tuple[Any, int]] = []
     for item in items:
+        if exclude_captionless and is_captionless(item):
+            continue
         try:
             vec = _extract_unit_embedding_f32(item)
         except Exception:
@@ -301,16 +304,22 @@ def cluster_for_run(
     *,
     store: Any,
     now_utc: Any,
+    interim_grouping: bool = False,
     **score_kwargs: Any,
 ) -> List[ScoredCluster]:
     """Cluster with the model the run settled on; on a switch-over night, gate and record the result.
 
     A failure in the cutoff or gate maths never stops the run: it falls back to today's fixed
     cutoffs, writes nothing and clears what it had set. A SpendBlocked still propagates.
+
+    interim_grouping leaves captionless posts out of every grouping and of the percentile maths, and
+    runs only the calibrated embedding-2 cutoffs to their loosest tier.
     """
+    if interim_grouping:
+        score_kwargs = {**score_kwargs, "exclude_captionless": True}
     before = (run.percentiles, run.cutoffs, run.gate)
     try:
-        clusters = _clusters_for_run(items, run, store, now_utc, score_kwargs)
+        clusters = _clusters_for_run(items, run, store, now_utc, score_kwargs, interim_grouping)
     except spend_guard.SpendBlocked:
         raise
     except Exception:
@@ -322,24 +331,27 @@ def cluster_for_run(
 
 
 def _clusters_for_run(
-    items: Sequence[Any], run: EmbeddingRun, store: Any, now_utc: Any, score_kwargs: Dict[str, Any]
+    items: Sequence[Any], run: EmbeddingRun, store: Any, now_utc: Any, score_kwargs: Dict[str, Any],
+    interim_grouping: bool = False,
 ) -> List[ScoredCluster]:
+    calibrated_kwargs = {**score_kwargs, "use_loosest_cutoff": True} if interim_grouping else score_kwargs
+
     def score(rows: Sequence[Any], cut: Optional[Tuple[float, ...]] = None) -> List[ScoredCluster]:
         if cut is None:
             return score_and_cluster_signals(rows, now_utc=now_utc, **score_kwargs)
         return score_and_cluster_signals(
-            rows, now_utc=now_utc, cutoffs=cut[:3], near_duplicate_threshold=cut[3], **score_kwargs
+            rows, now_utc=now_utc, cutoffs=cut[:3], near_duplicate_threshold=cut[3], **calibrated_kwargs
         )
 
     if run.fallback or run.deferred or run.mode not in ("migrated", "switch_over"):
         return score(items)
-    sims = _usable_similarities(items)
+    sims = _usable_similarities(items, interim_grouping)
     if run.mode == "migrated":
         if sims.size == 0 or run.percentiles is None:
             return score(items)
         run.cutoffs = cutoffs_at(sims, run.percentiles)
         return score(items, run.cutoffs)
-    pending_sims = _usable_similarities(run.pending_items or ())
+    pending_sims = _usable_similarities(run.pending_items or (), interim_grouping)
     if sims.size == 0 or pending_sims.size == 0:
         # Too few vectors to calibrate: no decision tonight, no write.
         run.deferred = True

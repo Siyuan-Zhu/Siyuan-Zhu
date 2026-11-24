@@ -12,9 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import os
 from pathlib import Path
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -531,6 +532,29 @@ def _get_item_field(item: Any, key: str, default: Any = None) -> Any:
     if isinstance(item, dict):
         return item.get(key, default)
     return getattr(item, key, default)
+
+
+# The interim grouping repair (SIY-221): captionless posts leave text grouping, and calibrated
+# cutoffs run to their loosest tier. Off unless the variable is exactly "1".
+INTERIM_GROUPING_ENV = "ZEITGEIST_INTERIM_GROUPING"
+# The title a collected Instagram post gets when it has neither a title nor a caption.
+CAPTIONLESS_STAND_IN = "Instagram orbit dispatch"
+
+
+def interim_grouping_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if environ is None else environ
+    return env.get(INTERIM_GROUPING_ENV) == "1"
+
+
+def is_captionless(item: Any) -> bool:
+    """True when the item's only text is the stand-in: marked at collection, or for older rows read from the title."""
+    # A CachedItem keeps the mark among its extra fields; its get reads them as a dict's does.
+    marked = item.get("text_missing") if isinstance(item, (dict, CachedItem)) else None
+    if isinstance(marked, bool):
+        return marked
+    title = str(_get_item_field(item, "title", "") or "").strip()
+    summary = str(_get_item_field(item, "summary", "") or "").strip()
+    return title == CAPTIONLESS_STAND_IN and not summary
 
 
 def _set_item_field(item: Any, key: str, value: Any) -> None:
@@ -1062,8 +1086,14 @@ def cluster_and_score(
     *,
     cohesion_mode: str = "legacy",
     cutoffs: Sequence[float] = DYNAMIC_CLUSTER_THRESHOLDS,
+    exclude_captionless: bool = False,
+    use_loosest_cutoff: bool = False,
 ) -> List[ScoredCluster]:
-    """Cluster items via pure-numpy average linkage and rank by Disjoint Surge Velocity & Orbit Resonance."""
+    """Cluster items via pure-numpy average linkage and rank by Disjoint Surge Velocity & Orbit Resonance.
+
+    exclude_captionless leaves captionless posts out of the similarity matrix after the weights are set, so
+    they still count towards their source. use_loosest_cutoff groups at the last cutoff without stepping down.
+    """
     if cohesion_mode not in COHESION_MODES:
         raise ValueError(f"unknown cohesion_mode: {cohesion_mode!r}")
     cutoffs = _validated_cutoffs(cutoffs)
@@ -1109,6 +1139,13 @@ def cluster_and_score(
             _set_item_field(item, "weight", float(w_val))
         item_weights.append(w_val)
 
+    if exclude_captionless:
+        kept = [idx for idx, item in enumerate(items) if not is_captionless(item)]
+        items = [items[idx] for idx in kept]
+        item_weights = [item_weights[idx] for idx in kept]
+        if not items:
+            return []
+
     # Unpack L2-normalized float32 embeddings and compute N x N cosine similarity matrix
     vecs = [_extract_unit_embedding_f32(it) for it in items]
     e_hat = np.stack(vecs, axis=0).astype(np.float32)
@@ -1118,7 +1155,7 @@ def cluster_and_score(
     chosen_clusters_idx: List[List[int]] = []
     chosen_tau = cutoffs[0]
 
-    for tau in cutoffs:
+    for tau in (cutoffs[-1:] if use_loosest_cutoff else cutoffs):
         candidate_clusters = _average_linkage_cluster_at_threshold(sim_matrix, tau)
         multi_source_count = 0
         for c_indices in candidate_clusters:
@@ -1263,6 +1300,8 @@ def score_and_cluster_signals(
     cohesion_mode: str = "legacy",
     cutoffs: Sequence[float] = DYNAMIC_CLUSTER_THRESHOLDS,
     near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
+    exclude_captionless: bool = False,
+    use_loosest_cutoff: bool = False,
 ) -> List[ScoredCluster]:
     """Run Stage 1-2 stratified windowing (14d Orbit / 4d Macro) followed by average-linkage clustering."""
     cutoffs = _validated_cutoffs(cutoffs)
@@ -1278,6 +1317,8 @@ def score_and_cluster_signals(
         anchored_hashes_14d=anchored_hashes_14d,
         cohesion_mode=cohesion_mode,
         cutoffs=cutoffs,
+        exclude_captionless=exclude_captionless,
+        use_loosest_cutoff=use_loosest_cutoff,
     )
 
 
