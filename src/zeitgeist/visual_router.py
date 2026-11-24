@@ -348,8 +348,8 @@ def edition_look_enabled(root: Path) -> bool:
 def _edition_history(root: Path, history, date_iso: str = "") -> list:
     """Template history, newest first, led by the last published template when the feed lacks it.
 
-    Feed entries written before 2026-11-24 carry no template name, so the history the pipeline
-    passes can be empty. The committed state projection still records the last template.
+    Feed entries carry no template name (the owner's decision), so the history the pipeline
+    passes can be empty. The committed state projection records the last template.
     """
     names = [str(h) for h in (history or ()) if str(h).strip()]
     try:
@@ -595,10 +595,8 @@ class PublishedPulse:
             entry['media_correction'] = public_media_correction(self.attribution['media_correction'])
         from .public_schema import photo_policy_projection
         photo_policy_projection(entry)
-        # The template name always travels with the entry: the pipeline rebuilds the template
-        # history from feed entries, and without it the rotation cannot avoid repeats.
-        entry["curatorial_archetype"] = str(self.curatorial_archetype or "POETIC_CINEMA")[:32]
         if include_curatorial_metadata:
+            entry["curatorial_archetype"] = str(self.curatorial_archetype or "POETIC_CINEMA")[:32]
             entry["text_quadrant"] = str(self.text_quadrant or "upper_left")[:24]
         return entry
 
