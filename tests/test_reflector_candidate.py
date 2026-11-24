@@ -14,6 +14,10 @@ NOW = datetime(2026, 11, 22, 4, 0, tzinfo=timezone.utc)
 HASHES = ["p1", "p2", "p3", "p4"]
 
 
+# The offline demo items are dated for the edition day; pin the reference clock to it.
+_EDITION_NOON = 1795262400.0  # 2026-11-21T12:00:00Z
+
+
 def _cluster(cid, hashes):
     return SimpleNamespace(cluster_id=cid, items=[{"url_hash": h} for h in hashes], commission_score=1.0,
                            velocity=0.5, orbit_resonance=1.0, cluster_keywords=["kw"])
@@ -658,7 +662,7 @@ def _extra_photo_run(tmp_path, monkeypatch, *, revise_calls):
     (tmp_path / "config/orbit_sources.json").write_text("{}")
     roster = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
     staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=choice._FakeStore(tmp_path, roster))
-    staged._run_staged("2026-11-21", None, offline_demo=False)
+    staged._run_staged("2026-11-21", None, offline_demo=False, now_epoch=_EDITION_NOON)
     return staged, scored[0]
 
 

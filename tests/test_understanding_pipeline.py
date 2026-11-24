@@ -44,6 +44,10 @@ LEGACY_PROMPT = (
 )
 
 
+# The offline demo items are dated for the edition day; pin the reference clock to it.
+_EDITION_NOON = 1795262400.0  # 2026-11-21T12:00:00Z
+
+
 def _item(title, summary="", *, bucket="MACRO", source_id="src_a", published_at="2026-11-20T10:00:00Z"):
     return CachedItem(
         url_hash=title, source_id=source_id, bucket=bucket, title=title, summary=summary,
@@ -450,7 +454,7 @@ def _run_photo_recovery(tmp_path, monkeypatch, *, recover):
     (tmp_path / "config/orbit_sources.json").write_text("{}")
     store = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
     staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=_FakeStore(tmp_path, store))
-    staged._run_staged("2026-11-21", None, offline_demo=False)
+    staged._run_staged("2026-11-21", None, offline_demo=False, now_epoch=_EDITION_NOON)
     return staged
 
 

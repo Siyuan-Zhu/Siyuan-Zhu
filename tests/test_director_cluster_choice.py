@@ -17,6 +17,10 @@ from tests.test_understanding_pipeline import _FakeStore
 NOW = "2026-11-21T12:00:00Z"
 
 
+# The offline demo items are dated for the edition day; pin the reference clock to it.
+_EDITION_NOON = 1795262400.0  # 2026-11-21T12:00:00Z
+
+
 def _item(title, source_id="m1_src_a", bucket="MACRO"):
     return {"url_hash": title, "source_id": source_id, "bucket": bucket, "title": title,
             "published_at": "2026-11-20T10:00:00Z"}
@@ -290,7 +294,7 @@ def _photo_recovery_run(tmp_path, monkeypatch, *, revise_calls):
     (tmp_path / "config/orbit_sources.json").write_text("{}")
     roster = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
     staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=_FakeStore(tmp_path, roster))
-    staged._run_staged("2026-11-21", None, offline_demo=False)
+    staged._run_staged("2026-11-21", None, offline_demo=False, now_epoch=_EDITION_NOON)
     return staged, scored[0]
 
 
@@ -609,7 +613,7 @@ def _revision_run(tmp_path, monkeypatch):
     (tmp_path / "config/orbit_sources.json").write_text("{}")
     roster = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
     staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=_FakeStore(tmp_path, roster))
-    staged._run_staged("2026-11-21", None, offline_demo=False)
+    staged._run_staged("2026-11-21", None, offline_demo=False, now_epoch=_EDITION_NOON)
     return seen, client
 
 
