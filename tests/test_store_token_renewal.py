@@ -100,6 +100,25 @@ def test_short_lifetime_renews_no_sooner_than_30s(monkeypatch, clock):
     assert client._resolve_token() == 'sts-2'
 
 
+def test_a_long_listing_renews_the_token_between_pages(monkeypatch, clock):
+    issued = fake_sts(monkeypatch)
+    sts_urlopen = state_store.urllib.request.urlopen
+    seen = []
+    def fake_urlopen(req, timeout=None):
+        if 'firestore' not in req.full_url:
+            return sts_urlopen(req, timeout)
+        seen.append(req.get_header('Authorization'))
+        clock[0] += 200  # a slow page
+        more = len(seen) < 3
+        return FakeResp({'documents': [{'name': f'p/d{len(seen)}', 'fields': {}}],
+                         **({'nextPageToken': f't{len(seen)}'} if more else {})})
+    monkeypatch.setattr(state_store.urllib.request, 'urlopen', fake_urlopen)
+    client = state_store._FirestoreRestClient('proj')
+    assert len(client.list_documents('c')) == 3
+    assert seen == ['Bearer sts-1', 'Bearer sts-1', 'Bearer sts-2']
+    assert issued == ['sts-1', 'sts-2']
+
+
 def test_exchange_github_oidc_token_still_returns_a_plain_str(monkeypatch):
     fake_sts(monkeypatch, expires_in=3600)
     assert state_store.exchange_github_oidc_token(OIDC_ENV) == 'sts-1'
