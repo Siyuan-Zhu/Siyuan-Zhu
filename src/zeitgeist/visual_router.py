@@ -333,6 +333,44 @@ PassMarks = Union[Tuple[float, float], Callable[[], Tuple[float, float]]]
 
 logger = logging.getLogger(__name__)
 
+EDITION_LOOK_SWITCH = Path("assets") / "edition_look.json"
+
+
+def edition_look_enabled(root: Path) -> bool:
+    """True when the committed switch file asks for the S1 edition look (SIY-204)."""
+    try:
+        data = json.loads((Path(root) / EDITION_LOOK_SWITCH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and str(data.get("look", "")).strip().lower() == "s1"
+
+
+def _edition_credit(attribution: Mapping[str, Any], visual_medium: str, credit_label: str) -> str:
+    name = str((attribution or {}).get("photographer_name") or "").strip()
+    if visual_medium == "PHOTOGRAPHY" and name:
+        return f"Photograph by {name}"
+    return str(credit_label or "Editorial Synthesis")
+
+
+def _render_edition_look(hero_img, *, word: str, gloss: str, date_iso: str, history, credit: str):
+    """Plan and draw the S1 plates; any failure returns None so the current look renders instead."""
+    try:
+        from src.zeitgeist import edition_look
+
+        plan = edition_look.plan_night(date_iso, list(history or ()), hero_img, word=word, gloss=gloss, credit=credit)
+        light, dark = edition_look.render_edition_pair(
+            hero_img, word=word, gloss=gloss, date_iso=date_iso, credit=credit, plan=plan
+        )
+        encoded = []
+        for plate in (light, dark):
+            buf = BytesIO()
+            plate.save(buf, format="WEBP", quality=86, method=4)
+            encoded.append(buf.getvalue())
+        return plan.template, encoded[0], encoded[1]
+    except Exception:  # never lose an edition to the new look
+        logger.exception("edition look failed; rendering the current look instead")
+        return None
+
 _FAIL_CLOSED_VISION_SCORES: Dict[str, Any] = {
     "semantic_alignment": 0.0,
     "compositional_clarity": 0.0,
@@ -1842,22 +1880,37 @@ def select_and_render_pulse_assets(
         attribution.get("photographer_name")
         or ("Unsplash Photography" if visual_medium == "PHOTOGRAPHY" else "Editorial Synthesis")
     )
-    render_curatorial_plate_pair(
-        hero_img,
-        word=word,
-        gloss=gloss or thesis,
-        thesis=thesis,
-        archetype=chosen_archetype,
-        quadrant=effective_quadrant,
-        luminance=_quad_lum,
-        date_str=resolved_date,
-        credit_line=credit_label,
-        attribution=attribution,
-        visual_medium=visual_medium,
-        velocity_score=float(velocity_score),
-        light_out_path=root / light_webp_rel,
-        dark_out_path=root / dark_webp_rel,
-    )
+    look_plates = None
+    if not curatorial_archetype_override and edition_look_enabled(root):
+        look_plates = _render_edition_look(
+            hero_img,
+            word=word,
+            gloss=gloss or thesis,
+            date_iso=resolved_date,
+            history=archetype_history_30d,
+            credit=_edition_credit(attribution, visual_medium, credit_label),
+        )
+    if look_plates is not None:
+        chosen_archetype, light_bytes, dark_bytes = look_plates
+        (root / light_webp_rel).write_bytes(light_bytes)
+        (root / dark_webp_rel).write_bytes(dark_bytes)
+    else:
+        render_curatorial_plate_pair(
+            hero_img,
+            word=word,
+            gloss=gloss or thesis,
+            thesis=thesis,
+            archetype=chosen_archetype,
+            quadrant=effective_quadrant,
+            luminance=_quad_lum,
+            date_str=resolved_date,
+            credit_line=credit_label,
+            attribution=attribution,
+            visual_medium=visual_medium,
+            velocity_score=float(velocity_score),
+            light_out_path=root / light_webp_rel,
+            dark_out_path=root / dark_webp_rel,
+        )
 
     # 1. Save 1200x800 WebP (quality=85) at assets/pulse/{date_str}.webp and prune >365d files
     pulse_dir = root / "assets" / "pulse"
@@ -1876,14 +1929,16 @@ def select_and_render_pulse_assets(
     svg_rel_path = "assets/daily_pulse.svg"
     svg_abs_path = root / svg_rel_path
     vote_metadata = escape(json.dumps(resolved_votes, sort_keys=True))
+    with Image.open(root / dark_webp_rel) as _plate:
+        plate_w, plate_h = _plate.size
     svg_content = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" '
-        'viewBox="0 0 1200 800" role="img" data-publication-layout="curatorial" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{plate_w}" height="{plate_h}" '
+        f'viewBox="0 0 {plate_w} {plate_h}" role="img" data-publication-layout="curatorial" '
         f'aria-label="{escape(word)} — {escape(gloss)}">\n'
         f'  <title>{escape(word)} — {resolved_date}</title>\n'
         f'  <metadata id="mood-votes">{vote_metadata}</metadata>\n'
         '  <g id="mood-vote-bar" aria-hidden="true"/>\n'
-        f'  <image width="1200" height="800" href="data:image/webp;base64,{b64_720}"/>\n'
+        f'  <image width="{plate_w}" height="{plate_h}" href="data:image/webp;base64,{b64_720}"/>\n'
         '</svg>\n'
     )
     svg_abs_path.write_text(svg_content, encoding="utf-8")

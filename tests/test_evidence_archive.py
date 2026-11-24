@@ -23,7 +23,8 @@ from tests.test_understanding_pipeline import _reply
 ROOT = Path(__file__).resolve().parents[1]
 DOLLAR = chr(36)
 ARCHIVE_LINE = "ZEITGEIST_EVIDENCE_ARCHIVE: " + DOLLAR + "{{ vars.ZEITGEIST_EVIDENCE_ARCHIVE || '0' }}"
-CANDIDATE_LINE = "ZEITGEIST_REFLECTOR_CANDIDATE: " + DOLLAR + "{{ vars.ZEITGEIST_REFLECTOR_CANDIDATE || '0' }}"
+# Main pins its own switches after the reflector candidate line; this one follows the last of them.
+INTERIM_LINE = "ZEITGEIST_INTERIM_GROUPING: " + DOLLAR + "{{ vars.ZEITGEIST_INTERIM_GROUPING || '0' }}"
 PUBLIC_LINE = re.compile(r"evidence_archive=(ok docs=\d+ bytes=\d+|failed error_class=[A-Za-z_][A-Za-z0-9_]*)")
 RUN_ID = "daily_run:2026-11-21:local:1"
 META_ID = "2026-11-21:" + RUN_ID
@@ -483,7 +484,7 @@ def test_the_daily_workflow_passes_the_switch_to_the_edition_job_only():
     edition = _job_lines(text, "synthesize-pulse")
     assert edition.count(ARCHIVE_LINE) == 1
     # After the switches it keeps evidence from, and only in the production edition's job.
-    assert edition[edition.index(CANDIDATE_LINE) + 1] == ARCHIVE_LINE
+    assert edition[edition.index(INTERIM_LINE) + 1] == ARCHIVE_LINE
     assert ARCHIVE_LINE not in _job_lines(text, "profile-preflight")
     assert [line.strip() for line in text.splitlines()].count(ARCHIVE_LINE) == 1
 
@@ -492,7 +493,7 @@ def test_the_daily_workflow_passes_the_switch_to_the_edition_job_only():
 def test_the_private_and_comparison_runs_mirror_the_daily_step_and_pass_the_switch_too(name):
     lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
     assert lines.count(ARCHIVE_LINE) == 1
-    assert lines[lines.index(CANDIDATE_LINE) + 1] == ARCHIVE_LINE
+    assert lines[lines.index(INTERIM_LINE) + 1] == ARCHIVE_LINE
 
 
 @pytest.mark.parametrize("name", ["provider_canary.yml", "staging_zeitgeist_dryrun.yml"])

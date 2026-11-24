@@ -51,6 +51,7 @@ from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import (  # noqa: E402
     EMBED_001, EMBED_2, FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
 )
+from src.zeitgeist.methodology import interim_grouping_enabled  # noqa: E402
 from src.zeitgeist.spend_guard import SpendBlocked, refused_before_dispatch  # noqa: E402
 from src.zeitgeist.understanding import links_enabled, understanding_v1_enabled  # noqa: E402
 
@@ -162,14 +163,19 @@ def _cluster_stored(store: Any, rows: List[Any], items: List[Any], now: datetime
     window (embedding-001, unmarked or mixed rows, or no accepted calibration) keeps the legacy cutoffs.
     """
     model = _vector_model(rows)
+    # The same interim grouping switch the edition reads; off, both calls are today's.
+    interim = interim_grouping_enabled()
     if model == em.EMBED_2:
         plan = em.plan_embedding_run(store, em.EMBED_2)
         if plan is not None and plan.mode == "migrated":
             # Migrated mode never touches the store; it is given none so nothing can be written.
-            clusters = em.cluster_for_run(items, plan, store=None, now_utc=now)
+            clusters = em.cluster_for_run(items, plan, store=None, now_utc=now,
+                                          **({"interim_grouping": True} if interim else {}))
             calibrated = plan.cutoffs is not None and not plan.fallback
             return Grouping(clusters, "calibrated" if calibrated else "legacy", model)
-    return Grouping(pipeline.score_and_cluster_signals(items, now_utc=now), "legacy", model)
+    clusters = pipeline.score_and_cluster_signals(items, now_utc=now,
+                                                  **({"exclude_captionless": True} if interim else {}))
+    return Grouping(clusters, "legacy", model)
 
 
 def run_private(store: Any, *, genai_client: Any, now: datetime, run_models: RunModels) -> PrivateRun:

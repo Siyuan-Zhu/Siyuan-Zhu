@@ -54,6 +54,9 @@ jobs:
           ZEITGEIST_REFLECTOR: ${{ vars.ZEITGEIST_REFLECTOR || '0' }}
           ZEITGEIST_REFLECTOR_MODEL: ${{ vars.ZEITGEIST_REFLECTOR_MODEL || '' }}
           ZEITGEIST_REFLECTOR_CANDIDATE: ${{ vars.ZEITGEIST_REFLECTOR_CANDIDATE || '0' }}
+          ZEITGEIST_UNDATED_AS_BACKGROUND: ${{ vars.ZEITGEIST_UNDATED_AS_BACKGROUND || '0' }}
+          ZEITGEIST_COPY_CAP: ${{ vars.ZEITGEIST_COPY_CAP || '0' }}
+          ZEITGEIST_INTERIM_GROUPING: ${{ vars.ZEITGEIST_INTERIM_GROUPING || '0' }}
           ZEITGEIST_EVIDENCE_ARCHIVE: ${{ vars.ZEITGEIST_EVIDENCE_ARCHIVE || '0' }}
           # Owner-approved quality exception expires after this edition; safety remains mandatory.
           ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-06"

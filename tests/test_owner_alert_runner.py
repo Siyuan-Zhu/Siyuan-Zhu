@@ -257,7 +257,8 @@ def _success(tmp_path, store, **attempt):
     fields.update(attempt)
     _attempt(tmp_path, **fields)
     return step.main(['--outcome', 'success'], root=tmp_path,
-                     env={'FIRESTORE_COLLECTION_PREFIX': 'pfx_'}, store=store)
+                     env={'FIRESTORE_COLLECTION_PREFIX': 'pfx_',
+                          'ZEITGEIST_EDITION_DATE': '2026-11-16'}, store=store)
 
 
 def test_success_step_recovered_only_after_prior_attempt(tmp_path, entries):
@@ -277,6 +278,19 @@ def test_success_step_recovered_only_after_prior_attempt(tmp_path, entries):
     assert step.main(['--outcome', 'success'], root=tmp_path, env={},
                      store=_Store({key: {'attempt': 2}})) == 0
     assert len(entries) == 1
+
+
+@pytest.mark.parametrize('today', [datetime(2026, 11, 17, 9, tzinfo=timezone.utc),
+                                   datetime(2027, 3, 2, 3, tzinfo=timezone.utc)])
+def test_success_step_edition_date_ignores_system_date(tmp_path, entries, monkeypatch, today):
+    class FakeDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return today.astimezone(tz) if tz else today
+    monkeypatch.setattr(step, 'datetime', FakeDatetime)
+    key = 'pfx_editorial_executions/2026-11-16'
+    assert _success(tmp_path, _Store({key: {'attempt': 2}})) == 0
+    assert [e['edition_date'] for e in entries] == ['2026-11-16']
 
 
 # --- workflow text ------------------------------------------------------------------
