@@ -44,6 +44,10 @@ LEGACY_PROMPT = (
 )
 
 
+# The offline demo items are dated for the edition day; pin the reference clock to it.
+_EDITION_NOON = 1795262400.0  # 2026-11-21T12:00:00Z
+
+
 def _item(title, summary="", *, bucket="MACRO", source_id="src_a", published_at="2026-11-20T10:00:00Z"):
     return CachedItem(
         url_hash=title, source_id=source_id, bucket=bucket, title=title, summary=summary,
@@ -450,7 +454,7 @@ def _run_photo_recovery(tmp_path, monkeypatch, *, recover):
     (tmp_path / "config/orbit_sources.json").write_text("{}")
     store = SimpleNamespace(load_orbit_roster=lambda: {}, save_orbit_roster=lambda r: None)
     staged = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=_FakeStore(tmp_path, store))
-    staged._run_staged("2026-11-21", None, offline_demo=False)
+    staged._run_staged("2026-11-21", None, offline_demo=False, now_epoch=_EDITION_NOON)
     return staged
 
 
@@ -526,3 +530,27 @@ def test_no_line_with_switch_off_after_recovery(tmp_path, monkeypatch, capsys):
     scored = _spy_scored(monkeypatch)
     _run_photo_recovery(tmp_path, monkeypatch, recover=_recovering(scored))
     assert _understanding_lines(capsys) == []
+
+
+class _ClockAt(pipeline.datetime):
+    _fixed = None
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._fixed.astimezone(tz) if tz else cls._fixed.replace(tzinfo=None)
+
+
+def _main_cluster_on(real_day, tmp_path, monkeypatch):
+    """The cluster the fake Director picks (clusters[0]) when the real clock reads `real_day`."""
+    tmp_path.mkdir()
+    _ClockAt._fixed = pipeline.datetime.fromisoformat(real_day)
+    monkeypatch.setattr(pipeline, "datetime", _ClockAt)
+    scored = _spy_scored(monkeypatch)
+    _run_photo_recovery(tmp_path, monkeypatch, recover=_no_recovery)
+    return scored[0][0].cluster_id
+
+
+@pytest.mark.parametrize("real_day", ["2026-11-22T12:00:00+00:00", "2026-11-25T12:00:00+00:00", "2027-03-01T09:00:00+00:00"])
+def test_photo_recovery_helper_does_not_depend_on_the_real_day(tmp_path, monkeypatch, real_day):
+    edition_day = _main_cluster_on("2026-11-21T12:00:00+00:00", tmp_path / "edition", monkeypatch)
+    assert _main_cluster_on(real_day, tmp_path / "other", monkeypatch) == edition_day
