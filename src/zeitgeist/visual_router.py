@@ -345,7 +345,7 @@ def edition_look_enabled(root: Path) -> bool:
     return isinstance(data, dict) and str(data.get("look", "")).strip().lower() == "s1"
 
 
-def _edition_history(root: Path, history) -> list:
+def _edition_history(root: Path, history, date_iso: str = "") -> list:
     """Template history, newest first, led by the last published template when the feed lacks it.
 
     Feed entries written before 2026-11-24 carry no template name, so the history the pipeline
@@ -356,7 +356,12 @@ def _edition_history(root: Path, history) -> list:
         state = json.loads((Path(root) / "data" / "zeitgeist_state.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return names
-    last = str(state.get("curatorial_archetype") or "") if isinstance(state, dict) else ""
+    if not isinstance(state, dict):
+        return names
+    state_date = str(state.get("date") or state.get("date_iso") or "")[:10]
+    if date_iso and not (state_date and state_date < str(date_iso)[:10]):
+        return names  # a rerun for a date that already has a state must not count itself
+    last = str(state.get("curatorial_archetype") or "")
     if last.startswith("S1_") and last not in names:
         return [last] + names
     return names
@@ -1906,7 +1911,7 @@ def select_and_render_pulse_assets(
             word=word,
             gloss=gloss or thesis,
             date_iso=resolved_date,
-            history=_edition_history(root, archetype_history_30d),
+            history=_edition_history(root, archetype_history_30d, resolved_date),
             credit=_edition_credit(attribution, visual_medium, credit_label),
         )
     if look_plates is not None:

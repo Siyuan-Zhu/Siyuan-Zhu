@@ -248,8 +248,17 @@ def test_history_starts_with_the_last_published_template_when_the_feed_lacks_nam
     from src.zeitgeist.visual_router import _edition_history
 
     (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "zeitgeist_state.json").write_text(json.dumps({"curatorial_archetype": "S1_BLEED"}), encoding="utf-8")
+    (tmp_path / "data" / "zeitgeist_state.json").write_text(json.dumps({"date": "2026-11-24", "curatorial_archetype": "S1_BLEED"}), encoding="utf-8")
     assert _edition_history(tmp_path, []) == ["S1_BLEED"]
     assert _edition_history(tmp_path, ["POETIC_CINEMA"]) == ["S1_BLEED", "POETIC_CINEMA"]
     assert _edition_history(tmp_path, ["S1_FRAME", "S1_BLEED"]) == ["S1_FRAME", "S1_BLEED"]
     assert _edition_history(tmp_path / "missing", ["S1_FRAME"]) == ["S1_FRAME"]
+
+
+def test_history_ignores_a_state_from_the_same_date(tmp_path: Path) -> None:
+    from src.zeitgeist.visual_router import _edition_history
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "zeitgeist_state.json").write_text(json.dumps({"date": "2026-11-25", "curatorial_archetype": "S1_BLEED"}), encoding="utf-8")
+    assert _edition_history(tmp_path, [], "2026-11-25") == []
+    assert _edition_history(tmp_path, [], "2026-11-26") == ["S1_BLEED"]

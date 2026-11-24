@@ -539,16 +539,19 @@ def _layout_sleeve(plan, word, gloss, date_iso, credit):
     credit_text = colophon_text(date_iso, credit, "cred")[0]
     beside = min(640, right - cst.width(credit_text) - left - 64)
     glines = break_gloss(gloss, gst, beside) if beside >= 420 else None
-    if glines is not None and len(glines) <= 2:
+    credit_beside = glines is not None and len(glines) <= 2
+    if credit_beside:
         ops.append(_txt("col", credit_text, cst, "right", right, first))
     else:
         # The credit cannot sit beside a balanced gloss: give the gloss the full measure and
         # set the credit on its own line beneath, flush with the photograph's right edge.
         glines = break_gloss(gloss, gst, 640)
+        if len(glines) > 2:
+            raise ValueError("gloss needs more than two lines on the Sleeve plate")
     for g in glines:
         ops.append(_txt("gloss", g, gst, "left", left, y + gst.baseline_in_line()))
         y += gst.line_height
-    if not any(op[0] == "text" and op[2] == credit_text for op in ops):
+    if not credit_beside:
         y += 10
         ops.append(_txt("col", credit_text, cst, "right", right, y + cst.baseline_in_line()))
         y += cst.line_height
