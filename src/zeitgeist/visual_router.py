@@ -361,7 +361,12 @@ def _render_edition_look(hero_img, *, word: str, gloss: str, date_iso: str, hist
         light, dark = edition_look.render_edition_pair(
             hero_img, word=word, gloss=gloss, date_iso=date_iso, credit=credit, plan=plan
         )
-        return plan.template, light, dark
+        encoded = []
+        for plate in (light, dark):
+            buf = BytesIO()
+            plate.save(buf, format="WEBP", quality=86, method=4)
+            encoded.append(buf.getvalue())
+        return plan.template, encoded[0], encoded[1]
     except Exception:  # never lose an edition to the new look
         logger.exception("edition look failed; rendering the current look instead")
         return None
@@ -1886,11 +1891,9 @@ def select_and_render_pulse_assets(
             credit=_edition_credit(attribution, visual_medium, credit_label),
         )
     if look_plates is not None:
-        chosen_archetype, light_plate, dark_plate = look_plates
-        for plate, rel in ((light_plate, light_webp_rel), (dark_plate, dark_webp_rel)):
-            buf = BytesIO()
-            plate.save(buf, format="WEBP", quality=86, method=4)
-            (root / rel).write_bytes(buf.getvalue())
+        chosen_archetype, light_bytes, dark_bytes = look_plates
+        (root / light_webp_rel).write_bytes(light_bytes)
+        (root / dark_webp_rel).write_bytes(dark_bytes)
     else:
         render_curatorial_plate_pair(
             hero_img,

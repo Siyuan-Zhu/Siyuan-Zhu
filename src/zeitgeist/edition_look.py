@@ -371,6 +371,7 @@ def _subtitle_lines(face, gloss):
 
 
 def colophon_text(date_iso: str, credit: str, kind: str) -> list:
+    credit = " ".join("".join(ch for ch in str(credit) if ord(ch) < 0x2000).split())
     d = dt.date.fromisoformat(date_iso[:10])
     num = f"No. {edition_number(date_iso)}"
     long = f"{d.day} {MONTHS[d.month - 1]} {d.year}"
@@ -473,6 +474,15 @@ def _render(photo, word, gloss, date_iso, credit, plan, facts, theme):
     builder = {"S1_PLATE": _layout_plate, "S1_SLEEVE": _layout_sleeve, "S1_BLEED": _layout_bleed,
                "S1_ENTRY": _layout_entry, "S1_WALL": _layout_wall}[plan.template]
     ops, height, (px, py, pw, ph) = builder(plan, word, gloss, date_iso, credit)
+    for op in ops:
+        if op[0] != "text":
+            continue
+        _, _role, text, st, align, x, base = op
+        w = st.width(text)
+        left = x if align == "left" else (x - w / 2 if align == "center" else x - w)
+        asc, desc = st.ascent_descent()
+        if left < 0 or left + w > WIDTH or base - asc < 0 or base + desc > height:
+            raise ValueError("text leaves the plate: " + plan.template)
     canvas = Image.new("RGB", (WIDTH, int(round(height))), page)
     canvas.paste(_fit_photo(photo, (pw, ph)), (int(px), int(py)))
 
@@ -556,10 +566,12 @@ def _layout_sleeve(plan, word, gloss, date_iso, credit):
     y += 624 + 28
     gst = gloss_style(plan.gloss_face)
     first = y + gst.baseline_in_line()
-    for g in break_gloss(gloss, gst, 600):
+    credit_text = colophon_text(date_iso, credit, "cred")[0]
+    measure = min(600, right - cst.width(credit_text) - left - 160)
+    for g in break_gloss(gloss, gst, measure):
         ops.append(_txt("gloss", g, gst, "left", left, y + gst.baseline_in_line()))
         y += gst.line_height
-    ops.append(_txt("col", colophon_text(date_iso, credit, "cred")[0], cst, "right", right, first))
+    ops.append(_txt("col", credit_text, cst, "right", right, first))
     return ops, y + 84, photo_box
 
 

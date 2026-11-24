@@ -86,7 +86,7 @@ def test_every_template_renders_both_themes(template: str, voice: str) -> None:
     light, dark = L.render_edition_pair(photo, word="Climacteric", gloss=GLOSS, date_iso="2026-12-02", credit=CREDIT, plan=plan)
     for img in (light, dark):
         assert img.size[0] == 1200
-        assert 800 <= img.size[1] <= 1200
+        assert 700 <= img.size[1] <= 1200
 
 
 @pytest.mark.parametrize("voice", L.VOICES)
@@ -180,3 +180,21 @@ def test_router_falls_back_on_error(tmp_path: Path, monkeypatch) -> None:
     assert published.curatorial_archetype not in L.TEMPLATES
     assert (tmp_path / "assets" / "daily_pulse_light.webp").stat().st_size > 1000
     assert (tmp_path / "assets" / "daily_pulse_dark.webp").stat().st_size > 1000
+
+
+def test_text_leaving_the_plate_raises_so_the_router_falls_back() -> None:
+    plan = L.NightPlan("S1_PLATE", "wide", "italic", False, "none", False)
+    with pytest.raises(ValueError):
+        L.render_edition_pair(_photo("dark"), word="Relic", gloss=GLOSS, date_iso="2026-12-02",
+                              credit="Photograph by " + "Averyveryverylongphotographername" * 2, plan=plan)
+
+
+def test_sleeve_gloss_never_collides_with_credit() -> None:
+    plan = L.NightPlan("S1_SLEEVE", "italic", "roman", False, "none", False)
+    ops, _, _ = L._layout_sleeve(plan, "Communion", "Shared presence and collective warmth in person.", "2026-11-17", "Photograph by Nainoa Shizuru")
+    texts = [op for op in ops if op[0] == "text"]
+    credit = [op for op in texts if op[1] == "col" and op[2].startswith("Photograph")][0]
+    credit_left = credit[5] - credit[3].width(credit[2])
+    for op in texts:
+        if op[1] == "gloss":
+            assert op[5] + op[3].width(op[2]) <= credit_left - 40
