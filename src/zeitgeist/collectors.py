@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 import httpx
 import numpy as np
 
+from .methodology import CAPTIONLESS_STAND_IN, interim_grouping_enabled
 from .spend_guard import EMBEDDING_2_MODEL, SpendBlocked
 
 logger = logging.getLogger(__name__)
@@ -1463,6 +1464,7 @@ def fetch_instagram_batch(
         raise dataset_failure("Apify dataset contains an unknown profile result", "UnknownProfileResult", "unrecognized-profile")
 
     collected: list[dict[str, Any]] = []
+    mark_text_missing = interim_grouping_enabled()
     for record in dataset:
         missing = verified_unavailable(record)
         if missing:
@@ -1528,9 +1530,10 @@ def fetch_instagram_batch(
             raw_title = str(post.get("title") or "")
             sanitized_title = re.sub(r"@([A-Za-z0-9._]+)", r"\1", raw_title)
             title = _clean_text(
-                sanitized_title or summary[:120] or "Instagram orbit dispatch",
+                sanitized_title or summary[:120] or CAPTIONLESS_STAND_IN,
                 max_chars=240,
             )
+            text_missing = {"text_missing": not (sanitized_title or summary)} if mark_text_missing else {}
             dt = _parse_timestamp(
                 str(post.get("timestamp") or post.get("takenAtTimestamp") or ""),
                 fallback_utc=now_utc,
@@ -1558,6 +1561,7 @@ def fetch_instagram_batch(
                     "fetched_at": fetched_at,
                     "schema_version": 1,
                     "expires_at": int(dt.timestamp()) + FEED_CACHE_TTL_SECONDS,
+                    **text_missing,
                 }
             )
 
