@@ -345,6 +345,23 @@ def edition_look_enabled(root: Path) -> bool:
     return isinstance(data, dict) and str(data.get("look", "")).strip().lower() == "s1"
 
 
+def _edition_history(root: Path, history) -> list:
+    """Template history, newest first, led by the last published template when the feed lacks it.
+
+    Feed entries written before 2026-11-24 carry no template name, so the history the pipeline
+    passes can be empty. The committed state projection still records the last template.
+    """
+    names = [str(h) for h in (history or ()) if str(h).strip()]
+    try:
+        state = json.loads((Path(root) / "data" / "zeitgeist_state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return names
+    last = str(state.get("curatorial_archetype") or "") if isinstance(state, dict) else ""
+    if last.startswith("S1_") and last not in names:
+        return [last] + names
+    return names
+
+
 def _edition_credit(attribution: Mapping[str, Any], visual_medium: str, credit_label: str) -> str:
     name = str((attribution or {}).get("photographer_name") or "").strip()
     if visual_medium == "PHOTOGRAPHY" and name:
@@ -456,7 +473,7 @@ class PublishedPulse:
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
 
-    def to_feed_entry(self, *, include_curatorial_metadata: bool = False) -> Dict[str, Any]:
+    def to_feed_entry(self, *, include_curatorial_metadata: bool = True) -> Dict[str, Any]:
         """Serialize to the canonical Section 7.1 v2 feed projection (with backward-compatible feed keys) enforced by firestore.rules."""
         date_str = str(self.date)[:10]
         word_str = str(self.word or "Equilibrium")[:60]
@@ -1887,7 +1904,7 @@ def select_and_render_pulse_assets(
             word=word,
             gloss=gloss or thesis,
             date_iso=resolved_date,
-            history=archetype_history_30d,
+            history=_edition_history(root, archetype_history_30d),
             credit=_edition_credit(attribution, visual_medium, credit_label),
         )
     if look_plates is not None:

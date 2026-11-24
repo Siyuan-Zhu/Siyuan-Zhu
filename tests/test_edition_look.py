@@ -183,7 +183,7 @@ def test_router_falls_back_on_error(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_text_leaving_the_plate_raises_so_the_router_falls_back() -> None:
-    plan = L.NightPlan("S1_PLATE", "wide", "italic", False, "none", False)
+    plan = L.NightPlan("S1_WALL", "wide", "italic", False, "none", False)
     with pytest.raises(ValueError):
         L.render_edition_pair(_photo("dark"), word="Relic", gloss=GLOSS, date_iso="2026-12-02",
                               credit="Photograph by " + "Averyveryverylongphotographername" * 2, plan=plan)
@@ -195,6 +195,61 @@ def test_sleeve_gloss_never_collides_with_credit() -> None:
     texts = [op for op in ops if op[0] == "text"]
     credit = [op for op in texts if op[1] == "col" and op[2].startswith("Photograph")][0]
     credit_left = credit[5] - credit[3].width(credit[2])
-    for op in texts:
-        if op[1] == "gloss":
+    gloss_ops = [op for op in texts if op[1] == "gloss"]
+    assert len(gloss_ops) <= 2
+    for op in gloss_ops:
+        same_line = abs(op[6] - credit[6]) < 1
+        if same_line:
             assert op[5] + op[3].width(op[2]) <= credit_left - 40
+
+
+def test_sleeve_gloss_stays_on_two_lines_with_a_long_credit() -> None:
+    plan = L.NightPlan("S1_SLEEVE", "italic", "roman", False, "none", False)
+    ops, _, _ = L._layout_sleeve(plan, "Lattice", "Civic space reborn in steel and monumental light.",
+                                 "2026-11-06", "Photograph by Klara Kulikova Abernathy")
+    gl = [op for op in ops if op[0] == "text" and op[1] == "gloss"]
+    assert len(gl) == 2
+    assert all(op[2].split()[-1].lower() not in L.STOPWORDS for op in gl[:-1])
+
+
+LAYOUTS = {"S1_PLATE": L._layout_plate, "S1_SLEEVE": L._layout_sleeve, "S1_BLEED": L._layout_bleed,
+           "S1_ENTRY": L._layout_entry, "S1_WALL": L._layout_wall}
+
+
+@pytest.mark.parametrize("template", sorted(LAYOUTS))
+@pytest.mark.parametrize("centred", [False, True])
+def test_date_and_credit_only_on_caption_templates(template: str, centred: bool) -> None:
+    plan = L.NightPlan(template, "italic", "roman", False, "none", centred)
+    ops, _, _ = LAYOUTS[template](plan, "Relic", GLOSS, "2026-11-24", CREDIT)
+    has_col = any(op[0] == "text" and op[1] == "col" for op in ops)
+    assert has_col == (template in L.COLOPHON_TEMPLATES)
+
+
+@pytest.mark.parametrize("template", L.ON_PHOTO)
+def test_on_photo_templates_carry_no_date_or_credit(template: str) -> None:
+    photo = _photo("dark")
+    for voice in L.VOICES:
+        pl = L.place_on_photo(photo, template, voice, L.PAIRS[voice][0], "Numen", GLOSS, "2026-11-24", CREDIT)
+        if pl is not None:
+            assert pl["colophon"] == []
+
+
+def test_caption_templates_are_wall_sleeve_entry() -> None:
+    assert set(L.COLOPHON_TEMPLATES) == {"S1_WALL", "S1_SLEEVE", "S1_ENTRY"}
+
+
+def test_feed_entry_carries_the_template_name(tmp_path: Path) -> None:
+    published = _router_run(tmp_path)
+    entry = published.to_feed_entry()
+    assert entry["curatorial_archetype"] == published.curatorial_archetype
+
+
+def test_history_starts_with_the_last_published_template_when_the_feed_lacks_names(tmp_path: Path) -> None:
+    from src.zeitgeist.visual_router import _edition_history
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "zeitgeist_state.json").write_text(json.dumps({"curatorial_archetype": "S1_BLEED"}), encoding="utf-8")
+    assert _edition_history(tmp_path, []) == ["S1_BLEED"]
+    assert _edition_history(tmp_path, ["POETIC_CINEMA"]) == ["S1_BLEED", "POETIC_CINEMA"]
+    assert _edition_history(tmp_path, ["S1_FRAME", "S1_BLEED"]) == ["S1_FRAME", "S1_BLEED"]
+    assert _edition_history(tmp_path / "missing", ["S1_FRAME"]) == ["S1_FRAME"]
