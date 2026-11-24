@@ -68,11 +68,12 @@ def test_oidc_token_without_expires_in_assumes_300s(monkeypatch, clock):
     assert client._resolve_token() == 'sts-3'
 
 
-def test_oidc_token_honours_expires_in(monkeypatch, clock):
-    issued = fake_sts(monkeypatch, expires_in='1000')
+def test_oidc_token_lifetime_is_capped_at_300s(monkeypatch, clock):
+    # STS may report an hour, but the federated token stopped working after about five minutes in Actions.
+    issued = fake_sts(monkeypatch, expires_in='3600')
     client = state_store._FirestoreRestClient('proj')
     assert client._resolve_token() == 'sts-1'
-    clock[0] += 799  # min(1000 - 60, 0.8 * 1000) = 800 s
+    clock[0] += 239  # capped to 300 s: min(300 - 60, 0.8 * 300) = 240 s
     assert client._resolve_token() == 'sts-1'
     clock[0] += 2
     assert client._resolve_token() == 'sts-2'

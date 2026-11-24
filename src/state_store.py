@@ -1411,6 +1411,8 @@ class _FirestoreRestCollectionRef:
 
 
 _token_clock = time.monotonic
+# The federated token stopped working after about five minutes in Actions, whatever STS reports.
+_OIDC_TOKEN_MAX_LIFETIME_S = 300.0
 
 
 def _token_renewal_age(lifetime_s: float | None) -> float:
@@ -1550,7 +1552,8 @@ class _FirestoreRestClient:
         if os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") and os.environ.get(
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
         ):
-            return self._keep_token(*exchange_github_oidc_token_with_lifetime(os.environ))
+            tok, lifetime_s = exchange_github_oidc_token_with_lifetime(os.environ)
+            return self._keep_token(tok, min(lifetime_s or _OIDC_TOKEN_MAX_LIFETIME_S, _OIDC_TOKEN_MAX_LIFETIME_S))
         sa_raw = (
             os.environ.get("GCP_SA_KEY")
             or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
