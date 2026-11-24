@@ -155,7 +155,8 @@ def test_switch_on_changes_only_the_spam_account(monkeypatch, capsys):
     monkeypatch.setenv("ZEITGEIST_COPY_CAP", "1")
     on = _hashes(load_asymmetric_window(_mixed_night(), now_utc=NOW))
     assert on == [h for h in off if h not in {f"h{n:03d}" for n in range(15, 20)}]
-    assert capsys.readouterr().out == "copy_cap_dropped=5\n"
+    # Five orbit copies, and three of the eighteen macro copies that the per-feed sample of four left out anyway.
+    assert capsys.readouterr().out == "copy_cap_dropped=8\n"
 
 
 def test_the_public_line_carries_a_number_only(monkeypatch, capsys):
