@@ -20,7 +20,8 @@ DIM = 768
 # The repository forbids a literal dollar character in test files; build the expression prefix instead.
 DOLLAR = chr(36)
 COPY_CAP_LINE = "ZEITGEIST_COPY_CAP: " + DOLLAR + "{{ vars.ZEITGEIST_COPY_CAP || '0' }}"
-CANDIDATE_LINE = "ZEITGEIST_REFLECTOR_CANDIDATE: " + DOLLAR + "{{ vars.ZEITGEIST_REFLECTOR_CANDIDATE || '0' }}"
+# The copy-cap line follows the undated-items line, which follows the reflector candidate line.
+UNDATED_LINE = "ZEITGEIST_UNDATED_AS_BACKGROUND: " + DOLLAR + "{{ vars.ZEITGEIST_UNDATED_AS_BACKGROUND || '0' }}"
 
 
 @pytest.fixture(autouse=True)
@@ -234,7 +235,7 @@ def _job_lines(text, job):
 def test_the_daily_workflow_passes_the_switch_to_the_edition_job_only():
     text = (ROOT / ".github/workflows/daily_zeitgeist.yml").read_text()
     edition = _job_lines(text, "synthesize-pulse")
-    assert edition[edition.index(CANDIDATE_LINE) + 1] == COPY_CAP_LINE
+    assert edition[edition.index(UNDATED_LINE) + 1] == COPY_CAP_LINE
     assert COPY_CAP_LINE not in _job_lines(text, "profile-preflight")
     assert [line.strip() for line in text.splitlines()].count(COPY_CAP_LINE) == 1
 
@@ -243,7 +244,7 @@ def test_the_daily_workflow_passes_the_switch_to_the_edition_job_only():
 def test_the_private_and_comparison_workflows_pass_the_switch(name):
     lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
     assert lines.count(COPY_CAP_LINE) == 1
-    assert lines[lines.index(CANDIDATE_LINE) + 1] == COPY_CAP_LINE
+    assert lines[lines.index(UNDATED_LINE) + 1] == COPY_CAP_LINE
 
 
 def test_the_provider_canary_does_not_pass_the_switch():
