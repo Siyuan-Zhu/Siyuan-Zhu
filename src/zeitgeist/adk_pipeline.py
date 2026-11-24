@@ -1676,7 +1676,7 @@ def _evidence_archive_parts(
         "intake_source": "stored_rows" if rows else "items",
         "embedding_f16_encoding": "base64",
         "commit": os.environ.get("GITHUB_SHA") or None,
-        "switches": {name: os.environ.get(name) for name in (*run_record.SWITCH_NAMES, evidence_archive.SWITCH_ENV)},
+        "switches": {name: os.environ.get(name) for name in run_record.SWITCH_NAMES},
     }
     return parts, extra
 
