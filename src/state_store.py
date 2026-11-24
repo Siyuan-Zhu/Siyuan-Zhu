@@ -1410,7 +1410,21 @@ class _FirestoreRestCollectionRef:
         return self._client.list_documents(self._collection_id)
 
 
+_token_clock = time.monotonic
+# The federated token stopped working after about five minutes in Actions, whatever STS reports.
+_OIDC_TOKEN_MAX_LIFETIME_S = 300.0
+
+
+def _token_renewal_age(lifetime_s: float | None) -> float:
+    lifetime = lifetime_s or 300.0
+    return max(30.0, min(lifetime - 60.0, lifetime * 0.8))
+
+
 def exchange_github_oidc_token(env: Mapping[str, str]) -> str:
+    return exchange_github_oidc_token_with_lifetime(env)[0]
+
+
+def exchange_github_oidc_token_with_lifetime(env: Mapping[str, str]) -> tuple[str, float | None]:
     req_url = (env.get("ACTIONS_ID_TOKEN_REQUEST_URL") or "").strip()
     req_tok = (env.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN") or "").strip()
     if not req_url or not req_tok:
@@ -1450,7 +1464,11 @@ def exchange_github_oidc_token(env: Mapping[str, str]) -> str:
     )
     with urllib.request.urlopen(sts_req, timeout=10) as sts_resp:
         sts_data = json.loads(sts_resp.read().decode("utf-8"))
-    return str(sts_data["access_token"])
+    try:
+        lifetime_s = float(sts_data.get("expires_in")) or None
+    except (TypeError, ValueError):
+        lifetime_s = None
+    return str(sts_data["access_token"]), lifetime_s
 
 
 class _FirestoreRestClient:
@@ -1465,6 +1483,7 @@ class _FirestoreRestClient:
         self.project_id = project_id
         self.database_id = database_id or "(default)"
         self._access_token = access_token
+        self._token_renew_at: float | None = None
 
     def _mint_sa_access_token(self, sa_json_str: str) -> str:
         sa = json.loads(sa_json_str)
@@ -1513,8 +1532,13 @@ class _FirestoreRestClient:
     def _exchange_github_oidc_token(self) -> str:
         return exchange_github_oidc_token(os.environ)
 
+    def _keep_token(self, tok: str, lifetime_s: float | None) -> str:
+        self._access_token = tok
+        self._token_renew_at = _token_clock() + _token_renewal_age(lifetime_s)
+        return tok
+
     def _resolve_token(self) -> str:
-        if self._access_token:
+        if self._access_token and (self._token_renew_at is None or _token_clock() < self._token_renew_at):
             return self._access_token
         env_tok = (
             os.environ.get("FIRESTORE_ACCESS_TOKEN")
@@ -1523,12 +1547,13 @@ class _FirestoreRestClient:
         ).strip()
         if env_tok:
             self._access_token = env_tok
+            self._token_renew_at = None
             return env_tok
         if os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") and os.environ.get(
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
         ):
-            self._access_token = self._exchange_github_oidc_token()
-            return self._access_token
+            tok, lifetime_s = exchange_github_oidc_token_with_lifetime(os.environ)
+            return self._keep_token(tok, min(lifetime_s or _OIDC_TOKEN_MAX_LIFETIME_S, _OIDC_TOKEN_MAX_LIFETIME_S))
         sa_raw = (
             os.environ.get("GCP_SA_KEY")
             or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
@@ -1540,8 +1565,7 @@ class _FirestoreRestClient:
             if cred_path and Path(cred_path).is_file():
                 sa_raw = Path(cred_path).read_text(encoding="utf-8")
         if sa_raw:
-            self._access_token = self._mint_sa_access_token(sa_raw)
-            return self._access_token
+            return self._keep_token(self._mint_sa_access_token(sa_raw), 3600.0)
         res = subprocess.run(
             ["gcloud", "auth", "print-access-token", "--quiet"],
             check=True,
@@ -1553,6 +1577,7 @@ class _FirestoreRestClient:
         if not tok:
             raise RuntimeError("Empty access token from gcloud")
         self._access_token = tok
+        self._token_renew_at = None
         return tok
 
     def _base_url(self) -> str:
@@ -1644,7 +1669,6 @@ class _FirestoreRestClient:
         collection_id: str,
         page_size: int = 100,
     ) -> list[_FirestoreRestDocSnapshot]:
-        tok = self._resolve_token()
         base_col_url = f"{self._base_url()}/{urllib.parse.quote(collection_id, safe='')}"
         docs: list[_FirestoreRestDocSnapshot] = []
         next_page_token = ""
@@ -1656,7 +1680,7 @@ class _FirestoreRestClient:
             url = f"{base_col_url}?{urllib.parse.urlencode(query)}"
             req = urllib.request.Request(
                 url,
-                headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"},
+                headers={"Authorization": f"Bearer {self._resolve_token()}", "Accept": "application/json"},
                 method="GET",
             )
             try:

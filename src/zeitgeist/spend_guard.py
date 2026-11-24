@@ -399,10 +399,10 @@ class FirestoreLedger:
         status = None
         error_type = None
         try:
-            headers = {"Authorization": "Bearer " + self.client._resolve_token()}
             with httpx.Client(timeout=15) as client:
                 for attempt in range(5):
                     status, error_type = None, None
+                    headers = {"Authorization": "Bearer " + self.client._resolve_token()}
                     response = client.get(self.url, headers=headers)
                     response.raise_for_status()
                     body = response.json()

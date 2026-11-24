@@ -283,3 +283,20 @@ def test_staging_report_keeps_safe_ledger_failure_diagnostics(tmp_path, monkeypa
         "error_type": "INVALID_ARGUMENT",
         "code": "shared-ledger-unavailable",
     }
+
+def test_each_conflict_round_asks_the_client_for_its_token_again(monkeypatch):
+    # The client renews a pass it obtained itself; a round that reuses an old header could outlive it.
+    wire = LedgerWire(monkeypatch, [(412, "FAILED_PRECONDITION")])
+    tokens = iter(["TOKEN_ROUND_1", "TOKEN_ROUND_2", "TOKEN_ROUND_3"])
+    monkeypatch.setattr(state._FirestoreRestClient, "_resolve_token", lambda _: next(tokens))
+    seen = []
+    handle = wire.handle
+    def recording(request):
+        seen.append((request.method, request.headers["authorization"]))
+        return handle(request)
+    wire.transport.handler = recording
+    wire.guard.reserve("apify", "run", ".02")
+    assert seen == [
+        ("GET", "Bearer TOKEN_ROUND_1"), ("PATCH", "Bearer TOKEN_ROUND_1"),
+        ("GET", "Bearer TOKEN_ROUND_2"), ("PATCH", "Bearer TOKEN_ROUND_2"),
+    ]
