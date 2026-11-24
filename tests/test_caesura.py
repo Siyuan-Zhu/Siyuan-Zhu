@@ -135,3 +135,12 @@ def test_place_on_photo_dispatches_to_caesura() -> None:
     pl = L.place_on_photo(_monolith(), "S1_CAESURA", "italic", "sans", WORD, GLOSS, "2026-12-01", CREDIT)
     assert pl is not None
     assert pl["lines"][1][1].font.path.endswith("SortsMillGoudy-Regular.ttf")
+
+
+def test_caesura_takes_every_night_it_fits_unless_it_ran_the_night_before() -> None:
+    day = "2026-12-03"
+    recent = ["S1_PLATE", "S1_CAESURA", "S1_FRAME"]  # Caesura ran two nights ago
+    plan = L.plan_night(day, recent, _monolith(), word=WORD, gloss=GLOSS, credit=CREDIT)
+    assert plan.template == "S1_CAESURA"
+    plan = L.plan_night(day, ["S1_CAESURA", "S1_PLATE"], _monolith(), word=WORD, gloss=GLOSS, credit=CREDIT)
+    assert plan.template != "S1_CAESURA"

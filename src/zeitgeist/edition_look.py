@@ -295,7 +295,9 @@ def plan_night(date_iso: str, history: Sequence[str], photo: Image.Image, *, wor
         return recent.index(t) if t in recent else 10_000
 
     eligible.sort(key=lambda t: (-last_use(t), ORDER.index(t)))
-    template = eligible[0]
+    # Caesura needs a rare photograph (about two nights a month), so it takes any night that
+    # can carry it, unless it ran the night before.
+    template = "S1_CAESURA" if "S1_CAESURA" in eligible else eligible[0]
     centred = template == "S1_BLEED" and sum(1 for h in recent if h == template) % 2 == 0
     if not colour_on:
         device = "none"
