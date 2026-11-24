@@ -23,6 +23,7 @@ SWITCH_NAMES = (
     "ZEITGEIST_EMBEDDING_MODEL", "ZEITGEIST_LINKS", "ZEITGEIST_CHOSEN_GROUP_FIELDS", "ZEITGEIST_OWN_NIGHT",
     "ZEITGEIST_OWN_GROUP", "ZEITGEIST_REFLECTOR", "ZEITGEIST_REFLECTOR_MODEL", "ZEITGEIST_REFLECTOR_CANDIDATE",
     "ZEITGEIST_UNDATED_AS_BACKGROUND",
+    "ZEITGEIST_COPY_CAP",
 )
 ENVIRON = {
     "GITHUB_SHA": "0123abcd",
@@ -180,6 +181,7 @@ def test_switches_are_the_fixed_list_as_strings_or_null() -> None:
     assert switches["ZEITGEIST_DIRECTOR_MODEL"] == "gemini-4-hydrogen"
     assert switches["ZEITGEIST_LINKS"] is None
     assert switches["ZEITGEIST_REFLECTOR_CANDIDATE"] is None
+    assert switches["ZEITGEIST_COPY_CAP"] is None
     assert "ZEITGEIST_NOT_A_LISTED_SWITCH" not in switches
 
 

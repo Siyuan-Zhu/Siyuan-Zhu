@@ -88,6 +88,7 @@ jobs:
           ZEITGEIST_REFLECTOR_MODEL: ${{ vars.ZEITGEIST_REFLECTOR_MODEL || '' }}
           ZEITGEIST_REFLECTOR_CANDIDATE: ${{ vars.ZEITGEIST_REFLECTOR_CANDIDATE || '0' }}
           ZEITGEIST_UNDATED_AS_BACKGROUND: ${{ vars.ZEITGEIST_UNDATED_AS_BACKGROUND || '0' }}
+          ZEITGEIST_COPY_CAP: ${{ vars.ZEITGEIST_COPY_CAP || '0' }}
           # Owner-approved quality exception expires after this edition; safety remains mandatory.
           ZEITGEIST_BEST_SAFE_PHOTO_DATE: "2026-11-06"
           TARGET_REPO_SLUG: ${{ vars.TARGET_REPO_SLUG || github.repository }}

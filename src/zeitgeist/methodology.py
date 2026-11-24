@@ -687,6 +687,61 @@ def _extract_unit_embedding_f32(item: Any, default_dim: int = 768) -> np.ndarray
 
 NEAR_DUPLICATE_THRESHOLD: float = 0.85
 
+# SIY-222: one account's copies of the same text each count up to this many; the rest are spam.
+COPY_CAP_ENV = "ZEITGEIST_COPY_CAP"
+COPIES_PER_ACCOUNT_CAP: int = 15
+_COPY_URL_RE = re.compile(r"(?:https?://|www\.)\S+")
+_COPY_NON_WORD_RUN_RE = re.compile(r"[\W_]+")
+
+
+def copy_cap_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if environ is None else environ
+    return env.get(COPY_CAP_ENV) == "1"
+
+
+# The title collectors.py gives an Instagram post with no caption; such a post has no text to copy.
+CAPTIONLESS_STAND_IN_TITLE = "Instagram orbit dispatch"
+
+
+def _has_no_copy_text(item: Any) -> bool:
+    """True for a row marked text_missing, or one whose only text is the captionless stand-in title."""
+    flag = _get_item_field(item, "text_missing", None)
+    extra = getattr(item, "extra", None)
+    if flag is None and isinstance(extra, dict):
+        flag = extra.get("text_missing")
+    if flag:
+        return True
+    title = str(_get_item_field(item, "title", "") or "").strip()
+    summary = str(_get_item_field(item, "summary", "") or "").strip()
+    return title == CAPTIONLESS_STAND_IN_TITLE and not summary
+
+
+def copy_text(item: Any) -> str:
+    """Title and summary lowercased, with URLs removed and runs of whitespace and punctuation collapsed."""
+    title = str(_get_item_field(item, "title", "") or "")
+    summary = str(_get_item_field(item, "summary", "") or "")
+    text = _COPY_URL_RE.sub(" ", f"{title} {summary}".lower())
+    return _COPY_NON_WORD_RUN_RE.sub(" ", text).strip()
+
+
+def _cap_copies_per_account(
+    rows: List[Tuple[int, Any, bool, datetime]], cap: int = COPIES_PER_ACCOUNT_CAP
+) -> Tuple[List[Tuple[int, Any, bool, datetime]], int]:
+    """Keep the `cap` most recent items per (source_id, copy_text); items with no text are never copies."""
+    counts: Dict[Tuple[str, str], int] = {}
+    dropped: set[int] = set()
+    for idx, item, _is_orbit, pub_dt in sorted(rows, key=lambda row: (-row[3].timestamp(), row[0])):
+        if _has_no_copy_text(item):
+            continue
+        text = copy_text(item)
+        if not text:
+            continue
+        key = (str(_get_item_field(item, "source_id", "") or ""), text)
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] > cap:
+            dropped.add(idx)
+    return [row for row in rows if row[0] not in dropped], len(dropped)
+
 
 def farthest_point_diversity_sample(
     items: Sequence[Any],
@@ -769,6 +824,7 @@ def load_asymmetric_window(
 
     orbit_candidates: List[Tuple[float, int, Any]] = []
     macro_by_source: Dict[str, List[Any]] = {}
+    in_age: List[Tuple[int, Any, bool, datetime]] = []
 
     for idx, item in enumerate(cache_items):
         pub_raw = _get_item_field(item, "published_at")
@@ -779,7 +835,6 @@ def load_asymmetric_window(
         if is_orbit:
             if pub_raw and age_hours > 336.0 + 1e-6:
                 continue
-            orbit_candidates.append((-pub_dt.timestamp(), idx, item))
         else:
             bucket_str = str(
                 _get_item_field(item, "bucket", "") or _get_item_field(item, "tier", "") or ""
@@ -787,6 +842,22 @@ def load_asymmetric_window(
             max_macro_age_hours = 96.0
             if pub_raw and age_hours > max_macro_age_hours + 1e-6:
                 continue
+        in_age.append((idx, item, is_orbit, pub_dt))
+
+    if copy_cap_enabled():
+        # A failure here never blocks the edition: the window stays uncapped.
+        try:
+            capped, copies_dropped = _cap_copies_per_account(in_age)
+        except Exception as exc:
+            print(f"copy_cap_dropped=0 copy_cap_error={type(exc).__name__}")
+        else:
+            in_age = capped
+            print(f"copy_cap_dropped={int(copies_dropped)}")
+
+    for idx, item, is_orbit, pub_dt in in_age:
+        if is_orbit:
+            orbit_candidates.append((-pub_dt.timestamp(), idx, item))
+        else:
             source_id = str(_get_item_field(item, "source_id", "unknown_macro") or "unknown_macro")
             macro_by_source.setdefault(source_id, []).append(item)
 
