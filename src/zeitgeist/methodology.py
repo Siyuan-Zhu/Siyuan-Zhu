@@ -660,6 +660,23 @@ def copy_cap_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
     return env.get(COPY_CAP_ENV) == "1"
 
 
+# The title collectors.py gives an Instagram post with no caption; such a post has no text to copy.
+CAPTIONLESS_STAND_IN_TITLE = "Instagram orbit dispatch"
+
+
+def _has_no_copy_text(item: Any) -> bool:
+    """True for a row marked text_missing, or one whose only text is the captionless stand-in title."""
+    flag = _get_item_field(item, "text_missing", None)
+    extra = getattr(item, "extra", None)
+    if flag is None and isinstance(extra, dict):
+        flag = extra.get("text_missing")
+    if flag:
+        return True
+    title = str(_get_item_field(item, "title", "") or "").strip()
+    summary = str(_get_item_field(item, "summary", "") or "").strip()
+    return title == CAPTIONLESS_STAND_IN_TITLE and not summary
+
+
 def copy_text(item: Any) -> str:
     """Title and summary lowercased, with URLs removed and runs of whitespace and punctuation collapsed."""
     title = str(_get_item_field(item, "title", "") or "")
@@ -675,6 +692,8 @@ def _cap_copies_per_account(
     counts: Dict[Tuple[str, str], int] = {}
     dropped: set[int] = set()
     for idx, item, _is_orbit, pub_dt in sorted(rows, key=lambda row: (-row[3].timestamp(), row[0])):
+        if _has_no_copy_text(item):
+            continue
         text = copy_text(item)
         if not text:
             continue
@@ -787,8 +806,14 @@ def load_asymmetric_window(
         in_age.append((idx, item, is_orbit, pub_dt))
 
     if copy_cap_enabled():
-        in_age, copies_dropped = _cap_copies_per_account(in_age)
-        print(f"copy_cap_dropped={int(copies_dropped)}")
+        # A failure here never blocks the edition: the window stays uncapped.
+        try:
+            capped, copies_dropped = _cap_copies_per_account(in_age)
+        except Exception as exc:
+            print(f"copy_cap_dropped=0 copy_cap_error={type(exc).__name__}")
+        else:
+            in_age = capped
+            print(f"copy_cap_dropped={int(copies_dropped)}")
 
     for idx, item, is_orbit, pub_dt in in_age:
         if is_orbit:
