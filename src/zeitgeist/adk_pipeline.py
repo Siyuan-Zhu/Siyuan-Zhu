@@ -59,6 +59,8 @@ from .methodology import (
     analyze_seven_bucket_orbit,
     cluster_and_score,
     default_curated_corpus,
+    interim_grouping_enabled,
+    is_captionless,
     legacy_top_cluster,
     load_asymmetric_window,
     load_orbit_config,
@@ -101,6 +103,9 @@ class ADKRunTelemetry:
     collection_health: dict = field(default_factory=dict)
 
 
+GROUPING_LINE = "[grouping] captionless_items=%d"
+
+
 def _row_to_cached_item(row: Any, idx: int, ref_dt_str: str) -> Optional[CachedItem]:
     """Coerce a raw signal dict or CachedItem into a normalized CachedItem."""
     if isinstance(row, CachedItem):
@@ -115,6 +120,8 @@ def _row_to_cached_item(row: Any, idx: int, ref_dt_str: str) -> Optional[CachedI
     weight_val = row.get("orbit_weight", row.get("weight"))
     handles = row.get("mentioned_handles")
     extra = {"mentioned_handles": list(handles)} if isinstance(handles, (list, tuple)) and handles else {}
+    if isinstance(row.get("text_missing"), bool):
+        extra["text_missing"] = row["text_missing"]
     # Scoring reads these to tell a feed's own date from the collector's fetch-time fallback.
     if isinstance(row.get("date_known"), bool):
         extra["date_known"] = row["date_known"]
@@ -850,15 +857,21 @@ class ZeitgeistADKOrchestrator:
         reference_time = _reference_clock(date_iso, now_epoch,
             _offline_demo_enabled(offline_demo) and not _live_collection_enabled(live_collect))
         understanding_v1 = understanding_v1_enabled()
+        # With the interim grouping switch off, both calls are today's.
+        interim_grouping = interim_grouping_enabled()
         if embedding_run is None:
             scored_clusters = score_and_cluster_signals(
                 raw_signals,
                 now_utc=reference_time,
+                **({"exclude_captionless": True} if interim_grouping else {}),
             )
         else:
             scored_clusters = embedding_migration.cluster_for_run(
-                raw_signals, embedding_run, store=store, now_utc=reference_time)
+                raw_signals, embedding_run, store=store, now_utc=reference_time,
+                **({"interim_grouping": True} if interim_grouping else {}))
             print(embedding_migration.embedding_line(embedding_run))
+        if interim_grouping:
+            print(GROUPING_LINE % sum(1 for item in raw_signals if is_captionless(item)))
 
         # Extract 30-day word & visual medium history from pulse_feed.json
         feed_entries: List[Dict[str, Any]] = []
