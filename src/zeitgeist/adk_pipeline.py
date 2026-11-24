@@ -77,6 +77,7 @@ from .visual_router import (
 
 from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_controls_supported
 from . import embedding_migration
+from . import evidence_archive
 from . import judge_calibration
 from . import own_group, run_record
 from . import reflector
@@ -269,8 +270,12 @@ def collect_96h_signals(
     health: Optional[dict] = None,
     offline_demo: bool | None = None,
     embedding_run: Optional[EmbeddingRun] = None,
+    loaded_rows_out: Optional[List[Dict[str, Any]]] = None,
 ) -> List[CachedItem]:
-    """Load, collect, or synthesize 96h Macro + 336h Orbit items with 768-dim L2-normalized embeddings."""
+    """Load, collect, or synthesize 96h Macro + 336h Orbit items with 768-dim L2-normalized embeddings.
+
+    `loaded_rows_out`, given only by the evidence archive, receives the loaded rows with every field they carry.
+    """
     from src.state_store import get_state_store
 
     if (
@@ -561,6 +566,9 @@ def collect_96h_signals(
         coerced = _row_to_cached_item(row, idx, ref_dt_str)
         if coerced is not None:
             items.append(coerced)
+    if loaded_rows_out is not None:
+        # In memory only: the rows as loaded, caption, fetch time and embedding model included.
+        loaded_rows_out.extend(dict(row) for row in existing_cache_map.values() if isinstance(row, dict))
 
     if should_live_collect:
         require_live_coverage(existing_cache_map.values(), final=True)
@@ -635,6 +643,8 @@ class ZeitgeistADKOrchestrator:
         self._own_group_inputs: Optional[Dict[str, Any]] = None
         # The reflector's inputs, kept only with its switch on; `run()` stores them after the own-group check.
         self._reflector_inputs: Optional[Dict[str, Any]] = None
+        # The evidence archive's inputs, kept only with its switch on; `run()` archives them last.
+        self._evidence_archive_inputs: Optional[Dict[str, Any]] = None
 
     def run(
         self,
@@ -783,6 +793,13 @@ class ZeitgeistADKOrchestrator:
             raise
         except BaseException:
             pass
+        # Last, and only with its switch on: the night's evidence, kept privately and forever, within its
+        # own budget. With the switch off no inputs were kept and nothing is called or printed.
+        archive_inputs = getattr(staged, "_evidence_archive_inputs", None)
+        if archive_inputs is not None:
+            # The entry as committed (with its publication id), else the one generated.
+            committed = state.get("published_pulse") if isinstance(state, dict) else None
+            _archive_evidence(store, archive_inputs, committed if isinstance(committed, dict) else generated_entry)
         return result
 
     def _run_staged(
@@ -840,6 +857,12 @@ class ZeitgeistADKOrchestrator:
         embedding_run = (embedding_migration.plan_embedding_run(store, run_models.embedding)
                          if _live_collection_enabled(live_collect) else None)
         embedding_kwargs = {"embedding_run": embedding_run} if embedding_run is not None else {}
+        # The evidence archive's capture, each given only with its switch on.
+        archive_on = evidence_archive.archive_enabled()
+        loaded_rows: Optional[List[Dict[str, Any]]] = [] if archive_on else None
+        photo_phases: Optional[List[List[Dict[str, Any]]]] = [] if archive_on else None
+        photo_revisions: Optional[List[DirectorCommission]] = [] if archive_on else None
+        archive_collect_kwargs = {"loaded_rows_out": loaded_rows} if loaded_rows is not None else {}
         try:
             raw_signals = collect_96h_signals(
                 self.repo_root,
@@ -850,6 +873,7 @@ class ZeitgeistADKOrchestrator:
                 now_epoch=now_epoch,
                 offline_demo=offline_demo,
                 **embedding_kwargs,
+                **archive_collect_kwargs,
             )
         except IngestionUnavailable as exc:
             exc.public_collection_health = public_collection_health({**exc.public_collection_health, **collection_health})
@@ -1027,6 +1051,10 @@ class ZeitgeistADKOrchestrator:
         safety_blocked_ids = set()
         def render_commission(current, *, photo_only=None):
             nonlocal exception_candidates
+            archive_kwargs = {}
+            if photo_phases is not None:
+                photo_phases.append([])
+                archive_kwargs["scored_candidates_out"] = photo_phases[-1]
             try:
                 return select_and_render_pulse_assets(
                     commission=current,
@@ -1050,6 +1078,7 @@ class ZeitgeistADKOrchestrator:
                     offline_demo=offline_demo is True,
                     pass_marks=pass_marks,
                     safety_blocked_ids=safety_blocked_ids,
+                    **archive_kwargs,
                 )
             except PhotoSelectionUnavailable as exc:
                 # Only candidates scored against this exact commission survive to
@@ -1080,6 +1109,8 @@ class ZeitgeistADKOrchestrator:
                         history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
                         genai_client=genai_client, model_name=run_models.current("director"),
                         run_models=run_models, max_retries=0, owner_override=locks, check_shown_ids=False)
+                    if photo_revisions is not None:
+                        photo_revisions.append(revised)
                     if revised.fallback_used or revised.selected_cluster_id!=story_id:
                         raise ValueError("Same-story photo recovery did not produce a grounded commission")
                     if chosen_link is not None:
@@ -1163,6 +1194,13 @@ class ZeitgeistADKOrchestrator:
                 "links_on": night_links is not None,
                 "reflector_candidate": reflector.candidate_record(reflector_candidate,
                                                                  shown=extra_group_shown(original_commission)),
+            }
+        if archive_on:
+            self._evidence_archive_inputs = {
+                "date_iso": date_iso, "rows": loaded_rows, "items": raw_signals, "clusters": scored_clusters,
+                "main_commission": original_commission, "commission": commission, "revisions": photo_revisions,
+                "photo_phases": photo_phases, "published": published,
+                "recovery_trace": getattr(self, "last_photo_recovery", None),
             }
         if run_record.run_record_enabled() and own_group.own_group_enabled():
             self._own_group_inputs = {
@@ -1516,6 +1554,46 @@ def _keep_director_evidence(
         pass
 
 
+_DIRECTOR_ATTEMPTS_ATTR = "_director_attempts"
+
+
+def _note_director_attempt(
+    attempts: List[Dict[str, Any]], *, attempt: int, packet: bool, run_models: Optional[RunModels],
+    model_name: Optional[str], request: str, reply: Any,
+) -> None:
+    """Note one Director attempt's request, reply text and model for the evidence archive. Never raises."""
+    try:
+        model = run_models.current("director") if run_models is not None else model_name
+        text = reply.text if isinstance(getattr(reply, "text", None), str) else reply
+        if not isinstance(text, str):
+            text = json.dumps(text, sort_keys=True, default=str)
+        attempts.append({"attempt": int(attempt), "packet": packet, "model": model,
+                         "request_text": request, "reply_text": text})
+    except Exception:
+        pass
+
+
+def _mark_accepted_attempt(
+    attempts: List[Dict[str, Any]], attempt: int, candidate_words: Sequence[Dict[str, str]], evidence_text: Optional[str],
+) -> None:
+    """Mark the accepted attempt with its candidate words and the candidate block it showed. Never raises."""
+    try:
+        for entry in attempts:
+            if entry.get("attempt") == attempt:
+                entry.update(accepted=True, candidate_words=[dict(word) for word in candidate_words],
+                             evidence_text=evidence_text)
+    except Exception:
+        pass
+
+
+def _keep_director_attempts(commission: Any, attempts: Sequence[Dict[str, Any]]) -> None:
+    """Keep the loop's attempts beside the commission as a plain attribute, as the evidence is kept. Never raises."""
+    try:
+        setattr(commission, _DIRECTOR_ATTEMPTS_ATTR, [dict(entry) for entry in attempts])
+    except Exception:
+        pass
+
+
 def director_evidence(commission: Any) -> Dict[str, Any]:
     """The candidate words, the candidate block and the prompt digest of the accepted Director reply."""
     kept = getattr(commission, _DIRECTOR_EVIDENCE_ATTR, None) if commission is not None else None
@@ -1567,6 +1645,79 @@ def _write_daily_run_record(
         return run_record.write_run_record(store, run_record.make_run_id("daily_run", date_iso), record)
     except Exception:
         return False
+
+
+def _evidence_archive_parts(
+    *, date_iso: str, rows: Optional[Sequence[Dict[str, Any]]], items: Sequence[Any], clusters: Sequence[Any],
+    main_commission: DirectorCommission, commission: DirectorCommission,
+    revisions: Optional[Sequence[DirectorCommission]], photo_phases: Optional[Sequence[Sequence[Dict[str, Any]]]],
+    published: Any, recovery_trace: Any, published_entry: Any,
+) -> Tuple[Dict[str, List[Any]], Dict[str, Any]]:
+    """The night's evidence as archive parts, and the meta document's own fields. Prints and logs nothing.
+
+    The intake is the rows as loaded when the collector gave them, else the items the run clustered.
+    """
+    passes = [("main", main_commission)] + [(f"revision:{n}", revised) for n, revised in enumerate(revisions or (), 1)]
+    phases = list(photo_phases or ())
+    chosen_index = getattr(published, "selected_candidate_index", None)
+    candidates = [
+        {"render_call": call, **row, "chosen": call == len(phases) and chosen_index is not None
+         and row.get("index") == chosen_index}
+        for call, phase in enumerate(phases, 1) for row in phase
+    ]
+    parts = {
+        "intake_rows": list(rows) if rows else list(items or ()),
+        "groups": evidence_archive.group_entries(clusters),
+        "director_attempts": [{"pass": name, **entry} for name, made in passes
+                              for entry in getattr(made, _DIRECTOR_ATTEMPTS_ATTR, None) or ()],
+        # The accepted attempt of each pass: its candidate words, the candidate block and the prompt's digest.
+        "director_evidence": [
+            {"pass": name, "attempt": entry["attempt"], "candidate_words": entry.get("candidate_words") or [],
+             "evidence_text": entry.get("evidence_text"),
+             "prompt_sha256": hashlib.sha256(str(entry["request_text"]).encode("utf-8")).hexdigest()}
+            for name, made in passes for entry in getattr(made, _DIRECTOR_ATTEMPTS_ATTR, None) or ()
+            if entry.get("accepted")
+        ],
+        "commissions": [{"pass": "published", **commission.to_dict()}]
+                       + [{"pass": name, **made.to_dict()} for name, made in passes],
+        "photo_candidates": candidates,
+        "published": [{
+            "entry": published_entry,
+            "visual_medium": getattr(published, "visual_medium", None),
+            "attribution": getattr(published, "attribution", None),
+            "chosen_photo": None if chosen_index is None else {"render_call": len(phases),
+                                                               "selected_candidate_index": chosen_index},
+            "photo_recovery_trace": recovery_trace,
+        }],
+    }
+    extra = {
+        "intake_source": "stored_rows" if rows else "items",
+        "embedding_f16_encoding": "base64",
+        "commit": os.environ.get("GITHUB_SHA") or None,
+        "switches": {name: os.environ.get(name) for name in run_record.SWITCH_NAMES},
+    }
+    return parts, extra
+
+
+def _archive_evidence(store: Any, inputs: Dict[str, Any], published_entry: Any) -> None:
+    """Archive the published edition's evidence; prints only the archive's public line of numbers.
+
+    Built and written on its own thread within the archive's budget, so no failure or stall reaches the
+    edition. An interrupt or an exit while it waits is raised again, as for the run record.
+    """
+    try:
+        date_iso = str(inputs["date_iso"])[:10]
+
+        def build():
+            parts, extra = _evidence_archive_parts(published_entry=published_entry, **inputs)
+            return evidence_archive.archive_documents(
+                date_iso=date_iso, run_id=run_record.make_run_id("daily_run", date_iso), parts=parts, extra=extra)
+
+        print(evidence_archive.archive_with_budget(store, build))
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        pass
 
 
 def _daily_own_group_check(
@@ -2047,11 +2198,15 @@ def commission_daily_zeitgeist(
     echo_rejections = 0
     packet_phase_over = False
     packet_attempts = 0
+    # Every attempt's request and reply, kept for the evidence archive only with its switch on.
+    archive_attempts: Optional[List[Dict[str, Any]]] = [] if evidence_archive.archive_enabled() else None
     def shown_mark(commission: DirectorCommission) -> DirectorCommission:
         # Whether any attempt of the loop showed the night's links (a packet attempt, links given).
         setattr(commission, _LINKS_SHOWN_ATTR, links is not None and packet_attempts > 0)
         # And whether one showed the extra group, which only the packet prompt renders.
         setattr(commission, _EXTRA_SHOWN_ATTR, extra_group is not None and packet_attempts > 0)
+        if archive_attempts is not None:
+            _keep_director_attempts(commission, archive_attempts)
         return commission
 
     if llm_callable is not None or genai_client is not None:
@@ -2142,6 +2297,13 @@ def commission_daily_zeitgeist(
                             config=({"response_mime_type": "application/json"} if model_name.startswith("gemini-3") else
                                     {"temperature": temperature, "response_mime_type": "application/json"}),
                         )
+                    if archive_attempts is not None:
+                        _note_director_attempt(
+                            archive_attempts, attempt=attempts_made, packet=bool(use_packet),
+                            run_models=None if llm_callable is not None else run_models,
+                            model_name=None if llm_callable is not None else model_name,
+                            request=slate_prompt if slate_sent else prompt, reply=raw_resp,
+                        )
                     slate_count = 0
                     slate_words: List[Dict[str, str]] = []
                     if slate_sent:
@@ -2206,6 +2368,9 @@ def commission_daily_zeitgeist(
                     commission.slate_count = slate_count
                     _keep_director_evidence(commission, slate_words, slate_block if slate_sent else block,
                                             slate_prompt if slate_sent else prompt)
+                    if archive_attempts is not None:
+                        _mark_accepted_attempt(archive_attempts, attempts_made, slate_words,
+                                               slate_block if slate_sent else block)
                     return shown_mark(commission)
 
                 last_rejection_reason = reason

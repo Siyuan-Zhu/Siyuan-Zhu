@@ -27,3 +27,6 @@ data/orbit_realms.json
 
 # Private run records (JSON backend), never published.
 data/run_records/
+
+# The private evidence archive (JSON backend), never published.
+data/evidence_archive/
