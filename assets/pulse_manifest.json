@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-23",
-  "word": "Prolepsis",
-  "gloss": "Claiming a future triumph before proof arrives.",
-  "archetype": "STUDIO_MONOGRAPH",
+  "date": "2026-11-24",
+  "word": "Parallax",
+  "gloss": "Apparent certainty shifting with the lens.",
+  "archetype": "S1_BLEED",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "36662e75e3f13b3a5de20cafe94abcadd728820f0e0f130b16e7976a63c1672d",
-    "assets/daily_pulse_dark.webp": "52ba2110cb981e23b572a89ade9fdca0bb034d078e0e7f4560632b5dfef038cc",
-    "assets/daily_pulse.svg": "e5f56f9f2f27a2c9c0f219fe4363bc7a447721223ce6e87464f2c7fca9374305",
-    "assets/pulse/2026-11-23.webp": "3210d15acec5ddcf3ee5dfb8955d6e6b5eb7052ea8fdf2009f27408e9ec71e15"
+    "assets/daily_pulse_light.webp": "85768b4ffa9bdf64e282fc9690ba2605772e16c5f77a5ab5843bde45f9d308e0",
+    "assets/daily_pulse_dark.webp": "33a81627108d18b53afca65ab691b7166e2f02f59deb72fd310014886f1e67d6",
+    "assets/daily_pulse.svg": "ce569178f36d9a28bf860b713d216fbb11faedb2d48fb726f85b2d324db78449",
+    "assets/pulse/2026-11-24.webp": "89a308c6e8533e1c0995121ec088f71558229b82c8d06e421fbb1e748d6a6fa4"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "QxJZTA0JbpI",
-    "source_url": "https://unsplash.com/photos/QxJZTA0JbpI",
-    "camera_make": "Canon",
-    "camera_model": "Canon EOS M100",
+    "asset_id": "sJh8Gw9ngHA",
+    "source_url": "https://unsplash.com/photos/sJh8Gw9ngHA",
+    "camera_make": "NIKON CORPORATION",
+    "camera_model": "NIKON Z 6",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "546dbd33f8a2906317d4"
+  "publication_id": "a08bdfb6b079571cf29d"
 }
