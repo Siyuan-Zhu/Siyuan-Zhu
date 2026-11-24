@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import os
 from pathlib import Path
 import re
 from typing import Dict, List, Optional, Tuple
@@ -453,7 +454,7 @@ def analyze_seven_bucket_orbit(
 import base64
 from dataclasses import field
 from datetime import datetime, timezone
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 try:
     import numpy as np
@@ -567,6 +568,45 @@ def _parse_utc_datetime(val: Any) -> datetime:
         except ValueError:
             pass
     return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+UNDATED_ENV = "ZEITGEIST_UNDATED_AS_BACKGROUND"
+
+
+def undated_as_background_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if environ is None else environ
+    return env.get(UNDATED_ENV) == "1"
+
+
+def _whole_seconds(value: Any) -> Optional[int]:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        raw = value.strip()
+        try:
+            dt = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return math.floor(dt.timestamp())
+
+
+def item_date_known(item: Any) -> bool:
+    """False when the feed gave no publish date and the collector stamped the fetch time instead.
+
+    A row stored before date_known existed shows that fallback as published_at equal to fetched_at
+    to the second.
+    """
+    getter = getattr(item, "get", None)
+    lookup = getter if callable(getter) else (lambda key: getattr(item, key, None))
+    known = lookup("date_known")
+    if isinstance(known, bool):
+        return known
+    published, fetched = _whole_seconds(lookup("published_at")), _whole_seconds(lookup("fetched_at"))
+    return published is None or fetched is None or published != fetched
 
 
 def _is_personal_orbit_item(item: Any) -> bool:
@@ -1062,8 +1102,15 @@ def cluster_and_score(
     *,
     cohesion_mode: str = "legacy",
     cutoffs: Sequence[float] = DYNAMIC_CLUSTER_THRESHOLDS,
+    undated_as_background: Optional[bool] = None,
 ) -> List[ScoredCluster]:
-    """Cluster items via pure-numpy average linkage and rank by Disjoint Surge Velocity & Orbit Resonance."""
+    """Cluster items via pure-numpy average linkage and rank by Disjoint Surge Velocity & Orbit Resonance.
+
+    With undated_as_background (default: the ZEITGEIST_UNDATED_AS_BACKGROUND switch), an item whose feed
+    gave no date is never counted as recent; it counts as base, still a source of its group.
+    """
+    if undated_as_background is None:
+        undated_as_background = undated_as_background_enabled()
     if cohesion_mode not in COHESION_MODES:
         raise ValueError(f"unknown cohesion_mode: {cohesion_mode!r}")
     cutoffs = _validated_cutoffs(cutoffs)
@@ -1162,6 +1209,8 @@ def cluster_and_score(
             pub_raw = _get_item_field(item, "published_at")
             pub_dt = _parse_utc_datetime(pub_raw) if pub_raw else ref_now
             age_h = max(0.0, (ref_now - pub_dt).total_seconds() / 3600.0)
+            # Its published_at is only the fetch time: background, as if past the recent window.
+            undated = undated_as_background and not item_date_known(item)
 
             all_sources.add(src)
             if is_orbit:
@@ -1169,23 +1218,23 @@ def cluster_and_score(
             else:
                 macro_sources.add(src)
 
-            if age_h <= 24.0 + 1e-9:
+            if not undated and age_h <= 24.0 + 1e-9:
                 sources_0_24h.add(src)
                 if not is_orbit:
                     macro_sources_0_24h.add(src)
 
             if is_orbit:
-                if age_h <= 72.0 + 1e-9:
+                if not undated and age_h <= 72.0 + 1e-9:
                     w_recent += w_i
                     orbit_sources_0_72h.add(src)
-                elif age_h <= 336.0 + 1e-9:
+                elif undated or age_h <= 336.0 + 1e-9:
                     w_orbit_base += w_i
                     sources_base.add(src)
                     orbit_sources_72_336h.add(src)
             else:
-                if age_h <= 24.0 + 1e-9:
+                if not undated and age_h <= 24.0 + 1e-9:
                     w_recent += w_i
-                elif age_h <= 96.0 + 1e-9:
+                elif undated or age_h <= 96.0 + 1e-9:
                     w_macro_base += w_i
                     sources_base.add(src)
 
@@ -1263,6 +1312,7 @@ def score_and_cluster_signals(
     cohesion_mode: str = "legacy",
     cutoffs: Sequence[float] = DYNAMIC_CLUSTER_THRESHOLDS,
     near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
+    undated_as_background: Optional[bool] = None,
 ) -> List[ScoredCluster]:
     """Run Stage 1-2 stratified windowing (14d Orbit / 4d Macro) followed by average-linkage clustering."""
     cutoffs = _validated_cutoffs(cutoffs)
@@ -1278,6 +1328,7 @@ def score_and_cluster_signals(
         anchored_hashes_14d=anchored_hashes_14d,
         cohesion_mode=cohesion_mode,
         cutoffs=cutoffs,
+        undated_as_background=undated_as_background,
     )
 
 
