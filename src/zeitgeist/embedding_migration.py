@@ -313,7 +313,8 @@ def cluster_for_run(
     cutoffs, writes nothing and clears what it had set. A SpendBlocked still propagates.
 
     interim_grouping leaves captionless posts out of every grouping and of the percentile maths, and
-    runs only the calibrated embedding-2 cutoffs to their loosest tier.
+    runs a migrated night's calibrated cutoffs to their loosest tier; the switch-over gate's candidate
+    keeps the tier loop.
     """
     if interim_grouping:
         score_kwargs = {**score_kwargs, "exclude_captionless": True}
@@ -334,13 +335,14 @@ def _clusters_for_run(
     items: Sequence[Any], run: EmbeddingRun, store: Any, now_utc: Any, score_kwargs: Dict[str, Any],
     interim_grouping: bool = False,
 ) -> List[ScoredCluster]:
-    calibrated_kwargs = {**score_kwargs, "use_loosest_cutoff": True} if interim_grouping else score_kwargs
-
-    def score(rows: Sequence[Any], cut: Optional[Tuple[float, ...]] = None) -> List[ScoredCluster]:
+    def score(
+        rows: Sequence[Any], cut: Optional[Tuple[float, ...]] = None, loosest: bool = False
+    ) -> List[ScoredCluster]:
         if cut is None:
             return score_and_cluster_signals(rows, now_utc=now_utc, **score_kwargs)
+        extra = {"use_loosest_cutoff": True} if loosest else {}
         return score_and_cluster_signals(
-            rows, now_utc=now_utc, cutoffs=cut[:3], near_duplicate_threshold=cut[3], **calibrated_kwargs
+            rows, now_utc=now_utc, cutoffs=cut[:3], near_duplicate_threshold=cut[3], **score_kwargs, **extra
         )
 
     if run.fallback or run.deferred or run.mode not in ("migrated", "switch_over"):
@@ -350,7 +352,7 @@ def _clusters_for_run(
         if sims.size == 0 or run.percentiles is None:
             return score(items)
         run.cutoffs = cutoffs_at(sims, run.percentiles)
-        return score(items, run.cutoffs)
+        return score(items, run.cutoffs, loosest=interim_grouping)
     pending_sims = _usable_similarities(run.pending_items or (), interim_grouping)
     if sims.size == 0 or pending_sims.size == 0:
         # Too few vectors to calibrate: no decision tonight, no write.
@@ -359,6 +361,7 @@ def _clusters_for_run(
     clusters_001 = score(items)
     percentiles = percentile_ranks(sims)
     cut = cutoffs_at(pending_sims, percentiles)
+    # The gate's verdict is stored and outlives the run, so its candidate keeps the tier loop.
     clusters_e2 = score(run.pending_items, cut)
     gate = gate_report(clusters_001, clusters_e2)
     run.percentiles, run.cutoffs, run.gate = percentiles, cut, gate
