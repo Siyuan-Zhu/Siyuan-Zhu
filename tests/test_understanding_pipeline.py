@@ -526,3 +526,24 @@ def test_no_line_with_switch_off_after_recovery(tmp_path, monkeypatch, capsys):
     scored = _spy_scored(monkeypatch)
     _run_photo_recovery(tmp_path, monkeypatch, recover=_recovering(scored))
     assert _understanding_lines(capsys) == []
+
+
+_EXPECTED_TOP_CLUSTERS = ["cluster_0", "cluster_2", "cluster_4"]
+
+
+class _ClockAt(pipeline.datetime):
+    _fixed = None
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._fixed.astimezone(tz) if tz else cls._fixed.replace(tzinfo=None)
+
+
+@pytest.mark.parametrize("real_day", ["2026-11-22T12:00:00+00:00", "2027-03-01T09:00:00+00:00"])
+def test_photo_recovery_helper_does_not_depend_on_the_real_day(tmp_path, monkeypatch, real_day):
+    _ClockAt._fixed = pipeline.datetime.fromisoformat(real_day)
+    monkeypatch.setattr(pipeline, "datetime", _ClockAt)
+    scored = _spy_scored(monkeypatch)
+    _run_photo_recovery(tmp_path, monkeypatch, recover=_no_recovery)
+    top = [c.cluster_id for c in scored[0][:3]]
+    assert top == _EXPECTED_TOP_CLUSTERS
