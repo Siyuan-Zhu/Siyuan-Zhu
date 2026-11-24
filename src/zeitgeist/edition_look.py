@@ -568,6 +568,8 @@ def _layout_sleeve(plan, word, gloss, date_iso, credit):
     first = y + gst.baseline_in_line()
     credit_text = colophon_text(date_iso, credit, "cred")[0]
     measure = min(600, right - cst.width(credit_text) - left - 160)
+    if measure < 300:
+        raise ValueError("credit too long for the Sleeve plate")
     for g in break_gloss(gloss, gst, measure):
         ops.append(_txt("gloss", g, gst, "left", left, y + gst.baseline_in_line()))
         y += gst.line_height
