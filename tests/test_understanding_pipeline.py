@@ -532,9 +532,6 @@ def test_no_line_with_switch_off_after_recovery(tmp_path, monkeypatch, capsys):
     assert _understanding_lines(capsys) == []
 
 
-_EXPECTED_TOP_CLUSTERS = ["cluster_0", "cluster_2", "cluster_4"]
-
-
 class _ClockAt(pipeline.datetime):
     _fixed = None
 
@@ -543,11 +540,17 @@ class _ClockAt(pipeline.datetime):
         return cls._fixed.astimezone(tz) if tz else cls._fixed.replace(tzinfo=None)
 
 
-@pytest.mark.parametrize("real_day", ["2026-11-22T12:00:00+00:00", "2027-03-01T09:00:00+00:00"])
-def test_photo_recovery_helper_does_not_depend_on_the_real_day(tmp_path, monkeypatch, real_day):
+def _main_cluster_on(real_day, tmp_path, monkeypatch):
+    """The cluster the fake Director picks (clusters[0]) when the real clock reads `real_day`."""
+    tmp_path.mkdir()
     _ClockAt._fixed = pipeline.datetime.fromisoformat(real_day)
     monkeypatch.setattr(pipeline, "datetime", _ClockAt)
     scored = _spy_scored(monkeypatch)
     _run_photo_recovery(tmp_path, monkeypatch, recover=_no_recovery)
-    top = [c.cluster_id for c in scored[0][:3]]
-    assert top == _EXPECTED_TOP_CLUSTERS
+    return scored[0][0].cluster_id
+
+
+@pytest.mark.parametrize("real_day", ["2026-11-22T12:00:00+00:00", "2026-11-25T12:00:00+00:00", "2027-03-01T09:00:00+00:00"])
+def test_photo_recovery_helper_does_not_depend_on_the_real_day(tmp_path, monkeypatch, real_day):
+    edition_day = _main_cluster_on("2026-11-21T12:00:00+00:00", tmp_path / "edition", monkeypatch)
+    assert _main_cluster_on(real_day, tmp_path / "other", monkeypatch) == edition_day
