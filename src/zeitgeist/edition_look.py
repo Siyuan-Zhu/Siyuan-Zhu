@@ -25,6 +25,8 @@ TEMPLATES: tuple[str, ...] = (
     "S1_FRAME", "S1_SUBTITLE", "S1_PLATE", "S1_SLEEVE", "S1_BLEED", "S1_ENTRY", "S1_WALL",
 )
 ON_PHOTO: tuple[str, ...] = ("S1_FRAME", "S1_SUBTITLE")
+# Date and credit sit on the plate only where the template already has a caption (David, 2026-11-24).
+COLOPHON_TEMPLATES: tuple[str, ...] = ("S1_SLEEVE", "S1_ENTRY", "S1_WALL")
 ORDER: tuple[str, ...] = (
     "S1_SUBTITLE", "S1_FRAME", "S1_BLEED", "S1_PLATE", "S1_WALL", "S1_SLEEVE", "S1_ENTRY",
 )
@@ -387,30 +389,6 @@ def colophon_text(date_iso: str, credit: str, kind: str) -> list:
     return [f"{num} · {long} · {credit}"]
 
 
-def _colophon_corner(probe, text_rects, ink, prefer_top, date_iso, credit):
-    cst = col_style()
-    lines = colophon_text(date_iso, credit, "two")
-    h = cst.line_height * len(lines)
-    best = None
-    for k in ("br", "bl", "tr", "tl"):
-        top = 50 if k[0] == "t" else 800 - 46 - h
-        align = "left" if k[1] == "l" else "right"
-        x = 58 if align == "left" else WIDTH - 58
-        cl = [(t, cst, align, x, top + cst.line_height * i + cst.baseline_in_line()) for i, t in enumerate(lines)]
-        crs = _rects(cl)
-        clash = any(not (a[0] + a[2] < b[0] - 28 or a[0] > b[0] + b[2] + 28 or a[1] + a[3] < b[1] - 20 or a[1] > b[1] + b[3] + 20)
-                    for a in crs for b in text_rects)
-        if clash:
-            continue
-        s = probe.score(crs, ink)
-        if s is None or s[0] < 4.5:
-            continue
-        rank = s[0] + (100 if (k[0] == "t") == prefer_top else 0)
-        if best is None or rank > best[0]:
-            best = (rank, cl)
-    return best[1] if best else None
-
-
 def place_on_photo(photo, template, voice, face, word, gloss, date_iso, credit, facts=None):
     """Where the words go on the photograph, or None when no placement passes the calm test."""
     facts = facts or analyse_photo(photo)
@@ -436,10 +414,7 @@ def place_on_photo(photo, template, voice, face, word, gloss, date_iso, credit, 
                 best = {"v": v, "pos": pos, "ink": ink, "lines": lines, "rects": rects}
     if best is None:
         return None
-    col = _colophon_corner(probe, best["rects"], best["ink"], best["pos"][0] != "t", date_iso, credit)
-    if col is None:
-        return None
-    best["colophon"] = col
+    best["colophon"] = []
     best["word_bg"] = float(np.median(probe.region(*best["rects"][0])))
     return best
 
@@ -543,11 +518,6 @@ def _layout_plate(plan, word, gloss, date_iso, credit):
     for g in break_gloss(gloss, gst, 936):
         ops.append(_txt("gloss", g, gst, "center", cx, y + gst.baseline_in_line()))
         y += gst.line_height
-    y += 30
-    cst = col_style()
-    for c in colophon_text(date_iso, credit, "full"):
-        ops.append(_txt("col", c, cst, "center", cx, y + cst.baseline_in_line()))
-        y += cst.line_height
     return ops, y + 88, photo_box
 
 
@@ -567,13 +537,24 @@ def _layout_sleeve(plan, word, gloss, date_iso, credit):
     gst = gloss_style(plan.gloss_face)
     first = y + gst.baseline_in_line()
     credit_text = colophon_text(date_iso, credit, "cred")[0]
-    measure = min(600, right - cst.width(credit_text) - left - 160)
-    if measure < 300:
-        raise ValueError("credit too long for the Sleeve plate")
-    for g in break_gloss(gloss, gst, measure):
+    beside = min(640, right - cst.width(credit_text) - left - 64)
+    glines = break_gloss(gloss, gst, beside) if beside >= 420 else None
+    credit_beside = glines is not None and len(glines) <= 2
+    if credit_beside:
+        ops.append(_txt("col", credit_text, cst, "right", right, first))
+    else:
+        # The credit cannot sit beside a balanced gloss: give the gloss the full measure and
+        # set the credit on its own line beneath, flush with the photograph's right edge.
+        glines = break_gloss(gloss, gst, 640)
+        if len(glines) > 2:
+            raise ValueError("gloss needs more than two lines on the Sleeve plate")
+    for g in glines:
         ops.append(_txt("gloss", g, gst, "left", left, y + gst.baseline_in_line()))
         y += gst.line_height
-    ops.append(_txt("col", credit_text, cst, "right", right, first))
+    if not credit_beside:
+        y += 10
+        ops.append(_txt("col", credit_text, cst, "right", right, y + cst.baseline_in_line()))
+        y += cst.line_height
     return ops, y + 84, photo_box
 
 
@@ -583,7 +564,7 @@ def _layout_bleed(plan, word, gloss, date_iso, credit):
     if plan.device == "rule":
         ops.append(("rule", (WIDTH / 2 - 23) if plan.centred else 58, y))
     y += 30
-    gst, cst = gloss_style(plan.gloss_face), col_style()
+    gst = gloss_style(plan.gloss_face)
     if plan.centred:
         wst = fit_word(plan.voice, word, 1084, SK[plan.voice])
         ops.append(_txt("word", word, wst, "center", WIDTH / 2, y + wst.baseline_in_line()))
@@ -591,10 +572,6 @@ def _layout_bleed(plan, word, gloss, date_iso, credit):
         for g in break_gloss(gloss, gst, 1084):
             ops.append(_txt("gloss", g, gst, "center", WIDTH / 2, y + gst.baseline_in_line()))
             y += gst.line_height
-        y += 14
-        for c in colophon_text(date_iso, credit, "full"):
-            ops.append(_txt("col", c, cst, "center", WIDTH / 2, y + cst.baseline_in_line()))
-            y += cst.line_height
     else:
         wst = fit_word(plan.voice, word, 520, SK[plan.voice])
         glines = break_gloss(gloss, gst, 1084 - wst.width(word) - 56)
@@ -603,11 +580,8 @@ def _layout_bleed(plan, word, gloss, date_iso, credit):
         for g in glines:
             ops.append(_txt("gloss", g, gst, "right", WIDTH - 58, gy + gst.baseline_in_line()))
             gy += gst.line_height
-        y = max(y + wst.line_height, gy) + 14
-        for c in colophon_text(date_iso, credit, "full"):
-            ops.append(_txt("col", c, cst, "left", 58, y + cst.baseline_in_line()))
-            y += cst.line_height
-    return ops, y + 44, photo_box
+        y = max(y + wst.line_height, gy)
+    return ops, y + 52, photo_box
 
 
 def _layout_entry(plan, word, gloss, date_iso, credit):

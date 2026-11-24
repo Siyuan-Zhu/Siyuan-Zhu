@@ -185,6 +185,7 @@ def test_critic_selects_photography_when_semantic_and_composite_pass_thresholds(
         "quote_attribution",
         "window_hours",
         "media_provenance",
+        "curatorial_archetype",
     ]
     assert list(entry.keys()) == expected_keys
     assert entry["artwork_title"] == "Cantilever"

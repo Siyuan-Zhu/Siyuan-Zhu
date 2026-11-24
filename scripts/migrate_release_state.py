@@ -172,6 +172,7 @@ ALLOWED_DAILY_PULSE_FIELDS: frozenset[str] = frozenset(
 
 ALLOWED_PULSE_HISTORY_FIELDS: frozenset[str] = frozenset(
     {
+        "curatorial_archetype",
         "schema_version",
         "date",
         "word",
