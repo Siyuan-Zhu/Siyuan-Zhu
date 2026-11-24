@@ -112,7 +112,7 @@ def test_only_accepted_winner_downloads_crop_metadata_and_tracking_is_deferred(m
             return SimpleNamespace(status_code=200, json=lambda: photo('winner'))
         assert 'winner_raw' in url
         params = parse_qs(urlsplit(url).query)
-        assert params['w'] == ['1800'] and params['h'] == ['1200']
+        assert params['w'] == ['2400'] and params['h'] == ['1600'] and params['q'] == ['90']
         assert params['crop'] == ['entropy,edges'] and params['ixid'] == ['keep']
         return SimpleNamespace(status_code=200, content=jpeg())
     monkeypatch.setattr('httpx.Client.get', get)

@@ -13,6 +13,7 @@ place_caesura returns a placement in the shape edition_look._render_on_photo dra
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
 from typing import Optional
 
@@ -44,10 +45,10 @@ def word_style(voice: str, word: str) -> L.Style:
     st = L.voice_style(voice, WORD_FACTOR[voice])
     caps = st.upper or word.isupper()
     if caps and len(word) > 8:
-        st = L.Style(st.font, st.size, LONG_TRACK * st.size, st.upper, st.line_height)
+        st = replace(st, tracking=LONG_TRACK * st.size)
     elif caps and not st.tracking:
         # an italic word that arrives in capitals is letterspaced lightly, as capitals need
-        st = L.Style(st.font, st.size, 0.06 * st.size, st.upper, st.line_height)
+        st = replace(st, tracking=0.06 * st.size)
     return st
 
 

@@ -125,9 +125,9 @@ def test_caesura_renders_with_the_shared_photo_path() -> None:
     plan = L.plan_night(day, [], photo, word=WORD, gloss=GLOSS, credit=CREDIT)
     assert plan.template == "S1_CAESURA"
     light, dark = L.render_edition_pair(photo, word=WORD, gloss=GLOSS, date_iso=day, credit=CREDIT, plan=plan)
-    assert light.size == dark.size == (1200, 800)
+    assert light.size == dark.size == (2400, 1600)
     px = light.load()
-    x0, y0, x1, y1 = (int(v) for v in _ink_boxes(plan.placement)[0])
+    x0, y0, x1, y1 = (int(v * L.SCALE) for v in _ink_boxes(plan.placement)[0])
     assert any(px[x, y] != SKY for x in range(x0, x1) for y in range(y0, y1))
 
 
