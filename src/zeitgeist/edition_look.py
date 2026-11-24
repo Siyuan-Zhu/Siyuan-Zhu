@@ -22,13 +22,13 @@ WIDTH = 1200
 LOOK_NAME = "s1"
 
 TEMPLATES: tuple[str, ...] = (
-    "S1_FRAME", "S1_SUBTITLE", "S1_PLATE", "S1_SLEEVE", "S1_BLEED", "S1_ENTRY", "S1_WALL",
+    "S1_FRAME", "S1_SUBTITLE", "S1_PLATE", "S1_SLEEVE", "S1_BLEED", "S1_ENTRY", "S1_WALL", "S1_CAESURA",
 )
-ON_PHOTO: tuple[str, ...] = ("S1_FRAME", "S1_SUBTITLE")
+ON_PHOTO: tuple[str, ...] = ("S1_FRAME", "S1_SUBTITLE", "S1_CAESURA")
 # Date and credit sit on the plate only where the template already has a caption (David, 2026-11-24).
 COLOPHON_TEMPLATES: tuple[str, ...] = ("S1_SLEEVE", "S1_ENTRY", "S1_WALL")
 ORDER: tuple[str, ...] = (
-    "S1_SUBTITLE", "S1_FRAME", "S1_BLEED", "S1_PLATE", "S1_WALL", "S1_SLEEVE", "S1_ENTRY",
+    "S1_CAESURA", "S1_SUBTITLE", "S1_FRAME", "S1_BLEED", "S1_PLATE", "S1_WALL", "S1_SLEEVE", "S1_ENTRY",
 )
 VOICES: tuple[str, ...] = ("italic", "wide", "condensed")
 VOICE_CYCLE: tuple[str, ...] = ("italic", "wide", "condensed", "italic")
@@ -288,6 +288,7 @@ def plan_night(date_iso: str, history: Sequence[str], photo: Image.Image, *, wor
     recent = [h for h in history if h in TEMPLATES]
     previous = recent[0] if recent else None
     placements = {t: place_on_photo(photo, t, voice, face, word, gloss, date_iso, credit, facts) for t in ON_PHOTO}
+    face_for = {"S1_CAESURA": caesura_face(voice, face)}
     eligible = [t for t in ORDER if t != previous and (t not in ON_PHOTO or placements[t] is not None)]
 
     def last_use(t: str) -> int:
@@ -302,7 +303,8 @@ def plan_night(date_iso: str, history: Sequence[str], photo: Image.Image, *, wor
         device = "word"
     else:
         device = "word" if (o // 2) % 2 == 0 else "rule"
-    return NightPlan(template, voice, face, colour_on, device, centred, placements.get(template))
+    return NightPlan(template, voice, face_for.get(template, face), colour_on, device, centred,
+                     placements.get(template))
 
 
 class _PhotoProbe:
@@ -389,8 +391,17 @@ def colophon_text(date_iso: str, credit: str, kind: str) -> list:
     return [f"{num} · {long} · {credit}"]
 
 
+def caesura_face(voice: str, face: str) -> str:
+    """Caesura's gloss face: beside the italic word the gloss is the roman, so two italics never meet."""
+    return "roman" if voice == "italic" else face
+
+
 def place_on_photo(photo, template, voice, face, word, gloss, date_iso, credit, facts=None):
     """Where the words go on the photograph, or None when no placement passes the calm test."""
+    if template == "S1_CAESURA":
+        from .caesura import place_caesura
+
+        return place_caesura(photo, voice, caesura_face(voice, face), word, gloss)
     facts = facts or analyse_photo(photo)
     probe = _PhotoProbe(_fit_photo(photo, (WIDTH, 800)))
     if template == "S1_FRAME":
@@ -483,7 +494,7 @@ def _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts):
     ink = PHOTO_INK[pl["ink"]]
     colour = facts.colour if plan.colour_on else None
     word_fill = _towards(colour, pl["word_bg"], 7.0) if colour else ink
-    stop_fill = _towards(colour, pl["word_bg"], 3.0) if colour else ink
+    stop_fill = _towards(colour, pl.get("stop_bg", pl["word_bg"]), 3.0) if colour else ink
 
     def paint(draw):
         for i, (text, st, align, x, b) in enumerate(pl["lines"]):
