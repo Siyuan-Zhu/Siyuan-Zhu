@@ -37,7 +37,7 @@ rules_version = '2';
 //   - commissioned_thesis: string (0..2000 chars)
 //   - visual_anchor: string (0..500 chars)
 //   - visual_medium: string (1..64 chars)
-//   - curatorial_archetype: string in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY', 'S1_FRAME', 'S1_SUBTITLE', 'S1_PLATE', 'S1_SLEEVE', 'S1_BLEED', 'S1_ENTRY', 'S1_WALL']
+//   - curatorial_archetype: string in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY', 'S1_FRAME', 'S1_SUBTITLE', 'S1_PLATE', 'S1_SLEEVE', 'S1_BLEED', 'S1_ENTRY', 'S1_WALL', 'S1_CAESURA']
 //   - text_quadrant: string in ['top_left', 'top_right', 'bottom_left', 'bottom_right', 'bottom_center', 'margin_outside', 'spine_vertical', 'split_diptych', 'upper_left', 'upper_right', 'lower_left', 'lower_right', 'margin_bottom', 'margin_right', 'full_canvas']
 //   - primary_image_url / image_url: string (URL <= 2048 chars)
 //   - fallback_image_url / fallback_webp_path: string (<= 2048 chars)
@@ -376,7 +376,7 @@ service cloud.firestore {
         (!('commissioned_thesis' in data) || data.commissioned_thesis == null || (data.commissioned_thesis is string && data.commissioned_thesis.size() <= 2000)) &&
         (!('visual_anchor' in data) || data.visual_anchor == null || (data.visual_anchor is string && data.visual_anchor.size() <= 500)) &&
         (!('visual_medium' in data) || data.visual_medium == null || (data.visual_medium is string && data.visual_medium.size() <= 64)) &&
-        (!('curatorial_archetype' in data) || data.curatorial_archetype == null || (data.curatorial_archetype is string && data.curatorial_archetype in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY', 'S1_FRAME', 'S1_SUBTITLE', 'S1_PLATE', 'S1_SLEEVE', 'S1_BLEED', 'S1_ENTRY', 'S1_WALL'])) &&
+        (!('curatorial_archetype' in data) || data.curatorial_archetype == null || (data.curatorial_archetype is string && data.curatorial_archetype in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY', 'S1_FRAME', 'S1_SUBTITLE', 'S1_PLATE', 'S1_SLEEVE', 'S1_BLEED', 'S1_ENTRY', 'S1_WALL', 'S1_CAESURA'])) &&
         (!('text_quadrant' in data) || data.text_quadrant == null || (data.text_quadrant is string && data.text_quadrant in validTextQuadrants)) &&
         (!('quietest_quadrant' in data) || data.quietest_quadrant == null || (data.quietest_quadrant is string && data.quietest_quadrant in validTextQuadrants)) &&
         (!('primary_image_url' in data) || data.primary_image_url == null || (data.primary_image_url is string && data.primary_image_url.size() <= 2048)) &&
@@ -724,7 +724,7 @@ service cloud.firestore {
       let isV2 = ('date' in data && data.date == dateId) &&
         (('word' in data && data.word is string && data.word.size() >= 1 && data.word.size() <= 60) ||
          ('artwork_title' in data && data.artwork_title is string && data.artwork_title.size() >= 1 && data.artwork_title.size() <= 160)) &&
-        (!('curatorial_archetype' in data) || (data.curatorial_archetype is string && data.curatorial_archetype in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY', 'S1_FRAME', 'S1_SUBTITLE', 'S1_PLATE', 'S1_SLEEVE', 'S1_BLEED', 'S1_ENTRY', 'S1_WALL'])) &&
+        (!('curatorial_archetype' in data) || (data.curatorial_archetype is string && data.curatorial_archetype in ['POETIC_CINEMA', 'LITERARY_JOURNAL', 'STUDIO_MONOGRAPH', 'KYOTO_TANKOBON', 'CONCRETE_POETRY', 'S1_FRAME', 'S1_SUBTITLE', 'S1_PLATE', 'S1_SLEEVE', 'S1_BLEED', 'S1_ENTRY', 'S1_WALL', 'S1_CAESURA'])) &&
         (!('text_quadrant' in data) || (data.text_quadrant is string && data.text_quadrant in validTextQuadrants)) &&
         (!('archetype_history_30d' in data) || (data.archetype_history_30d is list && data.archetype_history_30d.size() <= 30)) &&
         (!('cluster_keywords' in data) || (data.cluster_keywords is list && data.cluster_keywords.size() <= 25)) &&
