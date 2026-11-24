@@ -101,12 +101,69 @@ def test_trivial_differences_are_the_same_text(monkeypatch, capsys):
     assert capsys.readouterr().out == "copy_cap_dropped=5\n"
 
 
-def test_items_with_no_text_are_not_treated_as_copies(monkeypatch, capsys):
+def test_captionless_posts_are_not_treated_as_copies(monkeypatch, capsys):
+    monkeypatch.setenv("ZEITGEIST_COPY_CAP", "1")
+    # The collector gives a post with no caption this stand-in title and an empty summary (collectors.py).
+    items = [_item(n, "o1_ig_synth_a", "Instagram orbit dispatch", "") for n in range(18)]
+    window = load_asymmetric_window(items, now_utc=NOW)
+    assert len(window) == 18
+    assert capsys.readouterr().out == "copy_cap_dropped=0\n"
+
+
+def _row(n: int, text: str, **extra) -> dict:
+    item = _item(n, "o1_ig_synth_a", text, text)
+    row = {key: getattr(item, key) for key in ("url_hash", "source_id", "bucket", "tier", "title", "summary",
+                                                "published_at", "embedding_f32")}
+    return {**row, **extra}
+
+
+def test_rows_marked_text_missing_are_not_treated_as_copies(monkeypatch, capsys):
+    monkeypatch.setenv("ZEITGEIST_COPY_CAP", "1")
+    rows = [_row(n, "Synthetic caption one", text_missing=True) for n in range(18)]
+    items = [_item(18 + n, "o1_ig_synth_a", "Synthetic caption two", "Synthetic caption two") for n in range(18)]
+    for item in items:
+        item.extra["text_missing"] = True
+    window = load_asymmetric_window(rows + items, now_utc=NOW)
+    assert len(window) == 36
+    assert capsys.readouterr().out == "copy_cap_dropped=0\n"
+
+
+def test_the_stand_in_title_with_a_summary_is_still_text(monkeypatch, capsys):
+    monkeypatch.setenv("ZEITGEIST_COPY_CAP", "1")
+    items = [_item(n, "o1_ig_synth_a", "Instagram orbit dispatch", "Synthetic caption one") for n in range(18)]
+    window = load_asymmetric_window(items, now_utc=NOW)
+    assert len(window) == 15
+    assert capsys.readouterr().out == "copy_cap_dropped=3\n"
+
+
+def test_items_with_no_text_at_all_are_not_treated_as_copies(monkeypatch, capsys):
     monkeypatch.setenv("ZEITGEIST_COPY_CAP", "1")
     items = [_item(n, "o1_ig_synth_a", "", "") for n in range(18)]
     window = load_asymmetric_window(items, now_utc=NOW)
     assert len(window) == 18
     assert capsys.readouterr().out == "copy_cap_dropped=0\n"
+
+
+@pytest.mark.parametrize("target", ["_cap_copies_per_account", "copy_text"])
+def test_a_failure_in_the_cap_falls_back_to_the_uncapped_window(monkeypatch, capsys, target):
+    from src.zeitgeist import methodology
+
+    off = load_asymmetric_window(_mixed_night(), now_utc=NOW)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(methodology, target, boom)
+    monkeypatch.setenv("ZEITGEIST_COPY_CAP", "1")
+    window = load_asymmetric_window(_mixed_night(), now_utc=NOW)
+    assert _fingerprint(window) == _fingerprint(off) == GOLDEN_OFF
+    assert capsys.readouterr().out == "copy_cap_dropped=0 copy_cap_error=RuntimeError\n"
+
+
+def test_the_switch_is_listed_in_the_run_record():
+    from src.zeitgeist import run_record
+
+    assert "ZEITGEIST_COPY_CAP" in run_record.SWITCH_NAMES
 
 
 def test_copies_outside_the_window_do_not_count_against_the_cap(monkeypatch, capsys):
