@@ -438,12 +438,13 @@ def test_the_daily_workflow_passes_the_switch_to_the_edition_job_only():
     assert [line.strip() for line in text.splitlines()].count(ARCHIVE_LINE) == 1
 
 
-def test_the_private_run_mirrors_the_daily_step_and_passes_the_switch_too():
-    lines = [line.strip() for line in (ROOT / ".github/workflows/private_run.yml").read_text().splitlines()]
+@pytest.mark.parametrize("name", ["private_run.yml", "comparison_run.yml"])
+def test_the_private_and_comparison_runs_mirror_the_daily_step_and_pass_the_switch_too(name):
+    lines = [line.strip() for line in (ROOT / ".github/workflows" / name).read_text().splitlines()]
     assert lines.count(ARCHIVE_LINE) == 1
     assert lines[lines.index(CANDIDATE_LINE) + 1] == ARCHIVE_LINE
 
 
-@pytest.mark.parametrize("name", ["comparison_run.yml", "provider_canary.yml", "staging_zeitgeist_dryrun.yml"])
+@pytest.mark.parametrize("name", ["provider_canary.yml", "staging_zeitgeist_dryrun.yml"])
 def test_no_other_workflow_passes_the_switch(name):
     assert evidence_archive.SWITCH_ENV not in (ROOT / ".github/workflows" / name).read_text()
