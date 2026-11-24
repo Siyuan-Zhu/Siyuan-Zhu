@@ -59,6 +59,9 @@ def cap_height(st: L.Style) -> float:
     return float(-st.font.getbbox("H", anchor="ls")[1])
 
 
+MAX_GLOSS_WORDS = 16  # the gloss is at most 50 characters; a longer text never takes Caesura
+
+
 def ink_extent(st: L.Style, text: str):
     """(left, top, right, bottom) of the real ink, relative to the pen at (0, baseline)."""
     t = st.prep(text)
@@ -214,12 +217,26 @@ def place_caesura(photo: Image.Image, voice: str, face: str, word: str, gloss: s
     def no(reason):
         why[reason] = why.get(reason, 0) + 1
 
+    if not str(word or "").strip() or len(str(gloss or "").split()) > MAX_GLOSS_WORDS:
+        no("text")
+        return None
     gr = Ground(L._fit_photo(photo, (W, H)))
     wst, gst = word_style(voice, word), gloss_style(face)
     cap = cap_height(wst)
     gut = round(GUTTER_CAPS * cap)
-    wl, wt, wr, wb = ink_extent(wst, word)
+    extent = ink_extent(wst, word)
+    if extent is None:
+        no("text")
+        return None
+    wl, wt, wr, wb = extent
     wink = wr - wl
+    break_cache: dict = {}
+
+    def gloss_break(measure: float):
+        key = int(measure)
+        if key not in break_cache:
+            break_cache[key] = best_break(gloss, gst, key)
+        return break_cache[key]
     lh = gst.line_height
     best = None
     for base in range(int(EDGE + cap + 4), H - EDGE - 20, 3):
@@ -241,7 +258,7 @@ def place_caesura(photo: Image.Image, voice: str, face: str, word: str, gloss: s
                 if xr_ink - wink < MARGIN:
                     no("word room")
                     continue
-                gl = best_break(gloss, gst, W - MARGIN - xl_ink)
+                gl = gloss_break(W - MARGIN - xl_ink)
                 if gl is None:
                     no("gloss room")
                     continue

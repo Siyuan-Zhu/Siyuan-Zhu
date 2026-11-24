@@ -401,9 +401,15 @@ def caesura_face(voice: str, face: str) -> str:
 def place_on_photo(photo, template, voice, face, word, gloss, date_iso, credit, facts=None):
     """Where the words go on the photograph, or None when no placement passes the calm test."""
     if template == "S1_CAESURA":
-        from .caesura import place_caesura
+        try:
+            from .caesura import place_caesura
 
-        return place_caesura(photo, voice, caesura_face(voice, face), word, gloss)
+            return place_caesura(photo, voice, caesura_face(voice, face), word, gloss)
+        except Exception:  # Caesura is tried every night; its failure must not cost the other templates
+            import logging
+
+            logging.getLogger(__name__).exception("Caesura placement failed; skipping it tonight")
+            return None
     facts = facts or analyse_photo(photo)
     probe = _PhotoProbe(_fit_photo(photo, (WIDTH, 800)))
     if template == "S1_FRAME":

@@ -144,3 +144,37 @@ def test_caesura_takes_every_night_it_fits_unless_it_ran_the_night_before() -> N
     assert plan.template == "S1_CAESURA"
     plan = L.plan_night(day, ["S1_CAESURA", "S1_PLATE"], _monolith(), word=WORD, gloss=GLOSS, credit=CREDIT)
     assert plan.template != "S1_CAESURA"
+
+
+def test_long_text_is_ineligible_and_fast() -> None:
+    import time
+
+    long_gloss = " ".join(["quietude"] * 40) + "."
+    t0 = time.perf_counter()
+    assert C.place_caesura(_monolith(), "wide", "italic", WORD, long_gloss) is None
+    assert time.perf_counter() - t0 < 1.0
+
+
+@pytest.mark.parametrize("voice", L.VOICES)
+def test_blank_word_is_ineligible(voice: str) -> None:
+    assert C.place_caesura(_monolith(), voice, "italic", "   ", GLOSS) is None
+
+
+def test_caesura_failure_does_not_cost_the_other_templates(monkeypatch) -> None:
+    def boom(*_a, **_k):
+        raise RuntimeError("forced")
+
+    monkeypatch.setattr(C, "place_caesura", boom)
+    assert L.place_on_photo(_monolith(), "S1_CAESURA", "wide", "italic", WORD, GLOSS, "2026-12-03", CREDIT) is None
+    plan = L.plan_night("2026-12-03", ["S1_PLATE"], _monolith(), word=WORD, gloss=GLOSS, credit=CREDIT)
+    assert plan.template != "S1_CAESURA"
+
+
+def test_colour_night_renders_word_and_stop_in_colour() -> None:
+    img = _monolith()
+    ImageDraw.Draw(img).rectangle([BAR[0], 150, BAR[1] - 1, 750], fill=(150, 60, 20))
+    pl = C.place_caesura(img, "wide", "italic", WORD, GLOSS)
+    assert pl is not None
+    plan = L.NightPlan("S1_CAESURA", "wide", "italic", True, "word", False, pl)
+    light, dark = L.render_edition_pair(img, word=WORD, gloss=GLOSS, date_iso="2026-12-04", credit=CREDIT, plan=plan)
+    assert light.size[0] >= 1200 and dark.size == light.size
