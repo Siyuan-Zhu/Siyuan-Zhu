@@ -294,7 +294,7 @@ def _switch_over():
                            pending_items=pending, pending_rows={it.url_hash: {"url_hash": it.url_hash} for it in pending})
 
 
-def test_switch_over_percentiles_leave_out_the_stand_ins_and_only_the_calibrated_call_runs_loosest(score_spy):
+def test_switch_over_percentiles_leave_out_the_stand_ins_and_no_call_runs_loosest(score_spy):
     run = _switch_over()
     store = RecordingStore()
     em.cluster_for_run(_with_stand_ins(), run, store=store, now_utc=NOW, interim_grouping=True)
@@ -302,11 +302,37 @@ def test_switch_over_percentiles_leave_out_the_stand_ins_and_only_the_calibrated
     assert run.percentiles == em.percentile_ranks(clean)
     assert run.cutoffs == em.cutoffs_at(clean, run.percentiles)
     assert run.percentiles != em.percentile_ranks(em.pairwise_similarities(_with_stand_ins()))
-    assert [kw.get("use_loosest_cutoff") for kw in score_spy] == [None, True]
+    assert [kw.get("use_loosest_cutoff") for kw in score_spy] == [None, None]
     assert all(kw["exclude_captionless"] is True for kw in score_spy)
     saved = [call for call in store.calls if call[0] == "save_calibration"]
     assert saved and saved[0][2]["item_count"] == 31  # the stand-ins still count as items
     assert saved[0][2]["percentiles"] == list(run.percentiles)
+
+
+def _gate_world():
+    return _world() + [_item("far_%d" % i, "o1_src_far_%d" % i, _basis(300 + i)) for i in range(4)]
+
+
+def _gate_night():
+    pending = _gate_world()
+    return em.EmbeddingRun(mode="switch_over", calibration_state=em.CAL_NONE, date_str=DATE, items=len(pending),
+                           pending_items=pending, pending_rows={it.url_hash: {"url_hash": it.url_hash} for it in pending})
+
+
+def test_the_gates_candidate_grouping_keeps_the_tier_loop_with_the_switch_on(score_spy):
+    """The gate verdict is stored and outlives the run, so its candidate is grouped strictest to loosest as today."""
+    run = _gate_night()
+    out = em.cluster_for_run(_gate_world(), run, store=RecordingStore(), now_utc=NOW, interim_grouping=True)
+    candidate = score_spy[1]
+    assert tuple(candidate["cutoffs"]) == run.cutoffs[:3] and candidate["exclude_captionless"] is True
+    assert "use_loosest_cutoff" not in candidate
+    assert run.gate.passed and run.used == em.EMBED_2  # so the candidate grouping is what the run returns
+    kw = dict(now_utc=NOW, cutoffs=run.cutoffs[:3], near_duplicate_threshold=run.cutoffs[3], exclude_captionless=True)
+    tier_loop = score_and_cluster_signals(_gate_night().pending_items, **kw)
+    loosest = score_and_cluster_signals(_gate_night().pending_items, use_loosest_cutoff=True, **kw)
+    small = ("a_0", "a_1", "a_2")
+    assert small in _groups(tier_loop) and small not in _groups(loosest)  # the fixture tells the two apart
+    assert _full(out) == _full(tier_loop)
 
 
 # ---- collection marks the stand-in ----
