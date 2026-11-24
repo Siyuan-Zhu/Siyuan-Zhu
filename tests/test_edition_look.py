@@ -238,10 +238,9 @@ def test_caption_templates_are_wall_sleeve_entry() -> None:
     assert set(L.COLOPHON_TEMPLATES) == {"S1_WALL", "S1_SLEEVE", "S1_ENTRY"}
 
 
-def test_feed_entry_carries_the_template_name(tmp_path: Path) -> None:
+def test_feed_entry_does_not_carry_the_template_name(tmp_path: Path) -> None:
     published = _router_run(tmp_path)
-    entry = published.to_feed_entry()
-    assert entry["curatorial_archetype"] == published.curatorial_archetype
+    assert "curatorial_archetype" not in published.to_feed_entry()
 
 
 def test_history_starts_with_the_last_published_template_when_the_feed_lacks_names(tmp_path: Path) -> None:
