@@ -122,6 +122,11 @@ def _row_to_cached_item(row: Any, idx: int, ref_dt_str: str) -> Optional[CachedI
     extra = {"mentioned_handles": list(handles)} if isinstance(handles, (list, tuple)) and handles else {}
     if isinstance(row.get("text_missing"), bool):
         extra["text_missing"] = row["text_missing"]
+    # Scoring reads these to tell a feed's own date from the collector's fetch-time fallback.
+    if isinstance(row.get("date_known"), bool):
+        extra["date_known"] = row["date_known"]
+    if row.get("fetched_at"):
+        extra["fetched_at"] = str(row["fetched_at"])
     return CachedItem(
         url_hash=raw_hash,
         source_id=str(row.get("source_id") or f"source_{idx}"),

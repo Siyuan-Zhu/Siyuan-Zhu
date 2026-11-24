@@ -51,6 +51,14 @@ STATIC_FILES = {
     "assets/fonts/OFL-CormorantGaramond.txt",
     "assets/fonts/OFL-IBMPlexMono.txt",
     "assets/fonts/README.md",
+    "assets/fonts/SortsMillGoudy-Regular.ttf",
+    "assets/fonts/SortsMillGoudy-Italic.ttf",
+    "assets/fonts/DarkerGrotesque-Variable.ttf",
+    "assets/fonts/Antonio-Variable.ttf",
+    "assets/fonts/OFL-SortsMillGoudy.txt",
+    "assets/fonts/OFL-DarkerGrotesque.txt",
+    "assets/fonts/OFL-Antonio.txt",
+    "assets/edition_look.json",
 }
 WORKFLOWS = {
     ".github/workflows/ci.yml",

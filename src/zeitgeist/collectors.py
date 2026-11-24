@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 import httpx
 import numpy as np
 
-from .methodology import CAPTIONLESS_STAND_IN, interim_grouping_enabled
+from .methodology import CAPTIONLESS_STAND_IN, interim_grouping_enabled, item_date_known
 from .spend_guard import EMBEDDING_2_MODEL, SpendBlocked
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,7 @@ FEED_CACHE_ALLOWED_KEYS: frozenset[str] = frozenset(
         "source_tier",
         "published_at",
         "fetched_at",
+        "date_known",
         "summary",
         "orbit_weight",
         "schema_version",
@@ -153,19 +154,24 @@ def _clean_text(raw: str | None, max_chars: int = 600) -> str:
 
 def _parse_timestamp(raw_ts: str | None, fallback_utc: datetime | None = None) -> datetime:
     """Parse RFC-2822, ISO-8601, or numeric epoch timestamps into a timezone-aware UTC datetime."""
+    return _parse_feed_date(raw_ts, fallback_utc)[0]
+
+
+def _parse_feed_date(raw_ts: str | None, fallback_utc: datetime | None = None) -> tuple[datetime, bool]:
+    """Return the parsed UTC datetime and whether it came from the feed (False: the fallback was used)."""
     default_dt = fallback_utc or datetime.now(timezone.utc)
     if not raw_ts:
-        return default_dt
+        return default_dt, False
     text = str(raw_ts).strip()
     if not text:
-        return default_dt
+        return default_dt, False
 
     # Try RFC 2822 (RSS pubDate)
     try:
         dt = parsedate_to_datetime(text)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+        return dt.astimezone(timezone.utc), True
     except Exception:
         pass
 
@@ -175,11 +181,11 @@ def _parse_timestamp(raw_ts: str | None, fallback_utc: datetime | None = None) -
         dt = datetime.fromisoformat(iso_candidate)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+        return dt.astimezone(timezone.utc), True
     except Exception:
         pass
 
-    return default_dt
+    return default_dt, False
 
 
 def _local_tag(tag: str) -> str:
@@ -233,13 +239,14 @@ def _parse_xml_feed_entries(xml_text: str, fallback_utc: datetime) -> list[dict[
         if not link and not title:
             continue
 
-        dt = _parse_timestamp(raw_date, fallback_utc=fallback_utc)
+        dt, date_known = _parse_feed_date(raw_date, fallback_utc=fallback_utc)
         entries.append(
             {
                 "title": _clean_text(title, max_chars=240),
                 "url": link,
                 "summary": _clean_text(summary, max_chars=600),
                 "dt": dt,
+                "date_known": date_known,
             }
         )
 
@@ -277,7 +284,7 @@ def _parse_json_feed_entries(payload: Any, fallback_utc: datetime) -> list[dict[
         if points is not None:
             summary_parts.append(f"points={points} comments={num_comments or 0}")
         raw_date = hit.get("created_at") or hit.get("date_published") or ""
-        dt = _parse_timestamp(raw_date, fallback_utc=fallback_utc)
+        dt, date_known = _parse_feed_date(raw_date, fallback_utc=fallback_utc)
         if url or title:
             entries.append(
                 {
@@ -285,6 +292,7 @@ def _parse_json_feed_entries(payload: Any, fallback_utc: datetime) -> list[dict[
                     "url": url,
                     "summary": " | ".join(p for p in summary_parts if p),
                     "dt": dt,
+                    "date_known": date_known,
                 }
             )
     return entries
@@ -352,7 +360,7 @@ def _resolve_origin(raw_tier: str | None, explicit_origin: str | None = None) ->
 
 
 def sanitize_feed_cache_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Return a strict 11-key feed_cache document matching firestore.rules allowlist."""
+    """Return a strict 12-key feed_cache document matching firestore.rules allowlist."""
     now_utc = datetime.now(timezone.utc)
     now_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     raw_url = str(item.get("url") or "").strip()
@@ -379,6 +387,7 @@ def sanitize_feed_cache_item(item: dict[str, Any]) -> dict[str, Any]:
         "source_tier": source_tier,
         "published_at": published_at,
         "fetched_at": fetched_at,
+        "date_known": bool(item.get("published_at")) and item_date_known(item),
         "summary": str(item.get("summary") or item.get("summary_clean") or ""),
         "orbit_weight": orbit_weight,
         "schema_version": schema_version,
@@ -507,6 +516,7 @@ def _normalize_feed_entries(
                 "published_at": published_at,
                 "published_date": published_date,
                 "fetched_at": fetched_at,
+                "date_known": bool(entry.get("date_known", True)),
                 "schema_version": 1,
                 "expires_at": int(dt.timestamp()) + FEED_CACHE_TTL_SECONDS,
             }
@@ -1534,7 +1544,7 @@ def fetch_instagram_batch(
                 max_chars=240,
             )
             text_missing = {"text_missing": not (sanitized_title or summary)} if mark_text_missing else {}
-            dt = _parse_timestamp(
+            dt, date_known = _parse_feed_date(
                 str(post.get("timestamp") or post.get("takenAtTimestamp") or ""),
                 fallback_utc=now_utc,
             )
@@ -1559,6 +1569,7 @@ def fetch_instagram_batch(
                     "published_at": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "published_date": dt.strftime("%Y-%m-%d"),
                     "fetched_at": fetched_at,
+                    "date_known": date_known,
                     "schema_version": 1,
                     "expires_at": int(dt.timestamp()) + FEED_CACHE_TTL_SECONDS,
                     **text_missing,

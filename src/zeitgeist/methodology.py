@@ -454,7 +454,7 @@ def analyze_seven_bucket_orbit(
 import base64
 from dataclasses import field
 from datetime import datetime, timezone
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 try:
     import numpy as np
@@ -593,6 +593,45 @@ def _parse_utc_datetime(val: Any) -> datetime:
     return datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
+UNDATED_ENV = "ZEITGEIST_UNDATED_AS_BACKGROUND"
+
+
+def undated_as_background_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if environ is None else environ
+    return env.get(UNDATED_ENV) == "1"
+
+
+def _whole_seconds(value: Any) -> Optional[int]:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        raw = value.strip()
+        try:
+            dt = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return math.floor(dt.timestamp())
+
+
+def item_date_known(item: Any) -> bool:
+    """False when the feed gave no publish date and the collector stamped the fetch time instead.
+
+    A row stored before date_known existed shows that fallback as published_at equal to fetched_at
+    to the second.
+    """
+    getter = getattr(item, "get", None)
+    lookup = getter if callable(getter) else (lambda key: getattr(item, key, None))
+    known = lookup("date_known")
+    if isinstance(known, bool):
+        return known
+    published, fetched = _whole_seconds(lookup("published_at")), _whole_seconds(lookup("fetched_at"))
+    return published is None or fetched is None or published != fetched
+
+
 def _is_personal_orbit_item(item: Any) -> bool:
     bucket = str(_get_item_field(item, "bucket", "") or "").strip().upper()
     if bucket in ORBIT_BUCKET_TOKENS:
@@ -670,6 +709,61 @@ def _extract_unit_embedding_f32(item: Any, default_dim: int = 768) -> np.ndarray
 
 
 NEAR_DUPLICATE_THRESHOLD: float = 0.85
+
+# SIY-222: one account's copies of the same text each count up to this many; the rest are spam.
+COPY_CAP_ENV = "ZEITGEIST_COPY_CAP"
+COPIES_PER_ACCOUNT_CAP: int = 15
+_COPY_URL_RE = re.compile(r"(?:https?://|www\.)\S+")
+_COPY_NON_WORD_RUN_RE = re.compile(r"[\W_]+")
+
+
+def copy_cap_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if environ is None else environ
+    return env.get(COPY_CAP_ENV) == "1"
+
+
+# The title collectors.py gives an Instagram post with no caption; such a post has no text to copy.
+CAPTIONLESS_STAND_IN_TITLE = "Instagram orbit dispatch"
+
+
+def _has_no_copy_text(item: Any) -> bool:
+    """True for a row marked text_missing, or one whose only text is the captionless stand-in title."""
+    flag = _get_item_field(item, "text_missing", None)
+    extra = getattr(item, "extra", None)
+    if flag is None and isinstance(extra, dict):
+        flag = extra.get("text_missing")
+    if flag:
+        return True
+    title = str(_get_item_field(item, "title", "") or "").strip()
+    summary = str(_get_item_field(item, "summary", "") or "").strip()
+    return title == CAPTIONLESS_STAND_IN_TITLE and not summary
+
+
+def copy_text(item: Any) -> str:
+    """Title and summary lowercased, with URLs removed and runs of whitespace and punctuation collapsed."""
+    title = str(_get_item_field(item, "title", "") or "")
+    summary = str(_get_item_field(item, "summary", "") or "")
+    text = _COPY_URL_RE.sub(" ", f"{title} {summary}".lower())
+    return _COPY_NON_WORD_RUN_RE.sub(" ", text).strip()
+
+
+def _cap_copies_per_account(
+    rows: List[Tuple[int, Any, bool, datetime]], cap: int = COPIES_PER_ACCOUNT_CAP
+) -> Tuple[List[Tuple[int, Any, bool, datetime]], int]:
+    """Keep the `cap` most recent items per (source_id, copy_text); items with no text are never copies."""
+    counts: Dict[Tuple[str, str], int] = {}
+    dropped: set[int] = set()
+    for idx, item, _is_orbit, pub_dt in sorted(rows, key=lambda row: (-row[3].timestamp(), row[0])):
+        if _has_no_copy_text(item):
+            continue
+        text = copy_text(item)
+        if not text:
+            continue
+        key = (str(_get_item_field(item, "source_id", "") or ""), text)
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] > cap:
+            dropped.add(idx)
+    return [row for row in rows if row[0] not in dropped], len(dropped)
 
 
 def farthest_point_diversity_sample(
@@ -753,6 +847,7 @@ def load_asymmetric_window(
 
     orbit_candidates: List[Tuple[float, int, Any]] = []
     macro_by_source: Dict[str, List[Any]] = {}
+    in_age: List[Tuple[int, Any, bool, datetime]] = []
 
     for idx, item in enumerate(cache_items):
         pub_raw = _get_item_field(item, "published_at")
@@ -763,7 +858,6 @@ def load_asymmetric_window(
         if is_orbit:
             if pub_raw and age_hours > 336.0 + 1e-6:
                 continue
-            orbit_candidates.append((-pub_dt.timestamp(), idx, item))
         else:
             bucket_str = str(
                 _get_item_field(item, "bucket", "") or _get_item_field(item, "tier", "") or ""
@@ -771,6 +865,22 @@ def load_asymmetric_window(
             max_macro_age_hours = 96.0
             if pub_raw and age_hours > max_macro_age_hours + 1e-6:
                 continue
+        in_age.append((idx, item, is_orbit, pub_dt))
+
+    if copy_cap_enabled():
+        # A failure here never blocks the edition: the window stays uncapped.
+        try:
+            capped, copies_dropped = _cap_copies_per_account(in_age)
+        except Exception as exc:
+            print(f"copy_cap_dropped=0 copy_cap_error={type(exc).__name__}")
+        else:
+            in_age = capped
+            print(f"copy_cap_dropped={int(copies_dropped)}")
+
+    for idx, item, is_orbit, pub_dt in in_age:
+        if is_orbit:
+            orbit_candidates.append((-pub_dt.timestamp(), idx, item))
+        else:
             source_id = str(_get_item_field(item, "source_id", "unknown_macro") or "unknown_macro")
             macro_by_source.setdefault(source_id, []).append(item)
 
@@ -1088,12 +1198,18 @@ def cluster_and_score(
     cutoffs: Sequence[float] = DYNAMIC_CLUSTER_THRESHOLDS,
     exclude_captionless: bool = False,
     use_loosest_cutoff: bool = False,
+    undated_as_background: Optional[bool] = None,
 ) -> List[ScoredCluster]:
     """Cluster items via pure-numpy average linkage and rank by Disjoint Surge Velocity & Orbit Resonance.
 
     exclude_captionless leaves captionless posts out of the similarity matrix after the weights are set, so
     they still count towards their source. use_loosest_cutoff groups at the last cutoff without stepping down.
+
+    With undated_as_background (default: the ZEITGEIST_UNDATED_AS_BACKGROUND switch), an item whose feed
+    gave no date is never counted as recent; it counts as base, still a source of its group.
     """
+    if undated_as_background is None:
+        undated_as_background = undated_as_background_enabled()
     if cohesion_mode not in COHESION_MODES:
         raise ValueError(f"unknown cohesion_mode: {cohesion_mode!r}")
     cutoffs = _validated_cutoffs(cutoffs)
@@ -1199,6 +1315,8 @@ def cluster_and_score(
             pub_raw = _get_item_field(item, "published_at")
             pub_dt = _parse_utc_datetime(pub_raw) if pub_raw else ref_now
             age_h = max(0.0, (ref_now - pub_dt).total_seconds() / 3600.0)
+            # Its published_at is only the fetch time: background, as if past the recent window.
+            undated = undated_as_background and not item_date_known(item)
 
             all_sources.add(src)
             if is_orbit:
@@ -1206,23 +1324,23 @@ def cluster_and_score(
             else:
                 macro_sources.add(src)
 
-            if age_h <= 24.0 + 1e-9:
+            if not undated and age_h <= 24.0 + 1e-9:
                 sources_0_24h.add(src)
                 if not is_orbit:
                     macro_sources_0_24h.add(src)
 
             if is_orbit:
-                if age_h <= 72.0 + 1e-9:
+                if not undated and age_h <= 72.0 + 1e-9:
                     w_recent += w_i
                     orbit_sources_0_72h.add(src)
-                elif age_h <= 336.0 + 1e-9:
+                elif undated or age_h <= 336.0 + 1e-9:
                     w_orbit_base += w_i
                     sources_base.add(src)
                     orbit_sources_72_336h.add(src)
             else:
-                if age_h <= 24.0 + 1e-9:
+                if not undated and age_h <= 24.0 + 1e-9:
                     w_recent += w_i
-                elif age_h <= 96.0 + 1e-9:
+                elif undated or age_h <= 96.0 + 1e-9:
                     w_macro_base += w_i
                     sources_base.add(src)
 
@@ -1302,6 +1420,7 @@ def score_and_cluster_signals(
     near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
     exclude_captionless: bool = False,
     use_loosest_cutoff: bool = False,
+    undated_as_background: Optional[bool] = None,
 ) -> List[ScoredCluster]:
     """Run Stage 1-2 stratified windowing (14d Orbit / 4d Macro) followed by average-linkage clustering."""
     cutoffs = _validated_cutoffs(cutoffs)
@@ -1319,6 +1438,7 @@ def score_and_cluster_signals(
         cutoffs=cutoffs,
         exclude_captionless=exclude_captionless,
         use_loosest_cutoff=use_loosest_cutoff,
+        undated_as_background=undated_as_background,
     )
 
 
