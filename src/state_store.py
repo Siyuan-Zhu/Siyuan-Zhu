@@ -1669,7 +1669,6 @@ class _FirestoreRestClient:
         collection_id: str,
         page_size: int = 100,
     ) -> list[_FirestoreRestDocSnapshot]:
-        tok = self._resolve_token()
         base_col_url = f"{self._base_url()}/{urllib.parse.quote(collection_id, safe='')}"
         docs: list[_FirestoreRestDocSnapshot] = []
         next_page_token = ""
@@ -1681,7 +1680,7 @@ class _FirestoreRestClient:
             url = f"{base_col_url}?{urllib.parse.urlencode(query)}"
             req = urllib.request.Request(
                 url,
-                headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"},
+                headers={"Authorization": f"Bearer {self._resolve_token()}", "Accept": "application/json"},
                 method="GET",
             )
             try:
