@@ -666,4 +666,4 @@ def _layout_wall(plan, word, gloss, date_iso, credit):
     for c in clines:
         ops.append(_txt("col", c, cst, "left", x, y + cst.baseline_in_line()))
         y += cst.line_height
-    return ops, 840, photo_box
+    return ops, 710, photo_box
