@@ -261,25 +261,32 @@ def wrap_greedy(text: str, st: Style, max_width: float) -> list:
     return lines
 
 
-def _draw_text(draw, x, baseline, text, st: Style, fill) -> None:
+def _draw_text(draw, x, baseline, text, st: Style, fill) -> float:
+    """Draw text with its pen at x and return the pen position after it."""
     text = st.prep(text)
-    if not st.tracking and st.grid is None:
+    if st.tracking:
+        for ch in text:
+            draw.text((x, baseline), ch, font=st.font, fill=fill, anchor="ls")
+            x += st.advance(ch) + st.tracking
+        return x
+    if st.grid is None:
         draw.text((x, baseline), text, font=st.font, fill=fill, anchor="ls")
-        return
-    # A scaled style sets each glyph at its layout-grid pen position times the scale, so the line
-    # keeps the 1x measure exactly; the glyph itself is rasterised at the larger size.
-    for ch in text:
-        draw.text((x, baseline), ch, font=st.font, fill=fill, anchor="ls")
-        x += st.advance(ch) + st.tracking
+        return x + st.advance(text)
+    # A scaled style sets each glyph at its pen position on the layout grid, times the scale, so the
+    # line keeps its 1x measure and any kerning; the glyph itself is rasterised at the larger size.
+    for i, ch in enumerate(text):
+        if ch.strip():
+            pen = st.advance(text[:i + 1]) - st.advance(ch)
+            draw.text((x + pen, baseline), ch, font=st.font, fill=fill, anchor="ls")
+    return x + st.advance(text)
 
 
 def _draw_line(draw, x, baseline, text, st, fill, align="left", stop_fill=None):
     w = st.width(text)
     left = x if align == "left" else (x - w / 2 if align == "center" else x - w)
     if stop_fill is not None and text.endswith("."):
-        body = text[:-1]
-        _draw_text(draw, left, baseline, body, st, fill)
-        _draw_text(draw, left + st.width(body) + st.tracking, baseline, ".", st, stop_fill)
+        end = _draw_text(draw, left, baseline, text[:-1], st, fill)
+        _draw_text(draw, end, baseline, ".", st, stop_fill)
     else:
         _draw_text(draw, left, baseline, text, st, fill)
 
