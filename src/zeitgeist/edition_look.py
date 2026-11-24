@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import colorsys
 import datetime as dt
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Sequence
@@ -19,6 +19,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 FONT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
 WIDTH = 1200
+# Plates are laid out on the 1200 px grid and drawn at SCALE times that size, so they stay sharp
+# on high-density screens (GitHub shows them at 846 CSS px, about 1692 device px).
+SCALE = 2
 LOOK_NAME = "s1"
 
 TEMPLATES: tuple[str, ...] = (
@@ -149,6 +152,24 @@ class Style:
     tracking: float
     upper: bool
     line_height: float
+    key: str
+    weight: Optional[int]
+    # the layout-grid style this one was scaled from: advances follow it, so lines keep their measure
+    grid: Optional["Style"] = field(default=None, repr=False, compare=False)
+
+    def scaled(self, factor: int) -> "Style":
+        """The same lettering for a canvas factor times larger, with the font rebuilt at that size."""
+        if factor == 1:
+            return self
+        size = self.size * factor
+        return replace(self, font=_font(self.key, self.weight, round(size)), size=size,
+                       tracking=self.tracking * factor, line_height=self.line_height * factor, grid=self)
+
+    def advance(self, text: str) -> float:
+        """Pen advance; a scaled style follows its grid style's advances, times the scale."""
+        if self.grid is None:
+            return float(self.font.getlength(text))
+        return self.grid.advance(text) * self.size / self.grid.size
 
     def prep(self, text: str) -> str:
         return text.upper() if self.upper else text
@@ -158,8 +179,8 @@ class Style:
         if not text:
             return 0.0
         if not self.tracking:
-            return float(self.font.getlength(text))
-        return sum(float(self.font.getlength(ch)) for ch in text) + self.tracking * (len(text) - 1)
+            return self.advance(text)
+        return sum(self.advance(ch) for ch in text) + self.tracking * (len(text) - 1)
 
     def ascent_descent(self):
         return self.font.getmetrics()
@@ -171,7 +192,7 @@ class Style:
 
 def _style(key, weight, size, tracking_em, upper, lh) -> Style:
     s = max(8, round(size))
-    return Style(_font(key, weight, s), s, tracking_em * s, upper, lh * s)
+    return Style(_font(key, weight, s), s, tracking_em * s, upper, lh * s, key, weight)
 
 
 def voice_style(voice: str, factor: float = 1.0) -> Style:
@@ -242,12 +263,14 @@ def wrap_greedy(text: str, st: Style, max_width: float) -> list:
 
 def _draw_text(draw, x, baseline, text, st: Style, fill) -> None:
     text = st.prep(text)
-    if not st.tracking:
+    if not st.tracking and st.grid is None:
         draw.text((x, baseline), text, font=st.font, fill=fill, anchor="ls")
         return
+    # A scaled style sets each glyph at its layout-grid pen position times the scale, so the line
+    # keeps the 1x measure exactly; the glyph itself is rasterised at the larger size.
     for ch in text:
         draw.text((x, baseline), ch, font=st.font, fill=fill, anchor="ls")
-        x += float(st.font.getlength(ch)) + st.tracking
+        x += st.advance(ch) + st.tracking
 
 
 def _draw_line(draw, x, baseline, text, st, fill, align="left", stop_fill=None):
@@ -450,15 +473,20 @@ def _composite(base: Image.Image, painter) -> Image.Image:
     return out.convert("RGB")
 
 
-def render_edition_pair(photo, *, word, gloss, date_iso, credit, plan: NightPlan):
-    """Light and dark plates for the planned night."""
+def render_edition_pair(photo, *, word, gloss, date_iso, credit, plan: NightPlan, scale: int = SCALE):
+    """Light and dark plates for the planned night, WIDTH * scale wide. Layout is on the 1200 px grid."""
     facts = analyse_photo(photo)
-    return tuple(_render(photo, word, gloss, date_iso, credit, plan, facts, th) for th in ("light", "dark"))
+    return tuple(_render(photo, word, gloss, date_iso, credit, plan, facts, th, scale) for th in ("light", "dark"))
 
 
-def _render(photo, word, gloss, date_iso, credit, plan, facts, theme):
+def _scaled_line(text, st: Style, align, x, base, s: int):
+    """A line of type moved onto the canvas s times the layout grid, its style rebuilt at that size."""
+    return text, st.scaled(s), align, x * s, base * s
+
+
+def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE):
     if plan.template in ON_PHOTO:
-        return _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts)
+        return _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts, s)
     page, ink = THEMES[theme]["page"], THEMES[theme]["ink"]
     page_lum = _rel_lum(page)
     colour = facts.colour if plan.colour_on else None
@@ -468,49 +496,50 @@ def _render(photo, word, gloss, date_iso, credit, plan, facts, theme):
     builder = {"S1_PLATE": _layout_plate, "S1_SLEEVE": _layout_sleeve, "S1_BLEED": _layout_bleed,
                "S1_ENTRY": _layout_entry, "S1_WALL": _layout_wall}[plan.template]
     ops, height, (px, py, pw, ph) = builder(plan, word, gloss, date_iso, credit)
-    for op in ops:
-        if op[0] != "text":
-            continue
-        _, _role, text, st, align, x, base = op
+    size = (WIDTH * s, int(round(height)) * s)
+    texts = [(op[1],) + _scaled_line(*op[2:], s) for op in ops if op[0] == "text"]
+    for _role, text, st, align, x, base in texts:
         w = st.width(text)
         left = x if align == "left" else (x - w / 2 if align == "center" else x - w)
         asc, desc = st.ascent_descent()
-        if left < 0 or left + w > WIDTH or base - asc < 0 or base + desc > height:
+        if left < 0 or left + w > size[0] or base - asc < 0 or base + desc > size[1]:
             raise ValueError("text leaves the plate: " + plan.template)
-    canvas = Image.new("RGB", (WIDTH, int(round(height))), page)
-    canvas.paste(_fit_photo(photo, (pw, ph)), (int(px), int(py)))
+    canvas = Image.new("RGB", size, page)
+    canvas.paste(_fit_photo(photo, (pw * s, ph * s)), (int(px) * s, int(py) * s))
 
     def paint(draw):
-        for op in ops:
-            if op[0] == "rule":
-                if rule_fill is not None:
-                    draw.rectangle([op[1], op[2], op[1] + 46, op[2] + 4], fill=_rgba(rule_fill))
-                continue
-            _, role, text, st, align, x, base = op
+        if rule_fill is not None:
+            for op in ops:
+                if op[0] == "rule":
+                    x0, y0 = op[1] * s, op[2] * s
+                    draw.rectangle([x0, y0, x0 + 47 * s - 1, y0 + 5 * s - 1], fill=_rgba(rule_fill))
+        for role, text, st, align, x, base in texts:
             fill = {"word": _rgba(word_fill), "gloss": _rgba(ink), "col": _rgba(ink, COL_ALPHA)}[role]
             _draw_line(draw, x, base, text, st, fill, align, _rgba(stop_fill) if role == "gloss" else None)
 
     return _composite(canvas, paint)
 
 
-def _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts):
+def _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts, s=SCALE):
     pl = plan.placement or place_on_photo(photo, plan.template, plan.voice, plan.gloss_face, word, gloss,
                                           date_iso, credit, facts)
     if pl is None:
         raise ValueError("no calm placement for an on-photo template")
-    base = _fit_photo(photo, (WIDTH, 800))
+    base = _fit_photo(photo, (WIDTH * s, 800 * s))
     ink = PHOTO_INK[pl["ink"]]
     colour = facts.colour if plan.colour_on else None
     word_fill = _towards(colour, pl["word_bg"], 7.0) if colour else ink
     stop_fill = _towards(colour, pl.get("stop_bg", pl["word_bg"]), 3.0) if colour else ink
 
     def paint(draw):
-        for i, (text, st, align, x, b) in enumerate(pl["lines"]):
+        for i, line in enumerate(pl["lines"]):
+            text, st, align, x, b = _scaled_line(*line, s)
             if i == 0:
                 _draw_line(draw, x, b, text, st, _rgba(word_fill), align)
             else:
                 _draw_line(draw, x, b, text, st, _rgba(ink), align, _rgba(stop_fill))
-        for (text, st, align, x, b) in pl["colophon"]:
+        for line in pl["colophon"]:
+            text, st, align, x, b = _scaled_line(*line, s)
             _draw_line(draw, x, b, text, st, _rgba(ink, COL_ALPHA), align)
 
     return _composite(base, paint)
