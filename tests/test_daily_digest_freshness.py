@@ -53,6 +53,21 @@ def test_stale_dispatch_keeps_existing_funding_guard_and_explicit_date(bundle, t
     assert output.read_text() == 'publish_required=false\npublish_required=true\n'
 
 
+def test_with_the_failed_night_switch_the_generation_is_told_when_the_run_started(bundle, tmp_path):
+    from datetime import timedelta
+    root, pulse, store, published = bundle
+    now = datetime.combine(published + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc).replace(hour=8)
+    calls = []
+    assert daily.refresh(root, store=store, now=now,
+        env={'GITHUB_OUTPUT': str(tmp_path / 'github-output'), 'SPEND_POLICY_SHA256': 'pinned',
+             'ZEITGEIST_FAILED_NIGHT_ARCHIVE': '1'},
+        runner=lambda cmd, **kw: calls.append((cmd[1:], kw)))
+    assert calls[1][0] == ['scripts/run_zeitgeist.py', '--date', str(now.date())]
+    assert calls[1][1].pop('env')['ZEITGEIST_RUN_STARTED_AT'] == now.isoformat()
+    assert calls[1][1] == {'cwd': root, 'check': True}
+    assert calls[2][1] == {'cwd': root, 'check': True}
+
+
 def test_green_commands_without_observed_commit_do_not_advise_reconciliation(bundle, tmp_path):
     from datetime import timedelta
     root, pulse, store, published = bundle
