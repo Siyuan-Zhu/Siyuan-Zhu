@@ -187,7 +187,7 @@ class _WatchingStore(_ArchiveStore):
 
 
 def _fail(tmp_path, monkeypatch, capsys, *, switch="1", old="1", publish_fails=False, store_cls=_WatchingStore,
-          setup=None, expect=BaseException):
+          setup=None, expect=BaseException, mode="blueprint", **run_kwargs):
     """One failing night; setup(client) arranges the failure and returns the exception it will raise."""
     client, events = _edition_setup(tmp_path, monkeypatch, switch="0", publish_fails=publish_fails)
     for name, value in ((OLD_SWITCH, old), (SWITCH, switch)):
@@ -199,7 +199,8 @@ def _fail(tmp_path, monkeypatch, capsys, *, switch="1", old="1", publish_fails=F
     seeded = _seed_cache(store)
     raised = setup(client) if setup is not None else None
     with pytest.raises(expect) as info:
-        pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run("2026-11-21", "blueprint", offline_demo=True)
+        pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run("2026-11-21", mode, offline_demo=True,
+                                                                           **run_kwargs)
     out = capsys.readouterr()
     assert SENTINEL not in out.out + out.err
     assert SENTINEL not in json.dumps(store.archive)
@@ -279,6 +280,17 @@ def _raise_in_validation(monkeypatch):
     return error
 
 
+def _raise_in_assembly(monkeypatch):
+    """After rendering: the compatibility records built from the published artwork."""
+    error = RuntimeError(SENTINEL)
+
+    def analyze(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(pipeline, "analyze_seven_bucket_orbit", analyze)
+    return error
+
+
 def _raise_in_setup(monkeypatch):
     from src.zeitgeist.publication_commit import PublicationWorkspace
 
@@ -299,6 +311,7 @@ STAGES = {
                  ("intake_rows", "groups", "director_attempts")),
     "photo": (lambda mp, client: _raise_in_photo(mp), ALL_PARTS[:-1]),
     "validation": (lambda mp, client: _raise_in_validation(mp), ALL_PARTS),
+    "assembly": (lambda mp, client: _raise_in_assembly(mp), ALL_PARTS),
 }
 
 
@@ -314,7 +327,7 @@ def test_a_failure_at_each_stage_archives_exactly_what_it_reached(tmp_path, monk
     assert meta["switches"][SWITCH] == "1" and meta["switches"][OLD_SWITCH] == "1"
     if "intake_rows" in reached:
         assert {row["url_hash"] for row in night["intake_rows"]} == set(run["seeded"])
-        assert meta["intake_source"] == "stored_rows"
+        assert meta["intake_source"] == ("collector_rows" if stage == "collection" else "stored_rows")
     if "groups" in reached:
         assert night["groups"] and night["groups"][0]["rank"] == 1
     if stage == "director":
@@ -332,6 +345,9 @@ def test_a_failure_at_each_stage_archives_exactly_what_it_reached(tmp_path, monk
     if stage == "validation":
         [published] = night["published"]
         assert published["entry"]["word"] == "Selvedge"
+    if stage == "assembly":
+        [published] = night["published"]
+        assert published["entry"] is None and published["visual_medium"]
     [line] = [line for line in _lines(run["out"].out) if "evidence_archive" in line]
     assert line.startswith("evidence_archive=ok ")
     assert run["store"].seen_at_archive == {"reconcile": False, "journal": None}
@@ -371,7 +387,40 @@ def _install_fails(monkeypatch):
 
 
 def _download_tracking_fails(monkeypatch):
-    """The last step after install: a failure there leaves the edition committed and installed."""
+    """A published Unsplash photo whose download acknowledgement fails, after install."""
+    from src.zeitgeist import visual_router as vr
+    from tests.test_private_run import _jpeg, _photo, _photo_world
+
+    _photo_world(monkeypatch)
+    monkeypatch.setenv("ZEITGEIST_LIVE_UNSPLASH", "1")
+    monkeypatch.setenv("UNSPLASH_ACCESS_KEY", "synthetic-key")
+
+    def candidates():
+        rows = []
+        for photo_id in ("q0", "q1"):
+            row = vr._candidate_from_unsplash(_photo(photo_id), _jpeg((8, 8)))
+            row.update(semantic_alignment=0.9, compositional_clarity=0.9, editorial_memorability=0.9,
+                       safety_pass=True, _vision_verified=True)
+            rows.append(row)
+        return rows
+
+    real_render = pipeline.select_and_render_pulse_assets
+
+    def render(*args, **kwargs):
+        return real_render(*args, **{**kwargs, "candidates": candidates(), "offline_demo": False})
+
+    monkeypatch.setattr(pipeline, "select_and_render_pulse_assets", render)
+    error = RuntimeError(SENTINEL)
+
+    def confirm(published):
+        raise error
+
+    monkeypatch.setattr(vr, "confirm_published_photo_download", confirm)
+    return error
+
+
+def _followup_fails(monkeypatch):
+    """A step after install that is not the download acknowledgement: the edition is committed and installed."""
     error = RuntimeError(SENTINEL)
     real_replace = pipeline.replace
 
@@ -398,9 +447,13 @@ def _outcome_unknown(monkeypatch):
 
 
 PUBLICATION_BRANCH = {
-    "committed_install_failed": (_install_fails, {"reconcile": True, "journal": "canonical_committed_local_install_failed"}),
-    "committed_download_tracking_failed": (_download_tracking_fails, {"reconcile": True, "journal": None}),
-    "outcome_unknown": (_outcome_unknown, {"reconcile": True, "journal": None}),
+    "committed_install_failed": (_install_fails, {"reconcile": True, "journal": "canonical_committed_local_install_failed"},
+                                 {}),
+    "committed_installed_followup_failed": (_followup_fails, {"reconcile": True, "journal": None}, {}),
+    "committed_download_tracking_failed": (_download_tracking_fails,
+                                           {"reconcile": True, "journal": "canonical_committed_download_tracking_pending"},
+                                           {"mode": None}),
+    "outcome_unknown": (_outcome_unknown, {"reconcile": True, "journal": None}, {}),
 }
 
 
@@ -409,8 +462,9 @@ def test_the_publication_branch_is_labelled_by_its_outcome_and_archived_after_th
                                                                                         status):
     from src.zeitgeist.publication_commit import PublicationMirrorError
 
-    arrange, seen = PUBLICATION_BRANCH[status]
-    run = _fail(tmp_path, monkeypatch, capsys, setup=lambda client: arrange(monkeypatch), expect=PublicationMirrorError)
+    arrange, seen, run_kwargs = PUBLICATION_BRANCH[status]
+    run = _fail(tmp_path, monkeypatch, capsys, setup=lambda client: arrange(monkeypatch), expect=PublicationMirrorError,
+                **run_kwargs)
     assert run["error"].__cause__ is run["raised"]
     meta, night = _night(run)
     assert (meta["status"], meta["failed_stage"], meta["error_class"]) == (
@@ -452,7 +506,14 @@ def test_an_interrupt_or_an_exit_skips_the_archive(tmp_path, monkeypatch, capsys
 @pytest.mark.parametrize("old, new", [("1", "0"), ("0", "1"), (None, "1")])
 def test_with_either_switch_off_a_failed_night_writes_nothing_and_passes_no_new_argument(tmp_path, monkeypatch, capsys,
                                                                                           old, new):
-    seen = []
+    seen, collected = [], []
+    real_collect = pipeline.collect_96h_signals
+
+    def collect(*args, **kwargs):
+        collected.append(set(kwargs))
+        return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "collect_96h_signals", collect)
 
     def arrange(client):
         patched = pipeline.commission_daily_zeitgeist
@@ -469,6 +530,7 @@ def test_with_either_switch_off_a_failed_night_writes_nothing_and_passes_no_new_
     assert run["store"].archive == {}
     assert "evidence_archive" not in run["out"].out
     assert seen and all("attempts_out" not in kwargs for kwargs in seen)
+    assert collected and all("reached_rows_out" not in kwargs for kwargs in collected)
 
 
 def test_a_stalled_store_is_cut_off_within_the_capped_budget(tmp_path, monkeypatch, capsys):
@@ -511,21 +573,79 @@ def test_a_failing_archive_store_leaves_the_failure_as_it_was(tmp_path, monkeypa
         "evidence_archive=failed error_class=RuntimeError"]
 
 
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
 @pytest.mark.parametrize("arrange, expected", [
     (lambda mp: None, {"reconcile": False, "journal": None}),
     (_install_fails, {"reconcile": True, "journal": "canonical_committed_local_install_failed"}),
 ], ids=["publish_fails", "install_fails"])
-def test_an_interrupt_while_the_archive_waits_is_raised_in_place_of_the_failure(tmp_path, monkeypatch, capsys,
-                                                                                arrange, expected):
-    """Pinned as it is: a cancel arriving during the wait replaces the night's own exception. The recovery marker
-    and journal are already written by then, so they are as without the archive."""
+def test_an_interrupt_while_the_archive_waits_leaves_the_failure_and_its_outcome(tmp_path, monkeypatch, capsys,
+                                                                                 arrange, expected, interrupt):
+    """A cancel during the wait is swallowed: the night's own exception goes on, with its recovery state."""
+    from src.zeitgeist.publication_commit import PublicationMirrorError
+
     def interrupted(fn, seconds, *, name):
-        raise KeyboardInterrupt
+        raise interrupt
 
     monkeypatch.setattr(evidence_archive, "run_with_budget", interrupted)
-    run = _fail(tmp_path, monkeypatch, capsys, publish_fails=arrange is not _install_fails, expect=KeyboardInterrupt,
-                setup=lambda client: arrange(monkeypatch))
+    install = arrange is _install_fails
+    run = _fail(tmp_path, monkeypatch, capsys, publish_fails=not install,
+                expect=PublicationMirrorError if install else RuntimeError, setup=lambda client: arrange(monkeypatch))
+    if install:
+        assert run["error"].__cause__ is run["raised"]
+    else:
+        assert str(run["error"]) == "synthetic publication failure"
     journal = tmp_path / JOURNAL
     assert {"reconcile": run["store"].needs_git_reconcile,
             "journal": json.loads(journal.read_text())["status"] if journal.exists() else None} == expected
     assert run["store"].archive == {}
+    assert "evidence_archive" not in run["out"].out
+
+
+# ---- a collection that fails inside the collector keeps the rows it held ----
+
+
+LIVE_ROW = {"url_hash": "live0", "source_id": "o1_synthetic_feed", "bucket": "ORBIT", "tier": "O1",
+            "origin": "curated_o1_o3", "title": "Synthetic live title", "summary": "Synthetic live summary",
+            "url": "https://example.invalid/live/0", "published_at": "2026-11-21T10:00:00+00:00",
+            "fetched_at": "2026-11-21T11:00:00+00:00"}
+NOON = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc).timestamp()
+
+
+def _live_world(monkeypatch, *, apify):
+    """Live collection with fake sources: one curated row, no Instagram; nothing leaves the process."""
+    for name in ("APIFY_API_TOKEN", "APIFY_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    if apify:
+        monkeypatch.setenv("APIFY_API_TOKEN", "synthetic-token")
+    monkeypatch.setattr(pipeline, "fetch_all_curated_feeds", lambda config: [dict(LIVE_ROW)])
+    monkeypatch.setattr(pipeline, "fetch_instagram_batch", lambda handles, **kwargs: [])
+    monkeypatch.setattr(pipeline, "fetch_macro_scout_signals", lambda **kwargs: [])
+    monkeypatch.setattr(pipeline, "select_instagram_batch", lambda roster, handles, blocklist=None: ["synthetic_handle"]
+                        if apify else [])
+
+
+@pytest.mark.parametrize("apify", [False, True], ids=["instagram_unavailable", "coverage_short"])
+def test_a_failure_inside_the_collector_archives_the_rows_it_held(tmp_path, monkeypatch, capsys, apify):
+    run = _fail(tmp_path, monkeypatch, capsys, setup=lambda client: _live_world(monkeypatch, apify=apify),
+                expect=IngestionUnavailable, live_collect=True, now_epoch=NOON)
+    meta, night = _night(run)
+    assert (meta["status"], meta["failed_stage"], meta["error_class"]) == ("failed", "collection", "IngestionUnavailable")
+    assert set(night) == {"intake_rows"}
+    assert {row["url_hash"] for row in night["intake_rows"]} == set(run["seeded"]) | {"live0"}
+    assert meta["intake_source"] == "collector_rows"
+
+
+def test_a_failure_before_the_collector_holds_rows_keeps_the_intake_part_empty(tmp_path, monkeypatch, capsys):
+    from src.zeitgeist import embedding_migration
+
+    error = RuntimeError(SENTINEL)
+
+    def plan(store, requested):
+        raise error
+
+    run = _fail(tmp_path, monkeypatch, capsys, live_collect=True, now_epoch=NOON,
+                setup=lambda client: monkeypatch.setattr(embedding_migration, "plan_embedding_run", plan) or error)
+    assert run["error"] is error
+    meta, night = _night(run)
+    assert meta["failed_stage"] == "collection"
+    assert night == {"intake_rows": []}
