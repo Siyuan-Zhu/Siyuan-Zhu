@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual Hydrogen probe: list models, then make up to nine paid calls.
+"""Manual Gemini 4 probe (Hydrogen by default): list models, then make up to nine paid calls.
 
 Prints model versions, token counts and timings only. It never prints the key, response
 text, or any credential identity. Each call is one SDK attempt, and nothing paid runs for a
@@ -34,6 +34,25 @@ cap from 4000/6000/8000/10000/15000 that is at least 1.5 times the LARGER of
 max_total_output_high and critic_total_output; only if 15000 is still too small, apply the same
 rule at medium to max_total_output_medium.
 
+--model (gemini-4-hydrogen by default, or gemini-4-neon) and --thinking-level (high by default;
+low, medium, high or xhigh) choose what is probed. The default pair makes exactly the calls above
+and prints exactly the lines above. Any other pair (the Neon probe is --model gemini-4-neon
+--thinking-level medium):
+
+- lists only the chosen model (Hydrogen also lists gemini-embedding-2 and keeps its embedding
+  call; Neon makes none);
+- makes the same two tiny calls, then one tiny temperature_check call carrying temperature 0.1
+  and candidate_count 1, as the guard sends them where sampling controls are allowed; its line
+  records accepted 1 or 0 with the error class and HTTP status, and it is never fatal;
+- runs all four Director calls, the critic call and the cap_check call at the requested level;
+- adds model_version to every Director, critic and cap_check line and http_status to a failed
+  line; if the first call at the requested level fails, a line with thinking_level_accepted 0,
+  the error class and HTTP status comes before the failed line;
+- prints a summary with max_total_output_<level>, max_thoughts_<level>, max_seconds_<level>,
+  critic_total_output, critic_thoughts, critic_seconds, max_prompt_minus_counted,
+  thinking_level_accepted and model_versions (every distinct response version seen). The cap rule
+  above then reads max_total_output_<level> in place of max_total_output_high.
+
 They are authorised
 outside the spend guard by the spec, so the command refuses to run without --confirm-paid-probe.
 """
@@ -58,8 +77,13 @@ if str(ROOT) not in sys.path:
 from scripts.provider_preflight import inspect_gemini  # noqa: E402
 
 HYDROGEN = "gemini-4-hydrogen"
+NEON = "gemini-4-neon"
 EMBEDDING_2 = "gemini-embedding-2"
 PROBE_MODELS = (HYDROGEN, EMBEDDING_2)
+PROBE_MODEL_CHOICES = (HYDROGEN, NEON)
+NOT_LISTED_STATUS = {HYDROGEN: "hydrogen_not_listed", NEON: "neon_not_listed"}
+THINKING_LEVELS = ("low", "medium", "high", "xhigh")
+DEFAULT_THINKING_LEVEL = "high"
 PROBE_TEXT = "A quiet harbor at dawn with three small boats."
 VERSION_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 CALL_CONFIG = {
@@ -67,6 +91,8 @@ CALL_CONFIG = {
     "thinking_config": {"thinking_level": "low"},
     "media_resolution": "MEDIA_RESOLUTION_HIGH",
 }
+# The guard adds candidate_count 1 to every request that carries sampling controls.
+TEMPERATURE_CHECK_CONFIG = {**CALL_CONFIG, "temperature": 0.1, "candidate_count": 1}
 COUNT_FIELDS = (
     "prompt_token_count",
     "candidates_token_count",
@@ -157,10 +183,21 @@ def critic_fit_parts():
     return parts
 
 
-def counted_tokens(genai_client, contents):
+def is_default_run(model, level):
+    """The pair the probe ran before it took flags; its calls and lines stay exactly as they were."""
+    return model == HYDROGEN and level == DEFAULT_THINKING_LEVEL
+
+
+def fit_plan(model=HYDROGEN, level=DEFAULT_THINKING_LEVEL):
+    if is_default_run(model, level):
+        return FIT_PLAN
+    return ((level, FIT_OUTPUT_TOKENS),) * len(FIT_PLAN)
+
+
+def counted_tokens(genai_client, contents, model=HYDROGEN):
     """countTokens (a free metadata endpoint) for the same model and contents; null on any failure."""
     try:
-        return safe_count(genai_client.models.count_tokens(model=HYDROGEN, contents=contents).total_tokens)
+        return safe_count(genai_client.models.count_tokens(model=model, contents=contents).total_tokens)
     except Exception:
         return None
 
@@ -231,74 +268,101 @@ def fit_row(level, max_output_tokens, response):
     }
 
 
-def run_thinking_fit(genai_client):
-    """One call per (level, output cap) in FIT_PLAN, in order; a failure stops before the next call."""
+def response_version(response):
+    return safe_version(getattr(response, "model_version", None))
+
+
+def with_version(row, response, model, level):
+    """Off the default run every call's line names the reply's model version."""
+    if not is_default_run(model, level):
+        row["model_version"] = response_version(response)
+    return row
+
+
+def run_thinking_fit(genai_client, model=HYDROGEN, run_level=DEFAULT_THINKING_LEVEL):
+    """One call per (level, output cap) in the fit plan, in order; a failure stops before the next call."""
     try:
         prompt = director_fit_prompt()
     except Exception as error:
-        raise ProbeFailure("director_prompt", type(error).__name__) from None
-    for index, (level, max_output_tokens) in enumerate(FIT_PLAN, start=1):
+        raise ProbeFailure.of("director_prompt", error) from None
+    for index, (level, max_output_tokens) in enumerate(fit_plan(model, run_level), start=1):
         config = {
             "max_output_tokens": max_output_tokens,
             "response_mime_type": "application/json",
             "thinking_config": {"thinking_level": level},
         }
         try:
-            counted = counted_tokens(genai_client, prompt)
+            counted = counted_tokens(genai_client, prompt, model)
             response, seconds = _timed(lambda: genai_client.models.generate_content(
-                model=HYDROGEN, contents=prompt, config=config
+                model=model, contents=prompt, config=config
             ))
             row = fit_row(level, max_output_tokens, response)
         except Exception as error:
-            raise ProbeFailure(f"thinking_{level}_{index}", type(error).__name__) from None
-        yield {**row, "counted_tokens": counted, "usage_metadata": usage_record(response),
-               "seconds": seconds}
+            raise ProbeFailure.of(f"thinking_{level}_{index}", error) from None
+        yield with_version({**row, "counted_tokens": counted, "usage_metadata": usage_record(response),
+                            "seconds": seconds}, response, model, run_level)
 
 
-def run_critic_fit(genai_client):
-    """One critic call in the engine's batch shape at thinking high; config as the guard sends it."""
+def run_critic_fit(genai_client, model=HYDROGEN, level=DEFAULT_THINKING_LEVEL):
+    """One critic call in the engine's batch shape at the run's level; config as the guard sends it."""
     config = {
         "response_mime_type": "application/json",
         "max_output_tokens": FIT_OUTPUT_TOKENS,
-        "thinking_config": {"thinking_level": "high"},
+        "thinking_config": {"thinking_level": level},
         "media_resolution": "MEDIA_RESOLUTION_HIGH",
     }
     try:
         parts = critic_fit_parts()
-        counted = counted_tokens(genai_client, parts)
-        counted_text = counted_tokens(genai_client, text_only_parts(parts))
+        counted = counted_tokens(genai_client, parts, model)
+        counted_text = counted_tokens(genai_client, text_only_parts(parts), model)
         response, seconds = _timed(lambda: genai_client.models.generate_content(
-            model=HYDROGEN, contents=parts, config=config
+            model=model, contents=parts, config=config
         ))
-        row = fit_row("high", FIT_OUTPUT_TOKENS, response)
+        row = fit_row(level, FIT_OUTPUT_TOKENS, response)
     except Exception as error:
-        raise ProbeFailure("critic", type(error).__name__) from None
-    return {"call": "critic", "images": CRITIC_IMAGES, **row, "counted_tokens": counted,
-            "counted_text_tokens": counted_text, "usage_metadata": usage_record(response),
-            "seconds": seconds}
+        raise ProbeFailure.of("critic", error) from None
+    return with_version({"call": "critic", "images": CRITIC_IMAGES, **row, "counted_tokens": counted,
+                         "counted_text_tokens": counted_text, "usage_metadata": usage_record(response),
+                         "seconds": seconds}, response, model, level)
 
 
-def run_cap_check(genai_client):
-    """One Director-sized call at thinking high with a 1024-token cap: are thoughts bounded by it?"""
+def run_cap_check(genai_client, model=HYDROGEN, level=DEFAULT_THINKING_LEVEL):
+    """One Director-sized call at the run's level with a 1024-token cap: are thoughts bounded by it?"""
     config = {
         "max_output_tokens": CAP_CHECK_OUTPUT_TOKENS,
         "response_mime_type": "application/json",
-        "thinking_config": {"thinking_level": "high"},
+        "thinking_config": {"thinking_level": level},
     }
     try:
         prompt = director_fit_prompt()
-        counted = counted_tokens(genai_client, prompt)
+        counted = counted_tokens(genai_client, prompt, model)
         response, seconds = _timed(lambda: genai_client.models.generate_content(
-            model=HYDROGEN, contents=prompt, config=config
+            model=model, contents=prompt, config=config
         ))
-        row = fit_row("high", CAP_CHECK_OUTPUT_TOKENS, response)
+        row = fit_row(level, CAP_CHECK_OUTPUT_TOKENS, response)
     except Exception as error:
-        raise ProbeFailure("cap_check", type(error).__name__) from None
-    return {"call": "cap_check", "max_output_tokens": CAP_CHECK_OUTPUT_TOKENS,
-            "candidates_tokens": row["candidates_tokens"], "thoughts_tokens": row["thoughts_tokens"],
-            "total_output": row["total_output"], "finish_reason": row["finish_reason"],
-            "prompt_tokens": row["prompt_tokens"], "counted_tokens": counted,
-            "usage_metadata": usage_record(response), "seconds": seconds}
+        raise ProbeFailure.of("cap_check", error) from None
+    return with_version({"call": "cap_check", "max_output_tokens": CAP_CHECK_OUTPUT_TOKENS,
+                         "candidates_tokens": row["candidates_tokens"], "thoughts_tokens": row["thoughts_tokens"],
+                         "total_output": row["total_output"], "finish_reason": row["finish_reason"],
+                         "prompt_tokens": row["prompt_tokens"], "counted_tokens": counted,
+                         "usage_metadata": usage_record(response), "seconds": seconds},
+                        response, model, level)
+
+
+def run_temperature_check(genai_client, model):
+    """One tiny call carrying temperature; a refusal is recorded (class and HTTP status), never fatal."""
+    start = _clock()
+    try:
+        response = genai_client.models.generate_content(
+            model=model, contents=PROBE_TEXT, config=TEMPERATURE_CHECK_CONFIG)
+    except Exception as error:
+        return {"call": "temperature_check", "accepted": 0, "error_type": type(error).__name__,
+                "http_status": http_status(error), "model_version": None,
+                "seconds": round(_clock() - start, 1)}
+    return {"call": "temperature_check", "accepted": 1, "error_type": None, "http_status": None,
+            "model_version": response_version(response), "usage_metadata": usage_record(response),
+            "seconds": round(_clock() - start, 1)}
 
 
 def _billed_tokens(response):
@@ -344,20 +408,33 @@ def run_embedding(genai_client):
         ))
         return embedding_row(response, seconds, len(EMBED_TEXTS))
     except Exception as error:
-        raise ProbeFailure("embedding", type(error).__name__) from None
+        raise ProbeFailure.of("embedding", error) from None
+
+
+def max_at_level(rows, level, field):
+    values = [r[field] for r in rows if r["thinking_level"] == level and r[field] is not None]
+    return max(values) if values else None
 
 
 def max_total_output(rows, level):
-    totals = [r["total_output"] for r in rows
-              if r["thinking_level"] == level and r["total_output"] is not None]
-    return max(totals) if totals else None
+    return max_at_level(rows, level, "total_output")
+
+
+def http_status(error):
+    """The API error's integer HTTP status (google.genai errors carry it as code), else null."""
+    return safe_count(getattr(error, "code", None))
 
 
 class ProbeFailure(Exception):
-    def __init__(self, phase, error_type):
+    def __init__(self, phase, error_type, http_status=None):
         super().__init__(phase)
         self.phase = phase
         self.error_type = error_type
+        self.http_status = http_status
+
+    @classmethod
+    def of(cls, phase, error):
+        return cls(phase, type(error).__name__, http_status(error))
 
 
 def synthetic_image(variant: int = 0) -> bytes:
@@ -412,42 +489,42 @@ def tokens_per_image(report):
     )
 
 
-def run_probe(key: str, *, http_client, genai_client) -> dict:
+def run_probe(key: str, *, http_client, genai_client, model=HYDROGEN) -> dict:
     from google.genai import types
 
     try:
-        found = inspect_gemini(http_client, key, PROBE_MODELS)
+        found = inspect_gemini(http_client, key, PROBE_MODELS if model == HYDROGEN else (model,))
     except Exception as error:
-        raise ProbeFailure("listing", type(error).__name__) from None
+        raise ProbeFailure.of("listing", error) from None
     report = {
         "listed": found["available_required_models"],
         "missing": found["missing_models"],
         "text": None,
         "image": None,
     }
-    if HYDROGEN in report["missing"]:
+    if model in report["missing"]:
         return report
     try:
-        counted = counted_tokens(genai_client, PROBE_TEXT)
+        counted = counted_tokens(genai_client, PROBE_TEXT, model)
         response, seconds = _timed(lambda: genai_client.models.generate_content(
-            model=HYDROGEN, contents=PROBE_TEXT, config=CALL_CONFIG
+            model=model, contents=PROBE_TEXT, config=CALL_CONFIG
         ))
         report["text"], _ = summarize(response)
         report["text"].update(counted_tokens=counted, usage_metadata=usage_record(response))
         report["text"]["seconds"] = seconds
     except Exception as error:
-        raise ProbeFailure("text", type(error).__name__) from None
+        raise ProbeFailure.of("text", error) from None
     try:
         part = types.Part.from_bytes(data=synthetic_image(), mime_type="image/png")
         response, seconds = _timed(lambda: genai_client.models.generate_content(
-            model=HYDROGEN, contents=[part, PROBE_TEXT], config=CALL_CONFIG
+            model=model, contents=[part, PROBE_TEXT], config=CALL_CONFIG
         ))
         report["image"], usage = summarize(response)
         report["image"]["image_prompt_token_count"] = image_detail_count(usage)
         report["image"]["usage_metadata"] = usage_record(response)
         report["image"]["seconds"] = seconds
     except Exception as error:
-        raise ProbeFailure("image", type(error).__name__) from None
+        raise ProbeFailure.of("image", error) from None
     return report
 
 
@@ -476,10 +553,38 @@ class _LazyGenai:
         return self._client.models
 
 
+def failed_line(phase, error_type, http_status, default_run):
+    line = {"status": "failed", "phase": phase, "error_type": error_type}
+    if not default_run:
+        line["http_status"] = http_status
+    return line
+
+
+def default_summary(rows):
+    summary = {"max_total_output_" + level: max_total_output(rows, level)
+               for level in ("high", "medium")}
+    high_seconds = [r["seconds"] for r in rows if r["thinking_level"] == "high"]
+    summary.update(max_seconds_high=max(high_seconds) if high_seconds else None,
+                   critic_total_output=None, critic_seconds=None)
+    return summary
+
+
+def level_summary(rows, level):
+    seconds = [r["seconds"] for r in rows if r["thinking_level"] == level]
+    return {"max_total_output_" + level: max_total_output(rows, level),
+            "max_thoughts_" + level: max_at_level(rows, level, "thoughts_tokens"),
+            "max_seconds_" + level: max(seconds) if seconds else None,
+            "critic_total_output": None, "critic_thoughts": None, "critic_seconds": None}
+
+
 def main(argv=None, *, env=None, http_factory=None, genai_factory=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--confirm-paid-probe", action="store_true")
+    parser.add_argument("--model", choices=PROBE_MODEL_CHOICES, default=HYDROGEN)
+    parser.add_argument("--thinking-level", choices=THINKING_LEVELS, default=DEFAULT_THINKING_LEVEL)
     args = parser.parse_args(argv)
+    model, level = args.model, args.thinking_level
+    default_run = is_default_run(model, level)
     env = os.environ if env is None else env
     key = env.get("GEMINI_API_KEY", "")
     if not args.confirm_paid_probe or not key:
@@ -489,58 +594,78 @@ def main(argv=None, *, env=None, http_factory=None, genai_factory=None) -> int:
     try:
         http_client = (http_factory or _http_client)()
         try:
-            report = run_probe(key, http_client=http_client, genai_client=genai_client)
+            report = run_probe(key, http_client=http_client, genai_client=genai_client, model=model)
         finally:
             close = getattr(http_client, "close", None)
             if close:
                 close()
     except ProbeFailure as failure:
-        print(json.dumps({"status": "failed", "phase": failure.phase,
-                          "error_type": failure.error_type}))
+        print(json.dumps(failed_line(failure.phase, failure.error_type, failure.http_status, default_run)))
         return 1
     except Exception as error:
-        print(json.dumps({"status": "failed", "phase": "listing",
-                          "error_type": type(error).__name__}))
+        print(json.dumps(failed_line("listing", type(error).__name__, http_status(error), default_run)))
         return 1
-    if HYDROGEN in report["missing"]:
-        print(json.dumps({"status": "hydrogen_not_listed", **report}))
+    if model in report["missing"]:
+        print(json.dumps({"status": NOT_LISTED_STATUS[model], **report}))
         return 2
     print(json.dumps({"status": "ok", **report, "tokens_per_image": tokens_per_image(report)}))
+    versions = [report["text"]["model_version"], report["image"]["model_version"]]
+    if not default_run:
+        temperature = run_temperature_check(genai_client, model)
+        print(json.dumps(temperature))
+        versions.append(temperature["model_version"])
     try:
         rows = []
-        for row in run_thinking_fit(genai_client):
-            rows.append(row)
-            print(json.dumps(row))
-        summary = {"max_total_output_" + level: max_total_output(rows, level)
-                   for level in ("high", "medium")}
-        high_seconds = [r["seconds"] for r in rows if r["thinking_level"] == "high"]
-        summary.update(max_seconds_high=max(high_seconds) if high_seconds else None,
-                       critic_total_output=None, critic_seconds=None)
+        try:
+            for row in run_thinking_fit(genai_client, model, level):
+                rows.append(row)
+                print(json.dumps(row))
+        except ProbeFailure as failure:
+            if not default_run and not rows and failure.phase != "director_prompt":
+                print(json.dumps({"thinking_level": level, "thinking_level_accepted": 0,
+                                  "error_type": failure.error_type, "http_status": failure.http_status}))
+            raise
+        if default_run:
+            summary = default_summary(rows)
+        else:
+            summary = level_summary(rows, level)
+            summary["thinking_level_accepted"] = 1
+            versions += [row["model_version"] for row in rows]
         measured = [{"prompt_tokens": report["text"]["prompt_token_count"],
                      "counted_tokens": report["text"]["counted_tokens"]}] + rows
+
+        def finish(summary):
+            summary["max_prompt_minus_counted"] = max_prompt_minus_counted(measured)
+            if not default_run:
+                summary["model_versions"] = sorted({v for v in versions if v is not None})
+            return summary
+
         try:
-            critic = run_critic_fit(genai_client)
+            critic = run_critic_fit(genai_client, model, level)
             print(json.dumps(critic))
             measured.append(critic)
             summary.update(critic_total_output=critic["total_output"], critic_seconds=critic["seconds"])
-            cap_check = run_cap_check(genai_client)
+            if not default_run:
+                summary["critic_thoughts"] = critic["thoughts_tokens"]
+                versions.append(critic["model_version"])
+            cap_check = run_cap_check(genai_client, model, level)
             print(json.dumps(cap_check))
             measured.append(cap_check)
+            if not default_run:
+                versions.append(cap_check["model_version"])
         except ProbeFailure:
             # The measurements so far still reach the coordinator; the critic fields stay null
             # when the critic call failed.
-            print(json.dumps({**summary, "max_prompt_minus_counted": max_prompt_minus_counted(measured)}))
+            print(json.dumps(finish(summary)))
             raise
-        summary["max_prompt_minus_counted"] = max_prompt_minus_counted(measured)
-        print(json.dumps(summary))
-        if EMBEDDING_2 not in report["missing"]:
+        print(json.dumps(finish(summary)))
+        if model == HYDROGEN and EMBEDDING_2 not in report["missing"]:
             embedding = run_embedding(genai_client)
             print(json.dumps(embedding))
             if embedding["vectors"] != embedding["texts"]:
                 return 1
     except ProbeFailure as failure:
-        print(json.dumps({"status": "failed", "phase": failure.phase,
-                          "error_type": failure.error_type}))
+        print(json.dumps(failed_line(failure.phase, failure.error_type, failure.http_status, default_run)))
         return 1
     return 0
 

@@ -212,7 +212,7 @@ def test_bad_counts_print_null(capsys):
 
 def test_probe_workflow_is_minimal():
     text = (ROOT / ".github/workflows/hydrogen_probe.yml").read_text()
-    assert "up to seven Hydrogen calls" in text and "up to 15000 output tokens" in text
+    assert "up to eight calls to the chosen Gemini 4 model" in text and "up to 15000 output tokens" in text
     assert "one gemini-embedding-2 call" in text
     assert "workflow_dispatch:" in text
     for banned in ("schedule:", "push:", "pull_request", "id-token", "contents: write",
@@ -220,7 +220,7 @@ def test_probe_workflow_is_minimal():
         assert banned not in text, banned
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", text)) == {"GEMINI_API_KEY"}
     assert "permissions:\n  contents: read\njobs:" in text and text.count("permissions:") == 1
-    assert "python3 scripts/probe_hydrogen.py --confirm-paid-probe" in text
+    assert '"scripts/probe_hydrogen.py", "--confirm-paid-probe"' in text
 
 
 def _top_level_block(text, key):

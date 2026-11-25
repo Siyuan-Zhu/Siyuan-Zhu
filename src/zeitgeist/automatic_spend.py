@@ -14,7 +14,7 @@ import math
 import re
 from urllib.parse import urlparse
 
-from .spend_guard import EMBEDDING_2_OPERATION, HYDROGEN_OPERATION, BudgetGuard, SpendBlocked, money
+from .spend_guard import EMBEDDING_2_OPERATION, HYDROGEN_OPERATION, NEON_OPERATION, BudgetGuard, SpendBlocked, money
 
 STATIC = ('account_id', 'plan_id', 'credential_fingerprint', 'credit_kind',
           'operation_caps_usd', 'request_limits', 'max_request_duration_seconds')
@@ -291,10 +291,10 @@ def gemini_rates_within_approval(account, pinned, price, now):
     return gemini_rate_excess(account, pinned, price, now) is not None
 
 
-# The two new models' operations. When the policy budgets one and it is not listed by
+# The new models' operations. When the policy budgets one and it is not listed by
 # ListModels, not published, or published above its approved rate, a refresh disables
 # that operation (refused before any call) instead of blocking everything.
-OPTIONAL_OPERATIONS = frozenset({HYDROGEN_OPERATION, EMBEDDING_2_OPERATION})
+OPTIONAL_OPERATIONS = frozenset({HYDROGEN_OPERATION, NEON_OPERATION, EMBEDDING_2_OPERATION})
 
 
 def gemini_metadata_verified(fresh, operations):

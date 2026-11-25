@@ -17,7 +17,7 @@ import os
 import threading
 import random
 import time
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 import uuid
 
 import httpx
@@ -31,15 +31,54 @@ HYDROGEN_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
 # Measured 2026-11-22: JSON-mode Hydrogen bills 67 prompt tokens above countTokens, plus 2 per image;
 # countTokens refuses the generation config, so the guard admits this allowance on top of the count.
 HYDROGEN_PROMPT_ALLOWANCE_TOKENS = 256
+NEON_MODEL = "gemini-4-neon"
+NEON_OPERATION = "generate_content:" + NEON_MODEL
+NEON_OUTPUT_TOKENS = HYDROGEN_OUTPUT_TOKENS
+NEON_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
+NEON_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
+# Measured 2026-11-25 (Neon probe): the same 67 prompt tokens above countTokens as Hydrogen.
+NEON_PROMPT_ALLOWANCE_TOKENS = 256
 EMBEDDING_2_MODEL = "gemini-embedding-2"
 EMBEDDING_2_OPERATION = "embed_content:" + EMBEDDING_2_MODEL
 EMBEDDING_2_DIMENSIONS = 768
 EMBEDDING_2_MAX_COUNTED_TOKENS_PER_TEXT = 2040
 
 
+class Gemini4Terms(NamedTuple):
+    """One Gemini 4 model's approved tariff and request shape, and the reasons that name it."""
+    name: str
+    input_usd_per_million: str
+    output_usd_per_million: str
+    output_tokens: tuple
+    thinking_levels: tuple
+    pricing_announced_until: str
+    prompt_allowance_tokens: int
+
+    @property
+    def policy_reason(self) -> str:
+        return f"Unverified Gemini 4 {self.name} pricing or model policy"
+
+    @property
+    def expiry_reason(self) -> str:
+        return f"Gemini 4 {self.name} pricing expires before bounded request completion"
+
+    @property
+    def sampling_reason(self) -> str:
+        return f"Gemini 4 {self.name} sampling controls are not supported"
+
+
+GEMINI_4 = {
+    HYDROGEN_MODEL: Gemini4Terms("Hydrogen", "1.50", "7.50", HYDROGEN_OUTPUT_TOKENS, HYDROGEN_THINKING_LEVELS,
+                                 HYDROGEN_PRICING_ANNOUNCED_UNTIL, HYDROGEN_PROMPT_ALLOWANCE_TOKENS),
+    NEON_MODEL: Gemini4Terms("Neon", "3.00", "15.00", NEON_OUTPUT_TOKENS, NEON_THINKING_LEVELS,
+                             NEON_PRICING_ANNOUNCED_UNTIL, NEON_PROMPT_ALLOWANCE_TOKENS),
+}
+GEMINI_4_OPERATIONS = {"generate_content:" + model: model for model in GEMINI_4}
+
+
 def sampling_controls_supported(model: str) -> bool:
-    """Gemini 3 and Hydrogen reject temperature and candidate_count."""
-    return not (model.startswith("gemini-3") or model == HYDROGEN_MODEL)
+    """Gemini 3 and Gemini 4 (Hydrogen, Neon) reject temperature and candidate_count."""
+    return not (model.startswith("gemini-3") or model in GEMINI_4)
 
 
 class SpendBlocked(RuntimeError):
@@ -72,6 +111,9 @@ class SpendBlocked(RuntimeError):
         "Unverified Gemini 4 Hydrogen pricing or model policy": "unverified-hydrogen-policy",
         "Gemini 4 Hydrogen pricing expires before bounded request completion": "pricing-validity-bound",
         "Gemini 4 Hydrogen sampling controls are not supported": "unsupported-sampling-controls",
+        "Unverified Gemini 4 Neon pricing or model policy": "unverified-neon-policy",
+        "Gemini 4 Neon pricing expires before bounded request completion": "pricing-validity-bound",
+        "Gemini 4 Neon sampling controls are not supported": "unsupported-sampling-controls",
         "Unverified Gemini Embedding 2 pricing or model policy": "unverified-embedding2-policy",
         "Allowance period cannot be reset before verified expiry": "allowance-period-cannot-be-reset-before-verified-expiry",
         "Billing policy approval expired or exceeds current 24h gate": "billing-policy-approval-expired-or-exceeds-current-24h-gate",
@@ -328,6 +370,7 @@ GENAI_RATE_KEYS = ("input_token_usd_per_million", "output_token_usd_per_million"
 
 # Reuses each model's public reason: a disabled operation is not verified for this refresh.
 _DISABLED_REASONS = {HYDROGEN_OPERATION: "Unverified Gemini 4 Hydrogen pricing or model policy",
+                     NEON_OPERATION: "Unverified Gemini 4 Neon pricing or model policy",
                      EMBEDDING_2_OPERATION: "Unverified Gemini Embedding 2 pricing or model policy"}
 
 
@@ -803,10 +846,16 @@ class BudgetGuard:
 
     def _validate_hydrogen_policy(self, limits, duration, account):
         """Exact Hydrogen tariff and bounded multimodal shape, never inferred credits."""
-        reason = "Unverified Gemini 4 Hydrogen pricing or model policy"
-        if (money(limits.get("input_token_usd_per_million")) != Decimal("1.50")
-                or money(limits.get("output_token_usd_per_million")) != Decimal("7.50")
-                or limits.get("thinking_level") not in HYDROGEN_THINKING_LEVELS
+        self._validate_gemini4_policy(HYDROGEN_MODEL, limits, duration, account)
+
+    def _validate_gemini4_policy(self, model, limits, duration, account):
+        """One Gemini 4 model's exact tariff and bounded multimodal shape, never inferred credits."""
+        terms = GEMINI_4[model]
+        reason = terms.policy_reason
+        input_rate, output_rate = Decimal(terms.input_usd_per_million), Decimal(terms.output_usd_per_million)
+        if (money(limits.get("input_token_usd_per_million")) != input_rate
+                or money(limits.get("output_token_usd_per_million")) != output_rate
+                or limits.get("thinking_level") not in terms.thinking_levels
                 or limits.get("media_resolution") != "MEDIA_RESOLUTION_HIGH"):
             raise SpendBlocked(reason)
         tokens = limits.get("image_tokens_per_image")
@@ -821,12 +870,12 @@ class BudgetGuard:
             if type(value) is not int or not 1 <= value <= ceiling:
                 raise SpendBlocked(reason)
         output = limits.get("max_output_tokens")
-        if type(output) is not int or output not in HYDROGEN_OUTPUT_TOKENS:
+        if type(output) is not int or output not in terms.output_tokens:
             raise SpendBlocked(reason)
         # The per-call cap is the full input window plus the whole output allowance, exactly.
-        full_bound = (Decimal(65536) * Decimal("1.50") + Decimal(output) * Decimal("7.50")) / 1000000
+        full_bound = (Decimal(65536) * input_rate + Decimal(output) * output_rate) / 1000000
         try:
-            cap = money(account.get("operation_caps_usd", {}).get(HYDROGEN_OPERATION))
+            cap = money(account.get("operation_caps_usd", {}).get("generate_content:" + model))
         except SpendBlocked:
             raise SpendBlocked(reason) from None
         if cap != full_bound:
@@ -835,9 +884,9 @@ class BudgetGuard:
         if type(images) is not int or not 0 <= images <= 9:
             raise SpendBlocked(reason)
         expires = self._timestamp(limits.get("pricing_valid_until"))
-        announced = self._timestamp(HYDROGEN_PRICING_ANNOUNCED_UNTIL)
+        announced = self._timestamp(terms.pricing_announced_until)
         if not self.now() + timedelta(seconds=duration) < expires <= announced:
-            raise SpendBlocked("Gemini 4 Hydrogen pricing expires before bounded request completion")
+            raise SpendBlocked(terms.expiry_reason)
 
     def _validate_embedding2_policy(self, limits):
         """Exact embedding-2 text tariff and 768-dimension shape, never inferred credits."""
@@ -863,8 +912,8 @@ class BudgetGuard:
             duration = int(account.get("max_request_duration_seconds", 300))
             if model == "gemini-3.8-flash":
                 self._validate_gemini38_policy(limits, duration)
-            elif model == HYDROGEN_MODEL:
-                self._validate_hydrogen_policy(limits, duration, account)
+            elif model in GEMINI_4:
+                self._validate_gemini4_policy(model, limits, duration, account)
             elif model == EMBEDDING_2_MODEL:
                 self._validate_embedding2_policy(limits)
             return copy.deepcopy(limits), duration
@@ -921,8 +970,8 @@ class BudgetGuard:
                 raise SpendBlocked("Only one priced generation candidate is permitted")
             if not sampling_controls_supported(model):
                 if "temperature" in config or "candidate_count" in config:
-                    raise SpendBlocked("Gemini 4 Hydrogen sampling controls are not supported"
-                                       if model == HYDROGEN_MODEL else "Gemini 3 sampling controls are not supported")
+                    raise SpendBlocked(GEMINI_4[model].sampling_reason
+                                       if model in GEMINI_4 else "Gemini 3 sampling controls are not supported")
             else:
                 config["candidate_count"] = 1
             output = int(limits.get("max_output_tokens", 0))
@@ -943,11 +992,11 @@ class BudgetGuard:
                 if not 128 <= thinking <= output:
                     raise SpendBlocked("Verified 2.5 Pro reasoning allowance required")
                 config["thinking_config"] = {"thinking_budget": thinking}
-            elif model == HYDROGEN_MODEL:
+            elif model in GEMINI_4:
                 from google.genai import types
                 level = limits.get("thinking_level")
                 try:
-                    if level not in HYDROGEN_THINKING_LEVELS:
+                    if level not in GEMINI_4[model].thinking_levels:
                         raise ValueError(level)
                     types.ThinkingConfig(thinking_level=level)
                 except Exception:
@@ -1002,10 +1051,11 @@ class BudgetGuard:
                 if not isinstance(limits, dict):
                     raise SpendBlocked('Verified model pricing and request limits required')
                 self._validate_gemini38_policy(limits, int(account.get('max_request_duration_seconds', 300)))
-            elif operation == HYDROGEN_OPERATION:
+            elif operation in GEMINI_4_OPERATIONS:
                 if not isinstance(limits, dict):
                     raise SpendBlocked('Verified model pricing and request limits required')
-                self._validate_hydrogen_policy(limits, int(account.get('max_request_duration_seconds', 300)), account)
+                self._validate_gemini4_policy(GEMINI_4_OPERATIONS[operation], limits,
+                                              int(account.get('max_request_duration_seconds', 300)), account)
             elif operation == EMBEDDING_2_OPERATION:
                 if not isinstance(limits, dict):
                     raise SpendBlocked('Verified model pricing and request limits required')
@@ -1101,7 +1151,7 @@ class BudgetGuard:
             text_contents = inspect(contents)
             if bounded['config'].get('response_modalities', ['TEXT']) != ['TEXT']:
                 raise SpendBlocked('Only text output is covered by the verified token tariff')
-            if image_count and model not in ('gemini-2.5-flash', 'gemini-3.8-flash', HYDROGEN_MODEL):
+            if image_count and model not in ('gemini-2.5-flash', 'gemini-3.8-flash') and model not in GEMINI_4:
                 raise SpendBlocked('Inline vision tariff is not verified for this model')
             if image_count > int(limits.get('max_input_images', 1)):
                 raise SpendBlocked('Inline image count exceeds verified policy')
@@ -1109,12 +1159,12 @@ class BudgetGuard:
             if image_count:
                 # Additional text-only count avoids deriving text usage by
                 # subtracting an estimated image component from the total.
-                total = max(total, count(text_contents) + image_count * (int(limits['image_tokens_per_image']) if model == HYDROGEN_MODEL else 1120 if model == 'gemini-3.8-flash' else 258))
+                total = max(total, count(text_contents) + image_count * (int(limits['image_tokens_per_image']) if model in GEMINI_4 else 1120 if model == 'gemini-3.8-flash' else 258))
             output = int(bounded['config']['max_output_tokens'])
             if output > int(limits.get('max_output_tokens', 0)):
                 raise SpendBlocked('Output policy changed after request validation')
-            if operation == HYDROGEN_OPERATION:
-                total += HYDROGEN_PROMPT_ALLOWANCE_TOKENS
+            if operation in GEMINI_4_OPERATIONS:
+                total += GEMINI_4[model].prompt_allowance_tokens
         maximum = limits.get('max_input_tokens')
         if type(maximum) is not int or not 0 <= total <= maximum:
             raise SpendBlocked('Counted input exceeds verified token ceiling')

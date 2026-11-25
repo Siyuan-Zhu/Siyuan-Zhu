@@ -92,9 +92,9 @@ def test_a_left_out_section_does_not_reach_the_digest(name):
     assert digest(normalize_gemini_tariff(in_section(heading, change))) == digest(normalize_gemini_tariff(without_section))
 
 
-def test_the_unmodified_page_yields_all_four_operations():
+def test_the_unmodified_page_yields_all_five_operations():
     contract = normalize_gemini_tariff(page())
-    assert set(contract['operations']) == {FLASH, HYDROGEN, EMBEDDING_2, EMBEDDING_001}
+    assert set(contract['operations']) == {FLASH, HYDROGEN, 'generate_content:gemini-4-neon', EMBEDDING_2, EMBEDDING_001}
     assert_old_models_at_todays_rates(contract)
 
 

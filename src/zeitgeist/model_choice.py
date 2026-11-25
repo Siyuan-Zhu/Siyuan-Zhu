@@ -13,6 +13,7 @@ T = TypeVar("T")
 
 FLASH = "gemini-3.8-flash"
 HYDROGEN = "gemini-4-hydrogen"
+NEON = "gemini-4-neon"
 EMBED_001 = "gemini-embedding-001"
 EMBED_2 = "gemini-embedding-2"
 
@@ -20,7 +21,9 @@ DIRECTOR_ENV = "ZEITGEIST_DIRECTOR_MODEL"
 JUDGE_ENV = "ZEITGEIST_JUDGE_MODEL"
 EMBEDDING_ENV = "ZEITGEIST_EMBEDDING_MODEL"
 
-_TEXT_MODELS = frozenset({FLASH, HYDROGEN})
+# The Gemini 4 models: each gets the Director's candidate slate and its own judge calibration.
+GEMINI_4 = frozenset({HYDROGEN, NEON})
+_TEXT_MODELS = frozenset({FLASH}) | GEMINI_4
 _EMBEDDING_MODELS = frozenset({EMBED_001, EMBED_2})
 _ROLES = ("director", "judge", "embedding")
 
