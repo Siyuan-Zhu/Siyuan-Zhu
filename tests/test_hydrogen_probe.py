@@ -212,7 +212,7 @@ def test_bad_counts_print_null(capsys):
 
 def test_probe_workflow_is_minimal():
     text = (ROOT / ".github/workflows/hydrogen_probe.yml").read_text()
-    assert "up to seven Hydrogen calls" in text and "up to 15000 output tokens" in text
+    assert "up to eight calls to the chosen Gemini 4 model" in text and "up to 15000 output tokens" in text
     assert "one gemini-embedding-2 call" in text
     assert "workflow_dispatch:" in text
     for banned in ("schedule:", "push:", "pull_request", "id-token", "contents: write",
