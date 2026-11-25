@@ -1,6 +1,82 @@
 {
   "entries": [
     {
+      "artwork_artist": "Meghna R",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Grace Note",
+      "artwork_url": "https://unsplash.com/photos/z4dzjjgM_JY",
+      "cluster_keywords": [
+        "thanksgiving practice",
+        "simple thanksgiving",
+        "practice your",
+        "gratitude",
+        "your week"
+      ],
+      "commissioned_thesis": "The day's strongest signal reframes seasonal thanksgiving not as a grand, once-a-year performance, but as an accessible, even playful weekly discipline. Borrowed from musical notation, a grace note is a brief embellishment that leaves the underlying meter intact while subtly lifting the entire phrase. In the same way, weaving modest, repeatable exercises of gratitude into an unremarkable week alters the emotional key of daily life without demanding solemnity or spectacle.",
+      "critic_scores": {
+        "semantic_alignment": 0.86,
+        "composite": 0.844
+      },
+      "date": "2026-11-25",
+      "fallback_webp_path": "assets/pulse/2026-11-25.webp",
+      "flux_model": null,
+      "gloss": "Small, playful thanks adorning ordinary days.",
+      "headline": "Grace Note \u2014 Small, playful thanks adorning ordinary days.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/z4dzjjgM_JY",
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_sources_matched": [],
+      "publication_id": "7cad20d4f4798a3d5cfa",
+      "published_at": "2026-11-25T05:28:02.933731Z",
+      "quote": "Small, playful thanks adorning ordinary days.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "The day's strongest signal reframes seasonal thanksgiving not as a grand, once-a-year performance, but as an accessible, even playful weekly discipline. Borrowed from musical notation, a grace note is a brief embellishment that leaves the underlying meter intact while subtly lifting the entire phrase. In the same way, weaving modest, repeatable exercises of gratitude into an unremarkable week alters the emotional key of daily life without demanding solemnity or spectacle.",
+      "top_macro_themes": [
+        "thanksgiving practice",
+        "simple thanksgiving",
+        "practice your",
+        "gratitude",
+        "your week"
+      ],
+      "top_orbit_themes": [
+        "thanksgiving practice",
+        "simple thanksgiving",
+        "practice your",
+        "gratitude",
+        "your week"
+      ],
+      "unsplash_photographer": "Meghna R",
+      "unsplash_profile_url": "https://unsplash.com/@darkandflawed",
+      "updated_at": "2026-11-25T05:28:02.933731Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Grace Note",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "z4dzjjgM_JY",
+        "source_url": "https://unsplash.com/photos/z4dzjjgM_JY",
+        "camera_make": "Canon",
+        "camera_model": "Canon EOS 1200D",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
       "24h_shift": 0.24,
       "artwork_artist": "CHUTTERSNAP",
       "artwork_source": "Unsplash",
@@ -1458,8 +1534,8 @@
       "visual_tier_used": "PHOTOGRAPHY",
       "window_hours": 96,
       "word": "Relic",
-      "photo_selection_policy_date": "2026-11-07",
       "photo_selection_policy": "owner-approved-best-safe-photo",
+      "photo_selection_policy_date": "2026-11-07",
       "media_provenance": {
         "version": 1,
         "classification": "PHOTOGRAPHY",
@@ -1870,8 +1946,8 @@
       "visual_tier_used": "DIGITAL_ARTWORK",
       "window_hours": 96,
       "word": "Insinuation",
-      "photo_selection_policy_date": "2026-11-01",
       "photo_selection_policy": "owner-approved-best-safe-photo",
+      "photo_selection_policy_date": "2026-11-01",
       "media_provenance": {
         "version": 1,
         "classification": "DIGITAL_ARTWORK",
@@ -1962,6 +2038,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-24T09:35:25.953313Z",
+  "updated_at": "2026-11-25T05:28:02.933731Z",
   "version": "2.0"
 }

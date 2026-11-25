@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-24",
-  "word": "Parallax",
-  "gloss": "Apparent certainty shifting with the lens.",
-  "archetype": "S1_BLEED",
+  "date": "2026-11-25",
+  "word": "Grace Note",
+  "gloss": "Small, playful thanks adorning ordinary days.",
+  "archetype": "S1_PLATE",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "85768b4ffa9bdf64e282fc9690ba2605772e16c5f77a5ab5843bde45f9d308e0",
-    "assets/daily_pulse_dark.webp": "33a81627108d18b53afca65ab691b7166e2f02f59deb72fd310014886f1e67d6",
-    "assets/daily_pulse.svg": "ce569178f36d9a28bf860b713d216fbb11faedb2d48fb726f85b2d324db78449",
-    "assets/pulse/2026-11-24.webp": "89a308c6e8533e1c0995121ec088f71558229b82c8d06e421fbb1e748d6a6fa4"
+    "assets/daily_pulse_light.webp": "d9a4b44a51e3818fa37eb275b36de9e33609823150b812382b4cc95b77a08108",
+    "assets/daily_pulse_dark.webp": "d1b70336c5ce24013ff4345be7d232af67e41a25b1956218abd2a933b34bb820",
+    "assets/daily_pulse.svg": "8a1fa861f8c39a2458863ebbccdd55649bbe418a5ddf747746f9502427e89664",
+    "assets/pulse/2026-11-25.webp": "779512b0f1b41c6e44ad37b53ef6b73af82392f9d3110f6b4edfef548f13295e"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "sJh8Gw9ngHA",
-    "source_url": "https://unsplash.com/photos/sJh8Gw9ngHA",
-    "camera_make": "NIKON CORPORATION",
-    "camera_model": "NIKON Z 6",
+    "asset_id": "z4dzjjgM_JY",
+    "source_url": "https://unsplash.com/photos/z4dzjjgM_JY",
+    "camera_make": "Canon",
+    "camera_model": "Canon EOS 1200D",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "a08bdfb6b079571cf29d"
+  "publication_id": "7cad20d4f4798a3d5cfa"
 }
