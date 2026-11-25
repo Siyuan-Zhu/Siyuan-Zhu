@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from src.state_store import (
     FirestoreStateStore,
     InMemoryStateStore,
@@ -45,6 +47,35 @@ SECTION_7_1_FEED_KEYS = {
 # Committed feed entries may predate or follow the approved field removal
 # (ZEITGEIST_DROP_FALSE_FIELDS), so the removed fields are not required there.
 COMMITTED_FEED_KEYS = SECTION_7_1_FEED_KEYS - set(FALSE_MOMENTUM_FIELDS)
+
+# First edition published with ZEITGEIST_DROP_FALSE_FIELDS on; entries from this date carry none of the six.
+FALSE_FIELDS_SWITCH_DATE = "2026-11-25"
+
+
+def _assert_false_momentum_fields(entry):
+    present_removed = set(FALSE_MOMENTUM_FIELDS) & set(entry)
+    if str(entry["date"])[:10] >= FALSE_FIELDS_SWITCH_DATE:
+        assert not present_removed, (
+            f"False momentum fields on or after the switch date: {len(present_removed)} of {len(FALSE_MOMENTUM_FIELDS)} present"
+        )
+        return
+    assert present_removed in (set(), set(FALSE_MOMENTUM_FIELDS)), (
+        f"Half-removed false momentum fields: {len(present_removed)} of {len(FALSE_MOMENTUM_FIELDS)} present"
+    )
+
+
+def test_false_momentum_fields_rule_enforces_switch_date():
+    full = {key: 0 for key in FALSE_MOMENTUM_FIELDS}
+    _assert_false_momentum_fields({"date": "2026-11-24", **full})
+    _assert_false_momentum_fields({"date": "2026-11-24"})
+    _assert_false_momentum_fields({"date": "2026-11-26"})
+    _assert_false_momentum_fields({"date": "2026-11-25T04:00:00Z"})
+    for date in ("2026-11-25", "2026-11-26", "2026-11-26T04:00:00Z"):
+        with pytest.raises(AssertionError):
+            _assert_false_momentum_fields({"date": date, **full})
+    half = {"date": "2026-11-24", FALSE_MOMENTUM_FIELDS[0]: 0}
+    with pytest.raises(AssertionError):
+        _assert_false_momentum_fields(half)
 
 
 def _make_sample_published_pulse() -> PublishedPulse:
@@ -871,10 +902,7 @@ def test_public_json_files_match_runtime_schema_and_no_base64_bloat() -> None:
             validate_editorial_entry(entry)
         assert_public_provenance(entry)
         assert COMMITTED_FEED_KEYS.issubset(entry)
-        present_removed = set(FALSE_MOMENTUM_FIELDS) & set(entry)
-        assert present_removed in (set(), set(FALSE_MOMENTUM_FIELDS)), (
-            f"Half-removed false momentum fields: {len(present_removed)} of {len(FALSE_MOMENTUM_FIELDS)} present"
-        )
+        _assert_false_momentum_fields(entry)
         _assert_valid_pulse_votes(entry["mood_votes"])
         if modern and entry["date"][:10] == manifest["date"]:
             assert entry["publication_id"] == manifest["publication_id"]
