@@ -74,4 +74,4 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
         run: |
           python3 scripts/maintain_spend_control.py --apply --private-report /tmp/private-spend-maintenance/evidence.json
-          python3 scripts/private_run.py
+          python3 scripts/oneword_study.py
