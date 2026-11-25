@@ -159,6 +159,9 @@ def markdoc_20261113():
 
 def test_observed_official_markdoc_retains_exact_standard_rates():
     contract=normalize_gemini_tariff(markdoc())
+    # The synthetic page has no Neon section; the saved page's Neon rates are pinned in test_neon_tariff.
+    neon=contract['operations'].pop('generate_content:gemini-4-neon')
+    assert neon['input_token_usd_per_million']=='3' and neon['output_token_usd_per_million']=='15'
     assert contract['operations']==normalize_gemini_tariff(fixture())['operations']
     assert 'Discounts and model availability' in contract['standard_conditions']['gemini-4-hydrogen']['scoped_model_caveats']
     # The 3.8 section of the 2026-11-13 page carried this caveat; the newer page moved it to Hydrogen.

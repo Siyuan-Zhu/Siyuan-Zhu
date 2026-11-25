@@ -17,8 +17,9 @@ from tests.test_successor_compatibility import CONTRACT, HYDROGEN_VERSION, obser
 FINGERPRINTS = {'gemini': 'a' * 16, 'bfl': 'b' * 16, 'apify': 'c' * 16}
 
 
-def test_the_optional_operations_are_exactly_the_two_new_models():
-    assert auto.OPTIONAL_OPERATIONS == frozenset({'generate_content:gemini-4-hydrogen', 'embed_content:gemini-embedding-2'})
+def test_the_optional_operations_are_exactly_the_three_new_models():
+    assert auto.OPTIONAL_OPERATIONS == frozenset({'generate_content:gemini-4-hydrogen', 'generate_content:gemini-4-neon',
+                                                  'embed_content:gemini-embedding-2'})
 
 
 def successor(include_embedding_2):
