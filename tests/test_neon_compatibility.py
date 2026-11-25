@@ -22,7 +22,7 @@ DIRECTOR_COUNTED, DIRECTOR_BILLED = 1060, 1127
 CRITIC_COUNTED, CRITIC_TEXT_COUNTED, CRITIC_BILLED = 10296, 216, 10102
 
 
-def neon_successor():
+def neon_successor(tariff_sha256=T):
     """Hydrogen (high, 6000, 1091) and embedding-2 as on 22 Nov, then Neon (medium, 6000, 1091) on the page's digest."""
     ledger0, p0 = installed()
     p0['providers']['gemini']['price_snapshot_sha256'] = OLD_PIN
@@ -31,7 +31,7 @@ def neon_successor():
                          hydrogen_max_output_tokens=6000, hydrogen_thinking_level='high', tariff_sha256='c' * 64,
                          include_embedding_2=True)
     p2 = build_neon_successor(p1, neon_model_version=NEON_VERSION, neon_tokens_per_image=1091,
-                              neon_max_output_tokens=OUTPUT_CAP, neon_thinking_level='medium', tariff_sha256=T)
+                              neon_max_output_tokens=OUTPUT_CAP, neon_thinking_level='medium', tariff_sha256=tariff_sha256)
     ledger = dict(successor_ledger(ledger0, p2, auto.digest(p2)), credential_binding_required=True,
                   budget_scope='new_requests_after_cutoff')
     return ledger, p2
@@ -57,6 +57,13 @@ def test_neon_successor_refreshes_on_the_hash_path_with_nothing_disabled():
     ledger, policy = neon_successor()
     account = refreshed(ledger, policy, listed(policy))['providers']['gemini']
     assert 'disabled_operations' not in account and 'price_observed_sha256' not in account
+
+
+def test_a_reworded_page_keeps_neon_enabled_on_the_rate_path():
+    ledger, policy = neon_successor(tariff_sha256='b' * 64)
+    account = refreshed(ledger, policy, listed(policy))['providers']['gemini']
+    assert account['price_observed_sha256'] == T
+    assert 'disabled_operations' not in account and 'price_band_audit' not in account
 
 
 CASES = {
