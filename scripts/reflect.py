@@ -31,7 +31,7 @@ from src.zeitgeist import reflector as rf  # noqa: E402
 from src.zeitgeist import run_record  # noqa: E402
 from src.zeitgeist.collectors import embed_missing_items  # noqa: E402
 from src.zeitgeist.methodology import _extract_unit_embedding_f32  # noqa: E402
-from src.zeitgeist.model_choice import FLASH, HYDROGEN  # noqa: E402
+from src.zeitgeist.model_choice import FLASH, HYDROGEN, NEON  # noqa: E402
 from src.zeitgeist.spend_guard import SpendBlocked, refused_before_dispatch  # noqa: E402
 
 KEY = "reflector"
@@ -40,7 +40,7 @@ TRIAL_KEY = "reflector_trial"
 PRIVATE_KIND = "private_run"
 DEFAULT_ARM = "current"
 MODEL_ENV = "ZEITGEIST_REFLECTOR_MODEL"
-MODELS = (FLASH, HYDROGEN)
+MODELS = (FLASH, HYDROGEN, NEON)
 MAX_AGE = timedelta(hours=36)
 HISTORY_DAYS = 30
 MAX_GLOSSES = 25

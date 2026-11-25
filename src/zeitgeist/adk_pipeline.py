@@ -83,7 +83,7 @@ from . import judge_calibration
 from . import own_group, run_record
 from . import reflector
 from .embedding_migration import EmbeddingRun
-from .model_choice import HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models
+from .model_choice import GEMINI_4, RunModels, activate, model_choice_line, resolve_run_models
 from .orbit_roster import advance_roster_after_batch, apply_winning_cluster_bonus, select_instagram_batch
 
 logger = logging.getLogger(__name__)
@@ -1043,11 +1043,11 @@ class ZeitgeistADKOrchestrator:
             curated_candidates = fetch_curated_library_candidates(word=commission.word)
 
         from .visual_router import PhotoSelectionUnavailable
-        # The stored calibration is read only when Hydrogen judges a live run. At the gate the marks are those
-        # of the judge in force, which produced every score of the stage: after a hand-over to Flash the
-        # stage's earlier batches are scored again on Flash, so Flash's marks never meet Hydrogen's scores.
+        # The stored calibration is read only when a Gemini 4 model judges a live run. At the gate the marks are
+        # those of the judge in force, which produced every score of the stage: after a hand-over to Flash the
+        # stage's earlier batches are scored again on Flash, so Flash's marks never meet Gemini 4 scores.
         judge_document = (judge_calibration.load_document(store)
-                          if genai_client is not None and run_models.current("judge") == HYDROGEN else None)
+                          if genai_client is not None and run_models.current("judge") in GEMINI_4 else None)
         pass_marks = (judge_calibration.DEFAULT_MARKS if judge_document is None
                       else lambda: judge_calibration.marks_for(run_models.current("judge"), judge_document))
         exception_candidates = []
@@ -2250,7 +2250,7 @@ def commission_daily_zeitgeist(
                             links=links,
                             extra_group=extra_group,
                         )
-                        if run_models is not None and not constrained and run_models.current("director") == HYDROGEN:
+                        if run_models is not None and not constrained and run_models.current("director") in GEMINI_4:
                             slate_prompt, slate_block = _director_prompt_and_block(
                                 top_clusters=top_clusters[:5],
                                 history_words_30d=history_list,
@@ -2290,7 +2290,7 @@ def commission_daily_zeitgeist(
                     elif run_models is not None:
                         def prompt_for(model: str, prompt: str = prompt) -> str:
                             nonlocal slate_sent
-                            slate_sent = slate_prompt is not None and model == HYDROGEN
+                            slate_sent = slate_prompt is not None and model in GEMINI_4
                             return slate_prompt if slate_sent else prompt
 
                         raw_resp = run_models.call("director", lambda m: genai_client.models.generate_content(

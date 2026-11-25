@@ -49,7 +49,7 @@ from src.zeitgeist import reflector  # noqa: E402
 from src.zeitgeist import run_record  # noqa: E402
 from src.zeitgeist import visual_router as vr  # noqa: E402
 from src.zeitgeist.model_choice import (  # noqa: E402
-    EMBED_001, EMBED_2, FLASH, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
+    EMBED_001, EMBED_2, FLASH, GEMINI_4, HYDROGEN, RunModels, activate, model_choice_line, resolve_run_models,
 )
 from src.zeitgeist.methodology import interim_grouping_enabled  # noqa: E402
 from src.zeitgeist.spend_guard import SpendBlocked, refused_before_dispatch  # noqa: E402
@@ -363,11 +363,13 @@ def _flash_scores(scored: List[Dict[str, Any]], commission: Any) -> List[Tuple[f
 
 
 def measure_judges(store: Any, result: PrivateRun, run_models: RunModels, date_iso: str) -> Optional[str]:
-    """After a completed Hydrogen-judged run, score its photos again with Flash and store Hydrogen's matched marks.
+    """After a completed run judged by a Gemini 4 model, score its photos again with Flash and store that judge's
+    matched marks (one document slot: a judge's marks replace the other Gemini 4 model's).
 
     None when the step does not apply. Otherwise one numeric line; never raises, and a failure is written=0.
     """
-    if result.exit_code != 0 or run_models.current("judge") != HYDROGEN:
+    judge_model = run_models.current("judge")
+    if result.exit_code != 0 or judge_model not in GEMINI_4:
         return None
     scored = result.scored_candidates
     counts: Tuple[int, int] = (0, 0)
@@ -384,7 +386,7 @@ def measure_judges(store: Any, result: PrivateRun, run_models: RunModels, date_i
             matched = jc.matched_marks(flash, judge)
             if matched is not None:
                 marks = (float(matched[0]), float(matched[1]))
-                document = jc.build_document(HYDROGEN, marks, {
+                document = jc.build_document(judge_model, marks, {
                     "photos": len(scored), "flash_pass_meaning": counts[0], "flash_pass_composite": counts[1],
                 }, date_iso)
                 store.save_calibration(jc.DOCUMENT_NAME, document)
