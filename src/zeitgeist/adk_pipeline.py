@@ -78,6 +78,7 @@ from .visual_router import (
 from .spend_guard import SpendBlocked, refused_before_dispatch, sampling_controls_supported
 from . import embedding_migration
 from . import evidence_archive
+from .public_schema import drop_false_fields_enabled
 from . import judge_calibration
 from . import own_group, run_record
 from . import reflector
@@ -1017,6 +1018,9 @@ class ZeitgeistADKOrchestrator:
         orbit_res = float(field_cluster.orbit_resonance) if field_cluster is not None else 1.50
         vel_score = float(field_cluster.velocity) if field_cluster is not None else 2.50
         is_breakout = bool(getattr(field_cluster, "breakout_surge", False)) if field_cluster is not None else False
+        if drop_false_fields_enabled() and field_cluster is not None:
+            # The multiplier is 1.0 or 1.25, so the bare truth test is always true; only a real surge counts.
+            is_breakout = float(getattr(field_cluster, "breakout_surge", 0.0) or 0.0) > 1.0
         c_keywords = list(field_cluster.cluster_keywords) if field_cluster is not None else [commission.word]
         if understanding_v1 and field_cluster is not None:
             try:

@@ -615,7 +615,10 @@ class PublishedPulse:
         if self.attribution.get('media_correction'):
             from .media_provenance import public_media_correction
             entry['media_correction'] = public_media_correction(self.attribution['media_correction'])
-        from .public_schema import photo_policy_projection
+        from .public_schema import FALSE_MOMENTUM_FIELDS, drop_false_fields_enabled, photo_policy_projection
+        if drop_false_fields_enabled():
+            for key in FALSE_MOMENTUM_FIELDS:
+                entry.pop(key, None)
         photo_policy_projection(entry)
         if include_curatorial_metadata:
             entry["curatorial_archetype"] = str(self.curatorial_archetype or "POETIC_CINEMA")[:32]

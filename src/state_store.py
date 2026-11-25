@@ -2411,6 +2411,10 @@ class FirestoreStateStore:
                 ),
                 "composite_score": analysis.get("composite_score", 0.0),
             }
+            from .zeitgeist.public_schema import FALSE_MOMENTUM_FIELDS, drop_false_fields_enabled
+            if drop_false_fields_enabled():
+                for key in FALSE_MOMENTUM_FIELDS:
+                    history_doc.pop(key, None)
             client.collection(self._col("pulse_history")).document(date_iso[:10]).set(history_doc)
 
         self._mirror_projection("zeitgeist_state.json", daily_doc)
