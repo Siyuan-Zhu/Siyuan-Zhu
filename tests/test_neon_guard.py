@@ -71,8 +71,9 @@ def test_neon_request_has_policy_thinking_medium_and_no_sampling():
 @pytest.mark.parametrize('config', [{'temperature': .1}, {'candidate_count': 1}])
 def test_neon_rejects_sampling_controls(config):
     budget = guard()
-    with pytest.raises(SpendBlocked, match='^Gemini 4 Neon sampling controls are not supported$') as caught:
+    with pytest.raises(SpendBlocked) as caught:
         budget.bounded_genai_request(OP, request(config=config))
+    assert str(caught.value) == 'Gemini 4 Neon sampling controls are not supported'
     assert caught.value.public_diagnostics['code'] == 'unsupported-sampling-controls'
     assert budget.snapshot()['reservation_count'] == 0
 
@@ -175,8 +176,9 @@ def test_neon_missing_cap_is_refused_with_the_neon_reason():
 
 def test_neon_pricing_must_cover_request_duration():
     now = NOW.replace(month=12, day=31, hour=23, minute=58)
-    with pytest.raises(SpendBlocked, match='^Gemini 4 Neon pricing expires before bounded request completion$'):
+    with pytest.raises(SpendBlocked) as caught:
         guard(now).bounded_genai_request(OP, request())
+    assert str(caught.value) == 'Gemini 4 Neon pricing expires before bounded request completion'
 
 
 def test_counted_admission_validates_the_neon_policy_again():
