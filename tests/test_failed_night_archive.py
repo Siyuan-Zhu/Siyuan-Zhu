@@ -97,6 +97,13 @@ def test_switch_off_matches_the_main_fingerprint(tmp_path, monkeypatch, capsys, 
     assert _fingerprint(_cell(cell, tmp_path, monkeypatch, capsys)) == MAIN_FINGERPRINTS[cell]
 
 
+@pytest.mark.parametrize("cell", ["published_old_on", "published_off"])
+def test_switch_on_a_published_night_still_matches_the_main_fingerprint(tmp_path, monkeypatch, capsys, cell):
+    """On, a published night takes the Director's attempts into the capture; its one archive is main's."""
+    monkeypatch.setenv(SWITCH, "1")
+    assert _fingerprint(_cell(cell, tmp_path, monkeypatch, capsys)) == MAIN_FINGERPRINTS[cell]
+
+
 # ---- the switch: on only with the evidence archive on too, recorded last, passed by the three workflows ----
 
 
@@ -465,7 +472,8 @@ def test_with_either_switch_off_a_failed_night_writes_nothing_and_passes_no_new_
 
 
 def test_a_stalled_store_is_cut_off_within_the_capped_budget(tmp_path, monkeypatch, capsys):
-    started = datetime.now(timezone.utc) - timedelta(seconds=DEADLINE - 0.5)
+    # About three seconds left once the night has run: seven documents at a second each cannot all land.
+    started = datetime.now(timezone.utc) - timedelta(seconds=DEADLINE - 3)
     monkeypatch.setenv("ZEITGEIST_RUN_STARTED_AT", started.isoformat())
 
     class _SlowStore(_ArchiveStore):
@@ -501,3 +509,23 @@ def test_a_failing_archive_store_leaves_the_failure_as_it_was(tmp_path, monkeypa
     assert run["error"] is run["raised"]
     assert [line for line in _lines(run["out"].out) if "evidence_archive" in line] == [
         "evidence_archive=failed error_class=RuntimeError"]
+
+
+@pytest.mark.parametrize("arrange, expected", [
+    (lambda mp: None, {"reconcile": False, "journal": None}),
+    (_install_fails, {"reconcile": True, "journal": "canonical_committed_local_install_failed"}),
+], ids=["publish_fails", "install_fails"])
+def test_an_interrupt_while_the_archive_waits_is_raised_in_place_of_the_failure(tmp_path, monkeypatch, capsys,
+                                                                                arrange, expected):
+    """Pinned as it is: a cancel arriving during the wait replaces the night's own exception. The recovery marker
+    and journal are already written by then, so they are as without the archive."""
+    def interrupted(fn, seconds, *, name):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(evidence_archive, "run_with_budget", interrupted)
+    run = _fail(tmp_path, monkeypatch, capsys, publish_fails=arrange is not _install_fails, expect=KeyboardInterrupt,
+                setup=lambda client: arrange(monkeypatch))
+    journal = tmp_path / JOURNAL
+    assert {"reconcile": run["store"].needs_git_reconcile,
+            "journal": json.loads(journal.read_text())["status"] if journal.exists() else None} == expected
+    assert run["store"].archive == {}
