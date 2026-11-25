@@ -19,7 +19,7 @@ from src.zeitgeist import visual_router as vr
 from src.zeitgeist.spend_guard import NEON_OPERATION, SpendBlocked
 from tests.test_judge_calibration import _document, _pipeline_marks
 from tests.test_model_choice_pipeline import (
-    SLATE_LINE, Stop, _lines, _live, _packet_run, _refusal, _slate, _slate_reply, _stage0_packet_prompt)
+    SLATE_LINE, Stop, _lines, _packet_run, _refusal, _slate, _slate_reply, _stage0_packet_prompt)
 from tests.test_neon_compatibility import NEON_VERSION, neon_guard
 from tests.test_reflect_script import Client as ReflectClient, Store as ReflectStore, _record, _reflect, _stored
 from tests.test_understanding_pipeline import _reply

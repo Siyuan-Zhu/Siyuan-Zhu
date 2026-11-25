@@ -1,12 +1,10 @@
 """Neon's price section on the saved page: parsed at 3.00/15.00, optional, and harmless to the installed policy."""
-from pathlib import Path
 import pytest
 from src.zeitgeist import automatic_spend as auto
 from src.zeitgeist.automatic_spend import digest
 from src.zeitgeist.gemini_tariff import MODELS, NEON_SECTION, OPTIONAL_SECTIONS, normalize_gemini_tariff
 from src.zeitgeist.spend_guard import NEON_OPERATION
 from src.zeitgeist.spend_successor import build_successor, successor_ledger
-from tests.test_automatic_spend import NOW
 from tests.test_gemini_tariff_optional_sections import (
     EMBEDDING_001, EMBEDDING_2, FLASH, HYDROGEN, ROW_BREAK, USD, assert_old_models_at_todays_rates, in_section,
     once, page)

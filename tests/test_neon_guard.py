@@ -7,7 +7,7 @@ from src.zeitgeist import owner_reasons
 from src.zeitgeist import spend_guard
 from src.zeitgeist.spend_guard import (
     NEON_MODEL, NEON_OPERATION, NEON_PROMPT_ALLOWANCE_TOKENS, SpendBlocked, refuse_disabled_operation,
-    refused_before_dispatch, sampling_controls_supported)
+    sampling_controls_supported)
 from tests import test_gemini38_contract as base
 from tests.test_spend_provisioning import NOW
 

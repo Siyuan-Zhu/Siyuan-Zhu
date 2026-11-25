@@ -1,5 +1,4 @@
 """One-time Neon successor install on the Hydrogen successor: plan, atomic apply, reconciliation, refusals."""
-import copy
 from datetime import datetime, timedelta, timezone
 import json
 import pytest

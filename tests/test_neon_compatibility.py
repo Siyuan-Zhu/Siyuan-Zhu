@@ -1,5 +1,4 @@
 """The Neon successor refreshes, disables only Neon on trouble, admits and settles Neon calls; synthetic data only."""
-import copy
 from decimal import Decimal
 from types import SimpleNamespace
 import pytest
@@ -8,7 +7,7 @@ from src.zeitgeist import automatic_spend as auto
 from src.zeitgeist.spend_guard import (
     HYDROGEN_MODEL, HYDROGEN_OPERATION, NEON_MODEL, NEON_OPERATION, SpendBlocked, guard_genai_client,
     refused_before_dispatch)
-from src.zeitgeist.spend_successor import FLASH_OPERATION, build_neon_successor, build_successor, successor_ledger
+from src.zeitgeist.spend_successor import build_neon_successor, build_successor, successor_ledger
 from tests import test_gemini38_contract as base
 from tests.test_hydrogen_admission_allowance import counter
 from tests.test_optional_operations import above_approval, absent, guard_for, published, reported_missing, unlisted

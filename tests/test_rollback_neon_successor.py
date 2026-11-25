@@ -4,7 +4,6 @@ from datetime import timedelta
 import json
 import pytest
 from scripts import rollback_spend_successor_20261125 as rollback_module
-from src.zeitgeist import automatic_spend as auto
 from src.zeitgeist import automatic_spend_runtime as runtime
 from src.zeitgeist.spend_guard import HYDROGEN_OPERATION, NEON_OPERATION
 from src.zeitgeist.spend_successor import NEON_BASE_POLICY_SHA256, field_diff, rollback_ledger
