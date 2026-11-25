@@ -16,6 +16,7 @@ NEON = "gemini-4-neon"
 NEON_ARGS = ["--confirm-paid-probe", "--model", NEON, "--thinking-level", "medium"]
 NEON_VERSION = "synthetic-neon-version"
 METHODS = ["generateContent", "countTokens"]
+EXPR = chr(36) + "{{ "  # a GitHub expression opener, built so this file has no literal dollar sign
 
 
 class ListingHttp:
@@ -225,12 +226,19 @@ def test_workflow_passes_the_model_and_level_inputs_as_flags_through_env():
     assert "- gemini-4-neon" in inputs and "type: choice" in inputs
     for level in probe.THINKING_LEVELS:
         assert "- " + level in inputs
-    assert "PROBE_MODEL: ${{ inputs.model }}" in text
-    assert "PROBE_THINKING_LEVEL: ${{ inputs.thinking_level }}" in text
-    run_line = [line for line in text.splitlines() if line.strip().startswith("run: python3")]
-    assert run_line == ['        run: python3 scripts/probe_hydrogen.py --confirm-paid-probe '
-                        '--model "$PROBE_MODEL" --thinking-level "$PROBE_THINKING_LEVEL"']
-    assert text.count("${{ inputs.") == 2
+    assert "PROBE_MODEL: " + EXPR + "inputs.model }}" in text
+    assert "PROBE_THINKING_LEVEL: " + EXPR + "inputs.thinking_level }}" in text
+    # The inputs reach the probe as flags through the environment, never interpolated into the script.
+    assert text.endswith(
+        '        shell: python\n'
+        '        run: |\n'
+        '          import os\n'
+        '          import subprocess\n'
+        '          import sys\n'
+        '          command = [sys.executable, "scripts/probe_hydrogen.py", "--confirm-paid-probe",\n'
+        '                     "--model", os.environ["PROBE_MODEL"], "--thinking-level", os.environ["PROBE_THINKING_LEVEL"]]\n'
+        '          sys.exit(subprocess.run(command).returncode)\n')
+    assert text.count(EXPR + "inputs.") == 2
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", text)) == {"GEMINI_API_KEY"}
     assert "SPEND_POLICY_SHA256" not in text and "permissions:\n  contents: read\njobs:" in text
 

@@ -220,7 +220,7 @@ def test_probe_workflow_is_minimal():
         assert banned not in text, banned
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", text)) == {"GEMINI_API_KEY"}
     assert "permissions:\n  contents: read\njobs:" in text and text.count("permissions:") == 1
-    assert "python3 scripts/probe_hydrogen.py --confirm-paid-probe" in text
+    assert '"scripts/probe_hydrogen.py", "--confirm-paid-probe"' in text
 
 
 def _top_level_block(text, key):

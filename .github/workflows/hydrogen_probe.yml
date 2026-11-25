@@ -1,6 +1,23 @@
 name: Hydrogen Probe
 on:
   workflow_dispatch:
+    inputs:
+      model:
+        description: Gemini 4 model to probe
+        type: choice
+        options:
+          - gemini-4-hydrogen
+          - gemini-4-neon
+        default: gemini-4-hydrogen
+      thinking_level:
+        description: Thinking level for the Director, critic and cap check calls (high keeps the Hydrogen plan)
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+          - xhigh
+        default: high
 concurrency:
   group: readme-state-writer
   cancel-in-progress: false
@@ -20,7 +37,16 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - name: List models and make up to seven Hydrogen calls (two tiny; four Director and one nine-image critic call, each up to 15000 output tokens) and one gemini-embedding-2 call; versions, token counts and timings only
+      - name: List models and make up to eight calls to the chosen Gemini 4 model (two tiny; four Director and one nine-image critic call, each up to 15000 output tokens; one 1024-token cap check), plus one tiny temperature call off the default pair, and for Hydrogen one gemini-embedding-2 call; versions, token counts and timings only
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python3 scripts/probe_hydrogen.py --confirm-paid-probe
+          PROBE_MODEL: ${{ inputs.model }}
+          PROBE_THINKING_LEVEL: ${{ inputs.thinking_level }}
+        shell: python
+        run: |
+          import os
+          import subprocess
+          import sys
+          command = [sys.executable, "scripts/probe_hydrogen.py", "--confirm-paid-probe",
+                     "--model", os.environ["PROBE_MODEL"], "--thinking-level", os.environ["PROBE_THINKING_LEVEL"]]
+          sys.exit(subprocess.run(command).returncode)
