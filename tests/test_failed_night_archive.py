@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -10,13 +11,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from src.zeitgeist import adk_pipeline as pipeline
 from src.zeitgeist import evidence_archive, run_record
 from src.zeitgeist.collectors import IngestionUnavailable
 from src.zeitgeist.spend_guard import SpendBlocked
-from tests.test_evidence_archive import META_ID, _ArchiveStore, _edition, _job_lines, _lines, _seed_cache, _untimed
+from tests.test_evidence_archive import META_ID, _ArchiveStore, _job_lines, _lines, _seed_cache, _untimed
 from tests.test_run_record_wiring import SLATE, _edition_setup
 from tests.test_understanding_pipeline import _reply
 
@@ -29,9 +31,10 @@ OLD_SWITCH = evidence_archive.SWITCH_ENV
 
 # Fingerprints taken from main (b07c994) before the change: the published night with the evidence archive on and
 # with it off, a failed publication and a failed Director call with the evidence archive on. The one key left out
-# is this switch's own entry in the archive meta's switch map, which every listed switch adds.
+# is this switch's own entry in the archive meta's switch map, which every listed switch adds. The published
+# nights run on one-hot vectors (_seed_exact) and without GITHUB_SHA, so the digests hold on macOS and Linux CI.
 MAIN_FINGERPRINTS = {
-    "published_old_on": "40113ba8c4336b6b7bc57a67277018430f823c0556a024ce8c724e28fab95509",
+    "published_old_on": "1f41efdb3775b5b362df9da22da8b5e14b7bb5c4c86593e5deb8f9ab83897b23",
     "published_off": "cae70e748ad745063d1ddbe1d311b03ea187e57ab00593546675610bce9f7fe3",
     "publish_fails_old_on": "6b7915b7a8fe62dfaf3206ce1809a3543649a4d469afaa28ae65ceffe55132e8",
     "director_fails_old_on": "f9fb1d92fbf3beb3153c9832877b2d6b29ee615c87f3b5e831aa675663235436",
@@ -40,7 +43,8 @@ MAIN_FINGERPRINTS = {
 
 @pytest.fixture(autouse=True)
 def _switches_unset(monkeypatch):
-    for name in (SWITCH, OLD_SWITCH, "ZEITGEIST_OWN_GROUP", "ZEITGEIST_REFLECTOR", "ZEITGEIST_RUN_STARTED_AT"):
+    # GITHUB_SHA is the archive meta's "commit": set in CI, unset locally.
+    for name in (SWITCH, OLD_SWITCH, "ZEITGEIST_OWN_GROUP", "ZEITGEIST_REFLECTOR", "ZEITGEIST_RUN_STARTED_AT", "GITHUB_SHA"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -63,13 +67,48 @@ def _night_print(store, out):
             "line_shape": [line.split(" ")[0] for line in _lines(out.out) if line.startswith("evidence_archive")]}
 
 
+def _seed_exact(store):
+    """Six stored rows whose vectors are one-hot, so every similarity is exactly 0 or 1 under any BLAS.
+
+    The hashed vectors of _seed_cache give similarities whose last bits differ between Accelerate (macOS) and
+    OpenBLAS (Linux CI); among tied groups that changed the order, the chosen group, the artwork and its digest.
+    """
+    from src.zeitgeist.collectors import embed_missing_items
+
+    rows = [{
+        "url_hash": f"seed{i}", "source_id": f"m1_seed_{i}", "bucket": "MACRO", "tier": "M1", "origin": "curated_M1_M3",
+        "title": f"Seeded title {i}", "summary": f"Seeded summary {i} about looms and weaving", "caption": f"Seeded caption {i}",
+        "url": f"https://example.invalid/seed/{i}", "published_at": "2026-11-21T09:00:00+00:00",
+        "fetched_at": "2026-11-21T09:30:00+00:00",
+    } for i in range(6)]
+    embedded = embed_missing_items(rows, client=None)
+    for i, row in enumerate(embedded):
+        vector = np.zeros(len(row["embedding_f16"]) // 2, dtype=np.float16)
+        vector[i] = 1.0
+        row["embedding_f16"] = vector.tobytes()
+        row["embedding_f16_b64"] = base64.b64encode(vector.tobytes()).decode("ascii")
+    store.save_ingestion_cache_day("2026-11-21", {row["url_hash"]: row for row in embedded})
+
+
+def _published(tmp_path, monkeypatch, *, archive, replies=None):
+    client, events = _edition_setup(tmp_path, monkeypatch, switch="0")
+    if replies is not None:
+        client.replies = list(replies)
+    monkeypatch.setenv(OLD_SWITCH, archive)
+    store = _ArchiveStore(tmp_path, events)
+    _seed_exact(store)
+    analysis, decision, _ = pipeline.ZeitgeistADKOrchestrator(tmp_path, state_store=store).run(
+        "2026-11-21", "blueprint", offline_demo=True)
+    return store, (analysis.word_of_the_day, analysis.explanation_phrase, decision.selected_mode)
+
+
 def _cell(cell, tmp_path, monkeypatch, capsys):
     if cell == "published_old_on":
-        store, _, result, _ = _edition(tmp_path, monkeypatch, archive="1", seed=True,
-                                       replies=["not json", _reply(selected_cluster_id="cluster_0", candidate_words=SLATE)])
+        store, result = _published(tmp_path, monkeypatch, archive="1",
+                                   replies=["not json", _reply(selected_cluster_id="cluster_0", candidate_words=SLATE)])
         return {"result": result, **_night_print(store, capsys.readouterr())}
     if cell == "published_off":
-        store, _, result, _ = _edition(tmp_path, monkeypatch, archive="0", seed=True)
+        store, result = _published(tmp_path, monkeypatch, archive="0")
         return {"result": result, "state": _untimed(store.load_pulse_state()["published_pulse"]),
                 **_night_print(store, capsys.readouterr())}
     client, events = _edition_setup(tmp_path, monkeypatch, switch="0", publish_fails=cell == "publish_fails_old_on")
