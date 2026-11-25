@@ -56,8 +56,9 @@ def test_the_six_fields_are_the_ones_david_approved():
     assert set(FALSE_MOMENTUM_FIELDS) == set(SIX)
 
 
-def test_the_switch_is_recorded_last_in_the_run_record():
-    assert run_record.SWITCH_NAMES[-1] == SWITCH
+def test_the_switch_is_recorded_in_the_run_record_after_the_evidence_archive():
+    names = run_record.SWITCH_NAMES
+    assert names.index(SWITCH) == names.index("ZEITGEIST_EVIDENCE_ARCHIVE") + 1
 
 
 # ---- switch off: byte-for-byte what main produced ----

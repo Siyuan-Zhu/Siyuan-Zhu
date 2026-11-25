@@ -122,8 +122,12 @@ def refresh(root=ROOT, *, env=None, now=None, store=None, runner=subprocess.run)
             execution.transition('generation')
         outcome['stage'] = 'generation'
         save_outcome(receipt, outcome)
+        generation = {}
+        if env.get('ZEITGEIST_FAILED_NIGHT_ARCHIVE') == '1':
+            # A failed night's archive holds its budget to the time this job has left.
+            generation['env'] = {**os.environ, 'ZEITGEIST_RUN_STARTED_AT': outcome['started_at']}
         runner([sys.executable, 'scripts/run_zeitgeist.py', '--date', str(target_date)],
-               cwd=root, check=True)
+               cwd=root, check=True, **generation)
         observe_committed_publication(root, store, outcome)
         if execution is not None:
             execution.transition('validation', publication_id=outcome.get('publication_id'))

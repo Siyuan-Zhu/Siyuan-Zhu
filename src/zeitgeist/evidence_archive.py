@@ -7,6 +7,9 @@ document is written last and lists the chunks of its night. Nothing in the night
 
 Image bytes and data URIs are left out: only the links and text the rows already carry are kept. The one
 outside effect is the store write, held to BUDGET_SECONDS; the one output is a public line of numbers.
+
+With ZEITGEIST_FAILED_NIGHT_ARCHIVE on as well, a night that fails is archived the same way, with only the parts
+it reached; its meta document adds the observed status, the stage it failed in and the exception's class.
 """
 
 from __future__ import annotations
@@ -40,6 +43,39 @@ _DROPPED = object()
 def archive_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
     env = os.environ if environ is None else environ
     return env.get(SWITCH_ENV) == "1"
+
+
+FAILED_NIGHT_SWITCH_ENV = "ZEITGEIST_FAILED_NIGHT_ARCHIVE"
+RUN_STARTED_ENV = "ZEITGEIST_RUN_STARTED_AT"
+# The edition job stops at 15 minutes and its outcome steps run after the edition. The run's recorded start comes
+# after checkout and install: on the 25 Nov edition the job started 05:24:29Z and the pipeline step 05:24:41Z
+# (12 s of setup), and the steps after the pipeline took about 7 s. Twelve minutes from the recorded start leaves
+# about three minutes for those steps.
+FAILED_NIGHT_DEADLINE_SECONDS = 12 * 60
+UNKNOWN_START_SECONDS = 60.0
+
+
+def failed_night_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """A night that fails is archived only with this switch and the evidence archive's both on."""
+    env = os.environ if environ is None else environ
+    return archive_enabled(env) and env.get(FAILED_NIGHT_SWITCH_ENV) == "1"
+
+
+def failed_night_budget(environ: Optional[Mapping[str, str]] = None, *, now: Optional[datetime] = None) -> float:
+    """BUDGET_SECONDS, capped to the time left before the deadline counted from the run's start; never below zero.
+
+    A start that is missing, unreadable or without a time zone gives UNKNOWN_START_SECONDS.
+    """
+    env = os.environ if environ is None else environ
+    raw = str(env.get(RUN_STARTED_ENV) or "")
+    try:
+        started = datetime.fromisoformat(raw.replace("Z", "+00:00")) if raw else None
+    except ValueError:
+        started = None
+    if started is None or started.tzinfo is None:
+        return min(BUDGET_SECONDS, UNKNOWN_START_SECONDS)
+    elapsed = ((now or datetime.now(timezone.utc)) - started).total_seconds()
+    return max(0.0, min(BUDGET_SECONDS, FAILED_NIGHT_DEADLINE_SECONDS - elapsed))
 
 
 def _encoded_size(value: Any) -> int:
