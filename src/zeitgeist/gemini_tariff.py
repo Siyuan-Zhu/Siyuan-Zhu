@@ -18,12 +18,17 @@ SOURCE_URL = 'https://ai.google.dev/gemini-api/docs/pricing'
 MAX_HTML_BYTES = 2_000_000
 CURRENCY_PREFIX = re.escape(chr(36))
 HYDROGEN_SECTION = 'gemini-4-hydrogen'
+NEON_SECTION = 'gemini-4-neon'
 EMBEDDING_2_SECTION = 'gemini-embedding-2'
 MODELS = {'gemini-3.8-flash': 'gemini-3.8-flash', HYDROGEN_SECTION: 'gemini-4-hydrogen',
+          NEON_SECTION: 'gemini-4-neon',
           EMBEDDING_2_SECTION: 'gemini-embedding-2', 'gemini-embedding': 'gemini-embedding-001'}
-# Sections of the two new models: trouble there leaves the operation out instead of
+# Sections of the new models: trouble there leaves the operation out instead of
 # making the page unreadable. The old models' sections stay strict.
-OPTIONAL_SECTIONS = frozenset({HYDROGEN_SECTION, EMBEDDING_2_SECTION})
+OPTIONAL_SECTIONS = frozenset({HYDROGEN_SECTION, NEON_SECTION, EMBEDDING_2_SECTION})
+# The six Standard rows a Gemini 4 section carries.
+GEMINI_4_ROWS = ('input price', 'output price (including thinking tokens)', 'context caching price',
+                 'grounding with google search', 'grounding with google maps', 'used to improve our products')
 
 
 def _text(value):
@@ -288,6 +293,13 @@ def _markdoc_html(body):
     return ''.join(output)
 
 
+def _gemini_4_operation(model):
+    """A Gemini 4 section's current text rates; it publishes no dated schedule."""
+    return lambda paid: {'model':model,'input_token_usd_per_million':_current_rate(paid['input price']),
+        'output_token_usd_per_million':_current_rate(paid['output price (including thinking tokens)']),
+        'output_includes_thinking':True,'published_rate_schedule':'current_only'}
+
+
 def normalize_gemini_tariff(html):
     """Normalize exact standard generation+embedding rows, excluding other models.
 
@@ -307,12 +319,8 @@ def normalize_gemini_tariff(html):
         generation, generation_conditions = _rows(parser, 'gemini-3.8-flash', (
             'input price','output price (including thinking tokens)','context caching price',
             'grounding with google search','grounding with google maps','used to improve our products'))
-        hydrogen = _optional_operation(parser, HYDROGEN_SECTION, (
-            'input price','output price (including thinking tokens)','context caching price',
-            'grounding with google search','grounding with google maps','used to improve our products'),
-            lambda paid: {'model':'gemini-4-hydrogen','input_token_usd_per_million':_current_rate(paid['input price']),
-                'output_token_usd_per_million':_current_rate(paid['output price (including thinking tokens)']),
-                'output_includes_thinking':True,'published_rate_schedule':'current_only'})
+        hydrogen = _optional_operation(parser, HYDROGEN_SECTION, GEMINI_4_ROWS, _gemini_4_operation('gemini-4-hydrogen'))
+        neon = _optional_operation(parser, NEON_SECTION, GEMINI_4_ROWS, _gemini_4_operation('gemini-4-neon'))
         # Other-modality rows are bound as labels only; only the text rate is emitted.
         embedding_2 = _optional_operation(parser, EMBEDDING_2_SECTION, (
             'text input price','image input price','audio input price','video input price',
@@ -339,6 +347,8 @@ def normalize_gemini_tariff(html):
         conditions = {'gemini-3.8-flash':generation_conditions, 'gemini-embedding-001':embedding_conditions}
         if hydrogen is not None:
             operations['generate_content:gemini-4-hydrogen'], conditions['gemini-4-hydrogen'] = hydrogen
+        if neon is not None:
+            operations['generate_content:gemini-4-neon'], conditions['gemini-4-neon'] = neon
         if embedding_2 is not None:
             operations['embed_content:gemini-embedding-2'], conditions['gemini-embedding-2'] = embedding_2
         return {'schema_version':2,'provider':'gemini','api':'gemini_developer_api',
