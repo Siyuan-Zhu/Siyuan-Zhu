@@ -611,8 +611,11 @@ LIVE_ROW = {"url_hash": "live0", "source_id": "o1_synthetic_feed", "bucket": "OR
 NOON = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc).timestamp()
 
 
-def _live_world(monkeypatch, *, apify):
+def _live_world(tmp_path, monkeypatch, *, apify):
     """Live collection with fake sources: one curated row, no Instagram; nothing leaves the process."""
+    (tmp_path / "config/orbit_sources.json").write_text(json.dumps({"coverage_requirements": {
+        "min_orbit_sources": 6, "min_macro_sources": 6, "required_orbit_tiers": ["O1", "O2", "O3"],
+        "required_macro_tiers": ["M1", "M2", "M3"]}}))
     for name in ("APIFY_API_TOKEN", "APIFY_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     if apify:
@@ -626,7 +629,7 @@ def _live_world(monkeypatch, *, apify):
 
 @pytest.mark.parametrize("apify", [False, True], ids=["instagram_unavailable", "coverage_short"])
 def test_a_failure_inside_the_collector_archives_the_rows_it_held(tmp_path, monkeypatch, capsys, apify):
-    run = _fail(tmp_path, monkeypatch, capsys, setup=lambda client: _live_world(monkeypatch, apify=apify),
+    run = _fail(tmp_path, monkeypatch, capsys, setup=lambda client: _live_world(tmp_path, monkeypatch, apify=apify),
                 expect=IngestionUnavailable, live_collect=True, now_epoch=NOON)
     meta, night = _night(run)
     assert (meta["status"], meta["failed_stage"], meta["error_class"]) == ("failed", "collection", "IngestionUnavailable")
