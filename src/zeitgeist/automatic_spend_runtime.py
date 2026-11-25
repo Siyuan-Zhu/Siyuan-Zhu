@@ -60,7 +60,7 @@ class PrivateFirestoreStore:
         )
 
     def read(self, document_id):
-        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103|apify_build_repair_20261106|price_repair_20261113|spend_successor_20261122|spend_rollback_20261122)", document_id):
+        if not re.fullmatch(r"(?:\d{4}-\d{2}|policy_[a-f0-9]{64}|handoff_\d{4}-\d{2}|price_repair_20261103|apify_build_repair_20261106|price_repair_20261113|spend_successor_20261122|spend_rollback_20261122|spend_successor_20261125|spend_rollback_20261125)", document_id):
             raise SpendBlocked("Unapproved private spend document")
         return self.client.collection("spend_control").document(document_id).get()
 
@@ -191,8 +191,11 @@ def _reconcile_pending(store, intent_id, intent_snapshot, *, apply):
 # Reviewed one-time policy successors, in the order they were applied.
 SUCCESSOR_RECEIPT_ID = "spend_successor_20261122"
 ROLLBACK_RECEIPT_ID = "spend_rollback_20261122"
+NEON_SUCCESSOR_RECEIPT_ID = "spend_successor_20261125"
+NEON_ROLLBACK_RECEIPT_ID = "spend_rollback_20261125"
 POLICY_REPAIR_RECEIPTS = ("price_repair_20261103", "apify_build_repair_20261106", "price_repair_20261113",
-                          SUCCESSOR_RECEIPT_ID, ROLLBACK_RECEIPT_ID)
+                          SUCCESSOR_RECEIPT_ID, ROLLBACK_RECEIPT_ID,
+                          NEON_SUCCESSOR_RECEIPT_ID, NEON_ROLLBACK_RECEIPT_ID)
 
 
 def _successor_policy(store, policy_sha, month):

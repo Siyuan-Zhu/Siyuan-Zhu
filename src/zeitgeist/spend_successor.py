@@ -11,10 +11,13 @@ from decimal import Decimal
 from typing import Any
 
 from .automatic_spend import _time
-from .spend_guard import (EMBEDDING_2_DIMENSIONS, EMBEDDING_2_OPERATION, HYDROGEN_OPERATION,
-                          HYDROGEN_OUTPUT_TOKENS)
+from .spend_guard import (EMBEDDING_2_DIMENSIONS, EMBEDDING_2_OPERATION, GEMINI_4, HYDROGEN_MODEL,
+                          HYDROGEN_OPERATION, HYDROGEN_OUTPUT_TOKENS, NEON_MODEL, NEON_OPERATION,
+                          NEON_OUTPUT_TOKENS)
 
 INSTALLED_POLICY_SHA256 = "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
+# The Hydrogen successor installed on 22 Nov: the base the Neon successor adds to.
+NEON_BASE_POLICY_SHA256 = "6657e657bd261d5a76ffd939d16f0dc1b817e847bfa50a3ce1f39881d102cc96"
 FLASH_OPERATION = "generate_content:gemini-3.8-flash"
 EMBEDDING_001_OPERATION = "embed_content:gemini-embedding-001"
 
@@ -23,13 +26,24 @@ REDACTED_KEYS = frozenset({"billing_account_id", "credential_fingerprint", "acco
                            "verification_reference"})
 
 
-def hydrogen_cap_usd(max_output_tokens: int) -> str:
+def _gemini4_cap_usd(model: str, max_output_tokens: int) -> str:
     """The exact per-call cap: a full 65536-token input window plus the whole output allowance."""
-    total = Decimal(65536) * Decimal("1.50") + Decimal(max_output_tokens) * Decimal("7.50")
+    terms = GEMINI_4[model]
+    total = (Decimal(65536) * Decimal(terms.input_usd_per_million)
+             + Decimal(max_output_tokens) * Decimal(terms.output_usd_per_million))
     return format(total / Decimal(1000000), "f")
 
 
+def hydrogen_cap_usd(max_output_tokens: int) -> str:
+    return _gemini4_cap_usd(HYDROGEN_MODEL, max_output_tokens)
+
+
+def neon_cap_usd(max_output_tokens: int) -> str:
+    return _gemini4_cap_usd(NEON_MODEL, max_output_tokens)
+
+
 HYDROGEN_BUILD_THINKING_LEVELS = ("high", "medium")
+NEON_BUILD_THINKING_LEVELS = ("high", "medium")
 EMBEDDING_2_INPUT_USD_PER_MILLION = "0.20"
 
 
@@ -42,26 +56,51 @@ def embedding2_operation(embedding_001_limits: dict) -> tuple[str, str, dict]:
     return EMBEDDING_2_OPERATION, format(cap, "f"), limits
 
 
-def _check_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level):
+def _check_gemini4_inputs(name, ladder, levels, model_version, tokens_per_image, max_output_tokens, thinking_level):
     if not isinstance(model_version, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", model_version):
-        raise RuntimeError("Hydrogen model version is malformed")
+        raise RuntimeError(f"{name} model version is malformed")
     if type(tokens_per_image) is not int or not 1 <= tokens_per_image <= 4096:
-        raise RuntimeError("Hydrogen tokens per image must be an integer from 1 to 4096")
-    if type(max_output_tokens) is not int or max_output_tokens not in HYDROGEN_OUTPUT_TOKENS:
-        raise RuntimeError("Hydrogen max output tokens must be one of 4000, 6000, 8000, 10000, 15000")
-    if type(thinking_level) is not str or thinking_level not in HYDROGEN_BUILD_THINKING_LEVELS:
-        raise RuntimeError("Hydrogen thinking level must be high or medium")
+        raise RuntimeError(f"{name} tokens per image must be an integer from 1 to 4096")
+    if type(max_output_tokens) is not int or max_output_tokens not in ladder:
+        raise RuntimeError(f"{name} max output tokens must be one of 4000, 6000, 8000, 10000, 15000")
+    if type(thinking_level) is not str or thinking_level not in levels:
+        raise RuntimeError(f"{name} thinking level must be high or medium")
+
+
+def _check_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level):
+    _check_gemini4_inputs("Hydrogen", HYDROGEN_OUTPUT_TOKENS, HYDROGEN_BUILD_THINKING_LEVELS,
+                          model_version, tokens_per_image, max_output_tokens, thinking_level)
+
+
+def _check_neon_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level):
+    _check_gemini4_inputs("Neon", NEON_OUTPUT_TOKENS, NEON_BUILD_THINKING_LEVELS,
+                          model_version, tokens_per_image, max_output_tokens, thinking_level)
+
+
+def _gemini4_operation(model, flash_limits, model_version, tokens_per_image, max_output_tokens, thinking_level):
+    """Flash's installed limits at the model's exact rates, output cap, thinking level and pinned version."""
+    terms = GEMINI_4[model]
+    limits = copy.deepcopy(flash_limits)
+    limits.update(input_token_usd_per_million=terms.input_usd_per_million,
+                  output_token_usd_per_million=terms.output_usd_per_million,
+                  max_output_tokens=max_output_tokens, thinking_level=thinking_level,
+                  image_tokens_per_image=tokens_per_image,
+                  allowed_response_model_versions=[model_version])
+    return "generate_content:" + model, _gemini4_cap_usd(model, max_output_tokens), limits
 
 
 def hydrogen_operation(flash_limits: dict, *, model_version: str, tokens_per_image: int,
                        max_output_tokens: int, thinking_level: str) -> tuple[str, str, dict]:
     _check_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level)
-    limits = copy.deepcopy(flash_limits)
-    limits.update(input_token_usd_per_million="1.50", output_token_usd_per_million="7.50",
-                  max_output_tokens=max_output_tokens, thinking_level=thinking_level,
-                  image_tokens_per_image=tokens_per_image,
-                  allowed_response_model_versions=[model_version])
-    return HYDROGEN_OPERATION, hydrogen_cap_usd(max_output_tokens), limits
+    return _gemini4_operation(HYDROGEN_MODEL, flash_limits, model_version, tokens_per_image,
+                              max_output_tokens, thinking_level)
+
+
+def neon_operation(flash_limits: dict, *, model_version: str, tokens_per_image: int,
+                   max_output_tokens: int, thinking_level: str) -> tuple[str, str, dict]:
+    _check_neon_inputs(model_version, tokens_per_image, max_output_tokens, thinking_level)
+    return _gemini4_operation(NEON_MODEL, flash_limits, model_version, tokens_per_image,
+                              max_output_tokens, thinking_level)
 
 
 def build_successor(installed: dict, *, hydrogen_model_version: str, hydrogen_tokens_per_image: int,
@@ -96,6 +135,31 @@ def build_successor(installed: dict, *, hydrogen_model_version: str, hydrogen_to
     for operation, cap, limits in added:
         new["account"]["operation_caps_usd"][operation] = cap
         new["account"]["request_limits"][operation] = limits
+    new["price_snapshot_sha256"] = tariff_sha256
+    return successor
+
+
+def build_neon_successor(installed: dict, *, neon_model_version: str, neon_tokens_per_image: int,
+                         neon_max_output_tokens: int, neon_thinking_level: str, tariff_sha256: str) -> dict:
+    """The installed policy plus generate_content:gemini-4-neon and the observed tariff digest; nothing else."""
+    _check_neon_inputs(neon_model_version, neon_tokens_per_image, neon_max_output_tokens, neon_thinking_level)
+    if not isinstance(tariff_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", tariff_sha256):
+        raise RuntimeError("Tariff digest must be 64 lowercase hex characters")
+    account = installed["providers"]["gemini"]["account"]
+    if (NEON_OPERATION in account.get("request_limits", {})
+            or NEON_OPERATION in account.get("operation_caps_usd", {})):
+        raise RuntimeError("Installed policy already has the Neon operation")
+    flash = account.get("request_limits", {}).get(FLASH_OPERATION)
+    if not isinstance(flash, dict):
+        raise RuntimeError("Installed policy has no Flash limits to derive Neon from")
+    operation, cap, limits = neon_operation(flash, model_version=neon_model_version,
+                                            tokens_per_image=neon_tokens_per_image,
+                                            max_output_tokens=neon_max_output_tokens,
+                                            thinking_level=neon_thinking_level)
+    successor = copy.deepcopy(installed)
+    new = successor["providers"]["gemini"]
+    new["account"]["operation_caps_usd"][operation] = cap
+    new["account"]["request_limits"][operation] = limits
     new["price_snapshot_sha256"] = tariff_sha256
     return successor
 
