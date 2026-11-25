@@ -646,6 +646,8 @@ class ZeitgeistADKOrchestrator:
         self._reflector_inputs: Optional[Dict[str, Any]] = None
         # The evidence archive's inputs, kept only with its switch on; `run()` archives them last.
         self._evidence_archive_inputs: Optional[Dict[str, Any]] = None
+        # What the night has reached, given by `run()` only with the failed-night switch on.
+        self._failed_night: Optional[FailedNightCapture] = None
 
     def run(
         self,
@@ -682,6 +684,8 @@ class ZeitgeistADKOrchestrator:
         installed = False
         journal = self.repo_root / "data/publication_reconcile.json"
         journal_created = False
+        # What the night reaches, kept only with the failed-night switch on, for the archive if it fails.
+        failed_night = FailedNightCapture() if evidence_archive.failed_night_enabled() else None
 
         def prepare(state, entry, feed):
             nonlocal journal_created
@@ -695,6 +699,7 @@ class ZeitgeistADKOrchestrator:
         try:
             workspace.stage_canonical_game(store)
             staged = ZeitgeistADKOrchestrator(workspace.path, state_store=store)
+            staged._failed_night = failed_night
             analysis, decision, telemetry = staged._run_staged(
                 date_iso,
                 prefer_visual_mode,
@@ -702,6 +707,7 @@ class ZeitgeistADKOrchestrator:
                 now_epoch=now_epoch,
                 offline_demo=offline_demo,
             )
+            _reach(failed_night, "validation")
             payload = staged._prepared_state
             payload["visual_decision"]["local_svg_path"] = "assets/daily_pulse.svg"
             manifest = json.loads(
@@ -711,7 +717,9 @@ class ZeitgeistADKOrchestrator:
             feed_path = workspace.path / "data/pulse_feed.json"
             feed = json.loads(feed_path.read_text())
             generated_entry = staged.last_published_pulse.to_feed_entry()
+            _reach(failed_night, entry=generated_entry)
             validate_editorial_entry(generated_entry)
+            _reach(failed_night, "publication")
             state = publish_bundle(
                 store,
                 payload,
@@ -721,6 +729,9 @@ class ZeitgeistADKOrchestrator:
                 prepare=prepare,
             )
             committed = True
+            if isinstance(state, dict) and isinstance(state.get("published_pulse"), dict):
+                # The entry as committed, with its publication id.
+                _reach(failed_night, entry=state["published_pulse"])
             workspace.install(state)
             installed = True
             from .visual_router import confirm_published_photo_download
@@ -754,6 +765,10 @@ class ZeitgeistADKOrchestrator:
                     journal.write_text(json.dumps(marker) + "\n")
                 except (OSError, ValueError):
                     pass  # The pre-dispatch journal remains the authoritative recovery signal.
+                # Only once the recovery marker and the journal are written, labelled by what was observed.
+                _archive_failed_night(store, failed_night, exc, date_iso,
+                                      "committed_download_tracking_failed" if installed
+                                      else "committed_install_failed" if committed else "outcome_unknown")
                 from .publication_commit import PublicationMirrorError
 
                 raise PublicationMirrorError(
@@ -761,6 +776,7 @@ class ZeitgeistADKOrchestrator:
                 ) from exc
             if journal_created:
                 journal.unlink(missing_ok=True)
+            _archive_failed_night(store, failed_night, exc, date_iso, "failed")
             raise
         finally:
             workspace.close()
@@ -864,6 +880,8 @@ class ZeitgeistADKOrchestrator:
         photo_phases: Optional[List[List[Dict[str, Any]]]] = [] if archive_on else None
         photo_revisions: Optional[List[DirectorCommission]] = [] if archive_on else None
         archive_collect_kwargs = {"loaded_rows_out": loaded_rows} if loaded_rows is not None else {}
+        capture = self._failed_night
+        _reach(capture, "collection", rows=loaded_rows)
         try:
             raw_signals = collect_96h_signals(
                 self.repo_root,
@@ -879,6 +897,7 @@ class ZeitgeistADKOrchestrator:
         except IngestionUnavailable as exc:
             exc.public_collection_health = public_collection_health({**exc.public_collection_health, **collection_health})
             raise
+        _reach(capture, "grouping", items=raw_signals)
         reference_time = _reference_clock(date_iso, now_epoch,
             _offline_demo_enabled(offline_demo) and not _live_collection_enabled(live_collect))
         understanding_v1 = understanding_v1_enabled()
@@ -897,6 +916,7 @@ class ZeitgeistADKOrchestrator:
             print(embedding_migration.embedding_line(embedding_run))
         if interim_grouping:
             print(GROUPING_LINE % sum(1 for item in raw_signals if is_captionless(item)))
+        _reach(capture, "director", clusters=scored_clusters)
 
         # Extract 30-day word & visual medium history from pulse_feed.json
         feed_entries: List[Dict[str, Any]] = []
@@ -973,6 +993,8 @@ class ZeitgeistADKOrchestrator:
             extra_group = reflector_candidate.get("group")
             if extra_group is not None:
                 commission_kwargs["extra_group"] = extra_group
+        if capture is not None:
+            commission_kwargs["attempts_out"] = capture.director_attempts.setdefault("main", [])
         commission = commission_daily_zeitgeist(
             scored_clusters,
             history_words_30d=history_words_30d,
@@ -982,6 +1004,7 @@ class ZeitgeistADKOrchestrator:
             run_models=run_models,
             **commission_kwargs,
         )
+        _reach(capture, main_commission=commission)
         fallback_shown = run_models.fallback_fired
         if genai_client is not None:
             print(model_choice_line(run_models, commission.slate_count))
@@ -1032,6 +1055,7 @@ class ZeitgeistADKOrchestrator:
         c_sil = float(field_cluster.silhouette_score) if field_cluster is not None else 0.75
 
         # Stage 4: Multimodal Visual Critic Funnel & Dual-Resolution WebP/SVG Renderer
+        _reach(capture, "photo", photo_phases=photo_phases, revisions=photo_revisions)
         curated_candidates = None
         live_unsplash_enabled = os.environ.get("ZEITGEIST_LIVE_UNSPLASH", "1").strip() != "0"
         has_live_unsplash_key = (
@@ -1109,10 +1133,15 @@ class ZeitgeistADKOrchestrator:
                         raise ValueError("Original story unavailable; cannot revise unrelated signals")
                     story_id = getattr(selected[0], "cluster_id", None) if chosen_link is not None else current.selected_cluster_id
                     locks = revision_owner_constraints(owner, current, change_word=change_word)
+                    revision_kwargs = {}
+                    if capture is not None:
+                        revision_kwargs["attempts_out"] = capture.director_attempts.setdefault(
+                            f"revision:{len(photo_revisions) + 1}", [])
                     revised = commission_daily_zeitgeist(selected,
                         history_words_30d=history_words_30d+([current.word] if change_word and not locks.get("override_word") else []),
                         genai_client=genai_client, model_name=run_models.current("director"),
-                        run_models=run_models, max_retries=0, owner_override=locks, check_shown_ids=False)
+                        run_models=run_models, max_retries=0, owner_override=locks, check_shown_ids=False,
+                        **revision_kwargs)
                     if photo_revisions is not None:
                         photo_revisions.append(revised)
                     if revised.fallback_used or revised.selected_cluster_id!=story_id:
@@ -1127,6 +1156,7 @@ class ZeitgeistADKOrchestrator:
                     photo_required=requested_medium=="photo")
                 self.last_commission = commission
                 self.last_photo_recovery = recovery_trace
+                _reach(capture, recovery_trace=recovery_trace)
             else:
                 published = render_commission(commission)
         finally:
@@ -1134,6 +1164,7 @@ class ZeitgeistADKOrchestrator:
             if genai_client is not None and run_models.fallback_fired and not fallback_shown:
                 print(model_choice_line(run_models, commission.slate_count))
         self.last_published_pulse = published
+        _reach(capture, published=published)
         if understanding_v1:
             # After photo recovery: measure the commission that will be published.
             _print_understanding_line(scored_clusters, self.last_commission, original_commission,
@@ -1662,45 +1693,61 @@ def _evidence_archive_parts(
     The intake is the rows as loaded when the collector gave them, else the items the run clustered.
     """
     passes = [("main", main_commission)] + [(f"revision:{n}", revised) for n, revised in enumerate(revisions or (), 1)]
-    phases = list(photo_phases or ())
-    chosen_index = getattr(published, "selected_candidate_index", None)
-    candidates = [
-        {"render_call": call, **row, "chosen": call == len(phases) and chosen_index is not None
-         and row.get("index") == chosen_index}
-        for call, phase in enumerate(phases, 1) for row in phase
-    ]
     parts = {
         "intake_rows": list(rows) if rows else list(items or ()),
         "groups": evidence_archive.group_entries(clusters),
         "director_attempts": [{"pass": name, **entry} for name, made in passes
                               for entry in getattr(made, _DIRECTOR_ATTEMPTS_ATTR, None) or ()],
-        # The accepted attempt of each pass: its candidate words, the candidate block and the prompt's digest.
-        "director_evidence": [
-            {"pass": name, "attempt": entry["attempt"], "candidate_words": entry.get("candidate_words") or [],
-             "evidence_text": entry.get("evidence_text"),
-             "prompt_sha256": hashlib.sha256(str(entry["request_text"]).encode("utf-8")).hexdigest()}
-            for name, made in passes for entry in getattr(made, _DIRECTOR_ATTEMPTS_ATTR, None) or ()
-            if entry.get("accepted")
-        ],
+        "director_evidence": [_accepted_attempt_evidence(name, entry) for name, made in passes
+                              for entry in getattr(made, _DIRECTOR_ATTEMPTS_ATTR, None) or () if entry.get("accepted")],
         "commissions": [{"pass": "published", **commission.to_dict()}]
                        + [{"pass": name, **made.to_dict()} for name, made in passes],
-        "photo_candidates": candidates,
-        "published": [{
-            "entry": published_entry,
-            "visual_medium": getattr(published, "visual_medium", None),
-            "attribution": getattr(published, "attribution", None),
-            "chosen_photo": None if chosen_index is None else {"render_call": len(phases),
-                                                               "selected_candidate_index": chosen_index},
-            "photo_recovery_trace": recovery_trace,
-        }],
+        "photo_candidates": _photo_candidate_entries(photo_phases, published),
+        "published": [_published_part(published, published_entry, photo_phases, recovery_trace)],
     }
     extra = {
         "intake_source": "stored_rows" if rows else "items",
+        **_archive_meta_fields(),
+    }
+    return parts, extra
+
+
+def _accepted_attempt_evidence(name: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+    """A pass's accepted attempt: its candidate words, the candidate block and the prompt's digest."""
+    return {"pass": name, "attempt": entry["attempt"], "candidate_words": entry.get("candidate_words") or [],
+            "evidence_text": entry.get("evidence_text"),
+            "prompt_sha256": hashlib.sha256(str(entry["request_text"]).encode("utf-8")).hexdigest()}
+
+
+def _photo_candidate_entries(photo_phases: Optional[Sequence[Sequence[Dict[str, Any]]]], published: Any) -> List[Any]:
+    """Every scored photo candidate of every render call; the published one marked chosen."""
+    phases = list(photo_phases or ())
+    chosen_index = getattr(published, "selected_candidate_index", None)
+    return [
+        {"render_call": call, **row, "chosen": call == len(phases) and chosen_index is not None
+         and row.get("index") == chosen_index}
+        for call, phase in enumerate(phases, 1) for row in phase
+    ]
+
+
+def _published_part(published: Any, entry: Any, photo_phases: Optional[Sequence[Any]], recovery_trace: Any) -> Dict[str, Any]:
+    chosen_index = getattr(published, "selected_candidate_index", None)
+    return {
+        "entry": entry,
+        "visual_medium": getattr(published, "visual_medium", None),
+        "attribution": getattr(published, "attribution", None),
+        "chosen_photo": None if chosen_index is None else {"render_call": len(list(photo_phases or ())),
+                                                           "selected_candidate_index": chosen_index},
+        "photo_recovery_trace": recovery_trace,
+    }
+
+
+def _archive_meta_fields() -> Dict[str, Any]:
+    return {
         "embedding_f16_encoding": "base64",
         "commit": os.environ.get("GITHUB_SHA") or None,
         "switches": {name: os.environ.get(name) for name in run_record.SWITCH_NAMES},
     }
-    return parts, extra
 
 
 def _archive_evidence(store: Any, inputs: Dict[str, Any], published_entry: Any) -> None:
@@ -1718,6 +1765,96 @@ def _archive_evidence(store: Any, inputs: Dict[str, Any], published_entry: Any) 
                 date_iso=date_iso, run_id=run_record.make_run_id("daily_run", date_iso), parts=parts, extra=extra)
 
         print(evidence_archive.archive_with_budget(store, build))
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        pass
+
+
+@dataclass
+class FailedNightCapture:
+    """What a night has reached, for the archive if it fails: the stage it is in and references to what each
+    finished stage made. A part stays None until its stage is reached. Kept only with the failed-night switch on."""
+
+    stage: str = "setup"
+    rows: Optional[List[Dict[str, Any]]] = None
+    items: Optional[List[Any]] = None
+    clusters: Optional[List[Any]] = None
+    # Each Director pass's attempts as they are made ("main", then "revision:<n>"), so a raise keeps them.
+    director_attempts: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    main_commission: Optional[DirectorCommission] = None
+    revisions: Optional[List[DirectorCommission]] = None
+    photo_phases: Optional[List[List[Dict[str, Any]]]] = None
+    published: Any = None
+    recovery_trace: Any = None
+    # The feed entry once generated, then the entry as committed.
+    entry: Any = None
+
+
+def _reach(capture: Optional[FailedNightCapture], stage: Optional[str] = None, **reached: Any) -> None:
+    """Mark the stage the night enters and keep what it has made; with the switch off there is no capture."""
+    if capture is None:
+        return
+    if stage is not None:
+        capture.stage = stage
+    for name, value in reached.items():
+        setattr(capture, name, value)
+
+
+def _failed_night_parts(capture: FailedNightCapture) -> Tuple[Dict[str, List[Any]], Dict[str, Any]]:
+    """What a failed night reached as archive parts, and the meta's own fields; a part never reached is left out,
+    while a part reached with nothing in it is kept empty. Prints and logs nothing."""
+    parts: Dict[str, List[Any]] = {}
+    extra: Dict[str, Any] = {}
+    if capture.rows or capture.items is not None:
+        parts["intake_rows"] = list(capture.rows) if capture.rows else list(capture.items or ())
+        extra["intake_source"] = "stored_rows" if capture.rows else "items"
+    if capture.clusters is not None:
+        parts["groups"] = evidence_archive.group_entries(capture.clusters)
+    if capture.director_attempts:
+        parts["director_attempts"] = [{"pass": name, **entry} for name, made in capture.director_attempts.items()
+                                      for entry in made]
+    if capture.main_commission is not None:
+        parts["director_evidence"] = [_accepted_attempt_evidence(name, entry)
+                                      for name, made in capture.director_attempts.items()
+                                      for entry in made if entry.get("accepted")]
+        passes = [("main", capture.main_commission)] + [
+            (f"revision:{n}", revised) for n, revised in enumerate(capture.revisions or (), 1)]
+        parts["commissions"] = [{"pass": name, **made.to_dict()} for name, made in passes]
+    if capture.photo_phases is not None:
+        parts["photo_candidates"] = _photo_candidate_entries(capture.photo_phases, capture.published)
+    if capture.published is not None:
+        parts["published"] = [_published_part(capture.published, capture.entry, capture.photo_phases,
+                                              capture.recovery_trace)]
+    extra.update(_archive_meta_fields())
+    return parts, extra
+
+
+def _archive_failed_night(
+    store: Any, capture: Optional[FailedNightCapture], error: BaseException, date_iso: str, status: str,
+) -> None:
+    """Archive what a failed night reached, labelled by its observed outcome; prints only the public line.
+
+    The meta keeps the exception's class, never its message. Held to the failed night's budget, so the job's
+    outcome steps still run; past the job's deadline nothing is written. An interrupt or an exit is not archived;
+    one raised while it waits is raised again. Otherwise it never raises, so the night's own failure goes on.
+    """
+    if capture is None or isinstance(error, (KeyboardInterrupt, SystemExit)):
+        return
+    try:
+        day = str(date_iso)[:10]
+        extra = {"status": status, "failed_stage": capture.stage, "error_class": type(error).__name__}
+        seconds = evidence_archive.failed_night_budget()
+        if seconds <= 0:
+            print("evidence_archive=skipped reason=no_time_left")
+            return
+
+        def build():
+            parts, fields = _failed_night_parts(capture)
+            return evidence_archive.archive_documents(
+                date_iso=day, run_id=run_record.make_run_id("daily_run", day), parts=parts, extra={**fields, **extra})
+
+        print(evidence_archive.archive_with_budget(store, build, seconds))
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException:
@@ -2184,6 +2321,7 @@ def commission_daily_zeitgeist(
     links: Optional[Sequence[Any]] = None,
     extra_group: Any = None,
     check_shown_ids: bool = True,
+    attempts_out: Optional[List[Dict[str, Any]]] = None,
 ) -> DirectorCommission:
     """Run Editorial Director Agent with Latin-Script & 30-Day Deduplication Gate (up to 2 retries at T=0.3).
 
@@ -2191,6 +2329,8 @@ def commission_daily_zeitgeist(
     packet path only. With links or the repair switch on, a reply whose id the attempt did not show (a link id
     included) is accepted at once and mapped to the top group; the check never retries. `check_shown_ids=False`
     turns the shown-candidate check off (photo recovery's revision, whose caller refuses another story).
+    `attempts_out`, given only with the failed-night switch on, receives every attempt as it is made, so the
+    attempts outlive a raise.
     """
     owner = validate_owner_interjection(owner_override or {})
     constrained = owner.get("enabled") and any(owner.get(k) for k in ("override_word", "override_phrase", "personal_note"))
@@ -2203,7 +2343,8 @@ def commission_daily_zeitgeist(
     packet_phase_over = False
     packet_attempts = 0
     # Every attempt's request and reply, kept for the evidence archive only with its switch on.
-    archive_attempts: Optional[List[Dict[str, Any]]] = [] if evidence_archive.archive_enabled() else None
+    archive_attempts: Optional[List[Dict[str, Any]]] = (
+        attempts_out if attempts_out is not None else [] if evidence_archive.archive_enabled() else None)
     def shown_mark(commission: DirectorCommission) -> DirectorCommission:
         # Whether any attempt of the loop showed the night's links (a packet attempt, links given).
         setattr(commission, _LINKS_SHOWN_ATTR, links is not None and packet_attempts > 0)
