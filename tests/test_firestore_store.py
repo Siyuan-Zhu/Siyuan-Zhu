@@ -14,6 +14,7 @@ from src.state_store import (
     VALID_MOOD_KEYS,
     compute_voter_hmac,
 )
+from src.zeitgeist.public_schema import FALSE_MOMENTUM_FIELDS
 from src.zeitgeist.visual_router import PublishedPulse
 
 
@@ -39,6 +40,11 @@ SECTION_7_1_FEED_KEYS = {
     "published_at",
     "updated_at",
 }
+
+
+# Committed feed entries may predate or follow the approved field removal
+# (ZEITGEIST_DROP_FALSE_FIELDS), so the removed fields are not required there.
+COMMITTED_FEED_KEYS = SECTION_7_1_FEED_KEYS - set(FALSE_MOMENTUM_FIELDS)
 
 
 def _make_sample_published_pulse() -> PublishedPulse:
@@ -864,7 +870,11 @@ def test_public_json_files_match_runtime_schema_and_no_base64_bloat() -> None:
         if modern:
             validate_editorial_entry(entry)
         assert_public_provenance(entry)
-        assert SECTION_7_1_FEED_KEYS.issubset(entry)
+        assert COMMITTED_FEED_KEYS.issubset(entry)
+        present_removed = set(FALSE_MOMENTUM_FIELDS) & set(entry)
+        assert present_removed in (set(), set(FALSE_MOMENTUM_FIELDS)), (
+            f"Half-removed false momentum fields: {len(present_removed)} of {len(FALSE_MOMENTUM_FIELDS)} present"
+        )
         _assert_valid_pulse_votes(entry["mood_votes"])
         if modern and entry["date"][:10] == manifest["date"]:
             assert entry["publication_id"] == manifest["publication_id"]
