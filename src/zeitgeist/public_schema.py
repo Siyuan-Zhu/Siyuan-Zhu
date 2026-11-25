@@ -2,6 +2,7 @@
 import copy
 from datetime import date
 import json
+import os
 import re
 from pathlib import Path
 
@@ -13,6 +14,18 @@ headline summary 24h_shift dominant_category dominant_signal_type orbit_weight_r
 top_orbit_themes top_macro_themes visual_tier_used artwork_title artwork_artist
 artwork_source artwork_url image_data_uri quote quote_attribution window_hours palette_hex
 curatorial_archetype text_quadrant date_iso word_of_the_day explanation_phrase composite_score'''.split())
+# Constant in every entry (nothing computes them), so they are not published when the switch is on.
+# Past entries keep them; the fields stay allowed above and optional in firestore.rules.
+DROP_FALSE_FIELDS_ENV = 'ZEITGEIST_DROP_FALSE_FIELDS'
+FALSE_MOMENTUM_FIELDS = ('24h_shift', 'dominant_category', 'dominant_signal_type',
+                         'orbit_weight_ratio', 'orbit_contribution_pct', 'macro_contribution_pct')
+
+
+def drop_false_fields_enabled(environ=None):
+    env = os.environ if environ is None else environ
+    return env.get(DROP_FALSE_FIELDS_ENV) == '1'
+
+
 PHOTO_POLICY_FIELDS = frozenset({'photo_selection_policy', 'photo_selection_policy_date'})
 # Canonical current-state projections use explicit nulls to clear these fields
 # across Firestore merge updates. Public entries and historical rows remain strict.
