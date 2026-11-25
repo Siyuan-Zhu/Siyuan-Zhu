@@ -48,7 +48,9 @@ def archive_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
 FAILED_NIGHT_SWITCH_ENV = "ZEITGEIST_FAILED_NIGHT_ARCHIVE"
 RUN_STARTED_ENV = "ZEITGEIST_RUN_STARTED_AT"
 # The edition job stops at 15 minutes and its outcome steps run after the edition. The run's recorded start comes
-# after checkout and install, so twelve minutes from it is about thirteen minutes into the job.
+# after checkout and install: on the 25 Nov edition the job started 05:24:29Z and the pipeline step 05:24:41Z
+# (12 s of setup), and the steps after the pipeline took about 7 s. Twelve minutes from the recorded start leaves
+# about three minutes for those steps.
 FAILED_NIGHT_DEADLINE_SECONDS = 12 * 60
 UNKNOWN_START_SECONDS = 60.0
 

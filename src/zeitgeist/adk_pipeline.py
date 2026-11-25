@@ -272,10 +272,13 @@ def collect_96h_signals(
     offline_demo: bool | None = None,
     embedding_run: Optional[EmbeddingRun] = None,
     loaded_rows_out: Optional[List[Dict[str, Any]]] = None,
+    reached_rows_out: Optional[List[Any]] = None,
 ) -> List[CachedItem]:
     """Load, collect, or synthesize 96h Macro + 336h Orbit items with 768-dim L2-normalized embeddings.
 
     `loaded_rows_out`, given only by the evidence archive, receives the loaded rows with every field they carry.
+    `reached_rows_out`, given only with the failed-night switch on, always holds every row the collector holds so
+    far (the cached rows, then the live ones), so a raise inside the collector keeps them.
     """
     from src.state_store import get_state_store
 
@@ -311,6 +314,10 @@ def collect_96h_signals(
         bucket = str(row.get("bucket", "")).upper()
         return fresh(row, 336 if bucket == "ORBIT" else 96) and bucket in {"ORBIT", "MACRO"}
 
+    def hold(rows):
+        if reached_rows_out is not None:
+            reached_rows_out[:] = [dict(row) if isinstance(row, dict) else row for row in rows]
+
     existing_cache_map: Dict[str, Dict[str, Any]] = {}
     if hasattr(active_store, "load_ingestion_cache"):
         cached_rows = active_store.load_ingestion_cache(now_utc=now_utc)
@@ -323,6 +330,7 @@ def collect_96h_signals(
                 if isinstance(r, dict):
                     key = str(r.get("url_hash") or r.get("url_sha256") or f"cache_{idx}")
                     existing_cache_map[key] = dict(r)
+    hold(existing_cache_map.values())
 
     if raw_signals is not None:
         if should_live_collect:
@@ -402,6 +410,7 @@ def collect_96h_signals(
         # separate eight-of-twelve rotation must not filter the O3 RSS tier.
         curated_items = fetch_all_curated_feeds(sources_config)
         health["curated_item_count"] = len(curated_items or [])
+        hold(list(existing_cache_map.values()) + list(curated_items or []))
 
         curated_ig_handles = [
             str(h).lstrip("@").strip().lower()
@@ -498,6 +507,7 @@ def collect_96h_signals(
             live_hashes.add(key)
         health.update(embedding_eligible_item_count=len(active_rows),
             discarded_before_embedding_count=sum(not eligible_live_row(row) for row in live_raw_items))
+        hold({**existing_cache_map, **active_rows}.values())
         # Coverage depends on source metadata, not embeddings. Reject an
         # unusable corpus before model calls or cache writes; recheck afterward.
         require_live_coverage(active_rows.values())
@@ -570,6 +580,7 @@ def collect_96h_signals(
     if loaded_rows_out is not None:
         # In memory only: the rows as loaded, caption, fetch time and embedding model included.
         loaded_rows_out.extend(dict(row) for row in existing_cache_map.values() if isinstance(row, dict))
+    hold(existing_cache_map.values())
 
     if should_live_collect:
         require_live_coverage(existing_cache_map.values(), final=True)
@@ -707,7 +718,6 @@ class ZeitgeistADKOrchestrator:
                 now_epoch=now_epoch,
                 offline_demo=offline_demo,
             )
-            _reach(failed_night, "validation")
             payload = staged._prepared_state
             payload["visual_decision"]["local_svg_path"] = "assets/daily_pulse.svg"
             manifest = json.loads(
@@ -717,7 +727,7 @@ class ZeitgeistADKOrchestrator:
             feed_path = workspace.path / "data/pulse_feed.json"
             feed = json.loads(feed_path.read_text())
             generated_entry = staged.last_published_pulse.to_feed_entry()
-            _reach(failed_night, entry=generated_entry)
+            _reach(failed_night, "validation", entry=generated_entry)
             validate_editorial_entry(generated_entry)
             _reach(failed_night, "publication")
             state = publish_bundle(
@@ -758,8 +768,11 @@ class ZeitgeistADKOrchestrator:
         except BaseException as exc:
             if committed or isinstance(exc, PublicationOutcomeUnknown):
                 store.set_needs_git_reconcile(True)
+                tracking_marked = False
                 try:
                     marker = json.loads(journal.read_text())
+                    # The download-tracking step marks the journal with its link before it runs.
+                    tracking_marked = "download_location" in marker
                     marker["status"] = ("canonical_committed_download_tracking_pending" if installed else "canonical_committed_local_install_failed" if committed
                                         else "canonical_commit_outcome_unknown")
                     journal.write_text(json.dumps(marker) + "\n")
@@ -767,7 +780,8 @@ class ZeitgeistADKOrchestrator:
                     pass  # The pre-dispatch journal remains the authoritative recovery signal.
                 # Only once the recovery marker and the journal are written, labelled by what was observed.
                 _archive_failed_night(store, failed_night, exc, date_iso,
-                                      "committed_download_tracking_failed" if installed
+                                      ("committed_download_tracking_failed" if tracking_marked
+                                       else "committed_installed_followup_failed") if installed
                                       else "committed_install_failed" if committed else "outcome_unknown")
                 from .publication_commit import PublicationMirrorError
 
@@ -870,6 +884,9 @@ class ZeitgeistADKOrchestrator:
         )
 
         # Stage 1 & 2: Collect 96h/336h signals, apply stratified windowing, and cluster
+        capture = self._failed_night
+        reached_rows: Optional[List[Any]] = [] if capture is not None else None
+        _reach(capture, "collection", rows=reached_rows)
         collection_health = {}
         embedding_run = (embedding_migration.plan_embedding_run(store, run_models.embedding)
                          if _live_collection_enabled(live_collect) else None)
@@ -880,8 +897,8 @@ class ZeitgeistADKOrchestrator:
         photo_phases: Optional[List[List[Dict[str, Any]]]] = [] if archive_on else None
         photo_revisions: Optional[List[DirectorCommission]] = [] if archive_on else None
         archive_collect_kwargs = {"loaded_rows_out": loaded_rows} if loaded_rows is not None else {}
-        capture = self._failed_night
-        _reach(capture, "collection", rows=loaded_rows)
+        if reached_rows is not None:
+            archive_collect_kwargs["reached_rows_out"] = reached_rows
         try:
             raw_signals = collect_96h_signals(
                 self.repo_root,
@@ -1164,7 +1181,8 @@ class ZeitgeistADKOrchestrator:
             if genai_client is not None and run_models.fallback_fired and not fallback_shown:
                 print(model_choice_line(run_models, commission.slate_count))
         self.last_published_pulse = published
-        _reach(capture, published=published)
+        # Rendered: the edition's records, state and bundle are assembled until its entry is validated.
+        _reach(capture, "assembly", published=published)
         if understanding_v1:
             # After photo recovery: measure the commission that will be published.
             _print_understanding_line(scored_clusters, self.last_commission, original_commission,
@@ -1776,8 +1794,10 @@ class FailedNightCapture:
     """What a night has reached, for the archive if it fails: the stage it is in and references to what each
     finished stage made. A part stays None until its stage is reached. Kept only with the failed-night switch on."""
 
+    # setup, collection, grouping, director, photo, assembly, validation, publication: each set as it starts.
     stage: str = "setup"
-    rows: Optional[List[Dict[str, Any]]] = None
+    # The rows the collector holds, kept current while it runs.
+    rows: Optional[List[Any]] = None
     items: Optional[List[Any]] = None
     clusters: Optional[List[Any]] = None
     # Each Director pass's attempts as they are made ("main", then "revision:<n>"), so a raise keeps them.
@@ -1806,9 +1826,11 @@ def _failed_night_parts(capture: FailedNightCapture) -> Tuple[Dict[str, List[Any
     while a part reached with nothing in it is kept empty. Prints and logs nothing."""
     parts: Dict[str, List[Any]] = {}
     extra: Dict[str, Any] = {}
-    if capture.rows or capture.items is not None:
-        parts["intake_rows"] = list(capture.rows) if capture.rows else list(capture.items or ())
-        extra["intake_source"] = "stored_rows" if capture.rows else "items"
+    if capture.rows is not None:
+        # The collector's rows; once it has returned with none, the items the run went on with.
+        parts["intake_rows"] = list(capture.rows) if capture.rows or capture.items is None else list(capture.items)
+        extra["intake_source"] = ("collector_rows" if capture.items is None
+                                  else "stored_rows" if capture.rows else "items")
     if capture.clusters is not None:
         parts["groups"] = evidence_archive.group_entries(capture.clusters)
     if capture.director_attempts:
@@ -1836,11 +1858,13 @@ def _archive_failed_night(
     """Archive what a failed night reached, labelled by its observed outcome; prints only the public line.
 
     The meta keeps the exception's class, never its message. Held to the failed night's budget, so the job's
-    outcome steps still run; past the job's deadline nothing is written. An interrupt or an exit is not archived;
-    one raised while it waits is raised again. Otherwise it never raises, so the night's own failure goes on.
+    outcome steps still run; past the job's deadline nothing is written. A night that fails by an interrupt or an
+    exit is not archived. It never raises.
     """
     if capture is None or isinstance(error, (KeyboardInterrupt, SystemExit)):
         return
+    # Everything raised here is swallowed, an interrupt or an exit during the wait included (the archive's daemon
+    # thread is abandoned), so the night's own exception and its recorded outcome go on unchanged.
     try:
         day = str(date_iso)[:10]
         extra = {"status": status, "failed_stage": capture.stage, "error_class": type(error).__name__}
@@ -1855,8 +1879,6 @@ def _archive_failed_night(
                 date_iso=day, run_id=run_record.make_run_id("daily_run", day), parts=parts, extra={**fields, **extra})
 
         print(evidence_archive.archive_with_budget(store, build, seconds))
-    except (KeyboardInterrupt, SystemExit):
-        raise
     except BaseException:
         pass
 
