@@ -32,10 +32,11 @@ OLD_SWITCH = evidence_archive.SWITCH_ENV
 # Fingerprints taken from main (b07c994) before the change: the published night with the evidence archive on and
 # with it off, a failed publication and a failed Director call with the evidence archive on. The one key left out
 # is this switch's own entry in the archive meta's switch map, which every listed switch adds. The published
-# nights run on one-hot vectors (_seed_exact) and without GITHUB_SHA, so the digests hold on macOS and Linux CI.
+# nights run on one-hot vectors (_seed_exact) and without GITHUB_SHA, and each publication id is reduced to its
+# shape (_platform_stable), so the digests hold on macOS and on Linux CI.
 MAIN_FINGERPRINTS = {
-    "published_old_on": "1f41efdb3775b5b362df9da22da8b5e14b7bb5c4c86593e5deb8f9ab83897b23",
-    "published_off": "cae70e748ad745063d1ddbe1d311b03ea187e57ab00593546675610bce9f7fe3",
+    "published_old_on": "026f14e2ea980240de8fc8c5f7d7e868757bd45d8111a608a20bd93b6ce5aaf0",
+    "published_off": "0cc4e0cf502f324c17bb489c0ee00926f331764ed5b1356ab6b62ba918818df1",
     "publish_fails_old_on": "6b7915b7a8fe62dfaf3206ce1809a3543649a4d469afaa28ae65ceffe55132e8",
     "director_fails_old_on": "f9fb1d92fbf3beb3153c9832877b2d6b29ee615c87f3b5e831aa675663235436",
 }
@@ -50,6 +51,21 @@ def _switches_unset(monkeypatch):
 
 def _fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _platform_stable(value):
+    """The value with each publication id reduced to its shape.
+
+    The id digests the rendered artwork. Pillow's text rasterising differs between its macOS and Linux wheels, so
+    the artwork's bytes, and with them the id, differ by platform for the same edition. Everything else is kept.
+    """
+    if isinstance(value, dict):
+        return {key: ("<publication_id>" if key == "publication_id" and isinstance(item, str)
+                      and re.fullmatch(r"[0-9a-f]{20}", item) else _platform_stable(item))
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [_platform_stable(item) for item in value]
+    return value
 
 
 def _night_print(store, out):
@@ -133,14 +149,29 @@ def _cell(cell, tmp_path, monkeypatch, capsys):
 def test_switch_off_matches_the_main_fingerprint(tmp_path, monkeypatch, capsys, cell, value):
     if value is not None:
         monkeypatch.setenv(SWITCH, value)
-    assert _fingerprint(_cell(cell, tmp_path, monkeypatch, capsys)) == MAIN_FINGERPRINTS[cell]
+    assert _fingerprint(_platform_stable(_cell(cell, tmp_path, monkeypatch, capsys))) == MAIN_FINGERPRINTS[cell]
 
 
 @pytest.mark.parametrize("cell", ["published_old_on", "published_off"])
 def test_switch_on_a_published_night_still_matches_the_main_fingerprint(tmp_path, monkeypatch, capsys, cell):
     """On, a published night takes the Director's attempts into the capture; its one archive is main's."""
     monkeypatch.setenv(SWITCH, "1")
-    assert _fingerprint(_cell(cell, tmp_path, monkeypatch, capsys)) == MAIN_FINGERPRINTS[cell]
+    assert _fingerprint(_platform_stable(_cell(cell, tmp_path, monkeypatch, capsys))) == MAIN_FINGERPRINTS[cell]
+
+
+@pytest.mark.parametrize("cell", ["published_old_on", "published_off"])
+def test_a_published_night_is_byte_for_byte_the_same_with_the_switch_on_and_off(tmp_path, monkeypatch, capsys, cell):
+    """On one platform, publication ids and artwork included: the switch changes nothing about a published night."""
+    seen = {}
+    for value in ("0", "1"):
+        # Each run patches the Director afresh, as a test of its own would.
+        with monkeypatch.context() as patch:
+            patch.setenv(SWITCH, value)
+            root = tmp_path / value
+            seen[value] = _cell(cell, root, patch, capsys)
+        seen[value]["artwork"] = {name: hashlib.sha256((root / "assets" / name).read_bytes()).hexdigest()
+                                  for name in ("daily_pulse.svg", "daily_pulse_light.webp", "daily_pulse_dark.webp")}
+    assert seen["0"] == seen["1"]
 
 
 # ---- the switch: on only with the evidence archive on too, recorded last, passed by the three workflows ----
