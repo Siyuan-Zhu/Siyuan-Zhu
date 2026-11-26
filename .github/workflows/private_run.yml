@@ -6,6 +6,12 @@ name: Private Run
 # The log carries numbers and public model names only.
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only) or apply (owner only)"
+        type: choice
+        options: [plan, apply]
+        default: plan
 
 concurrency:
   group: readme-state-writer
@@ -72,6 +78,6 @@ jobs:
           FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || '(default)' }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          RECONCILE_MODE: ${{ inputs.mode }}
         run: |
-          python3 scripts/maintain_spend_control.py --apply --private-report /tmp/private-spend-maintenance/evidence.json
-          python3 scripts/private_run.py
+          if [ "$RECONCILE_MODE" = "apply" ]; then python3 scripts/reconcile_apify_hold_20261120.py --apply; else python3 scripts/reconcile_apify_hold_20261120.py; fi
