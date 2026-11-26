@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-25",
-  "word": "Grace Note",
-  "gloss": "Small, playful thanks adorning ordinary days.",
-  "archetype": "S1_PLATE",
+  "date": "2026-11-26",
+  "word": "Doxology",
+  "gloss": "Gratitude elevated into a deliberate liturgy.",
+  "archetype": "S1_WALL",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "d9a4b44a51e3818fa37eb275b36de9e33609823150b812382b4cc95b77a08108",
-    "assets/daily_pulse_dark.webp": "d1b70336c5ce24013ff4345be7d232af67e41a25b1956218abd2a933b34bb820",
-    "assets/daily_pulse.svg": "8a1fa861f8c39a2458863ebbccdd55649bbe418a5ddf747746f9502427e89664",
-    "assets/pulse/2026-11-25.webp": "779512b0f1b41c6e44ad37b53ef6b73af82392f9d3110f6b4edfef548f13295e"
+    "assets/daily_pulse_light.webp": "d229f2df2a91c9e97336eb6d06bcf892efdfaf00a8cf52e96f5e2bb24fcd20a8",
+    "assets/daily_pulse_dark.webp": "6cd01a959bdfde85e675a06e5810dc4f1f93c7f7ac76dd3e0af25e5cc27657f3",
+    "assets/daily_pulse.svg": "6d6043a38c8fd7525a9187f51965a816ba137d77f59a1ba5164cf213ee58c80d",
+    "assets/pulse/2026-11-26.webp": "93fddadd8692f644baed30376eaee0fdfaaa097e6e8044b859198acb34a03f4b"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "z4dzjjgM_JY",
-    "source_url": "https://unsplash.com/photos/z4dzjjgM_JY",
-    "camera_make": "Canon",
-    "camera_model": "Canon EOS 1200D",
+    "asset_id": "uNGVQJr2bYM",
+    "source_url": "https://unsplash.com/photos/uNGVQJr2bYM",
+    "camera_make": "NIKON CORPORATION",
+    "camera_model": "NIKON Z 6",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "7cad20d4f4798a3d5cfa"
+  "publication_id": "9cf799bbc514a71080cb"
 }

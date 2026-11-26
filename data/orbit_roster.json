@@ -1,9 +1,17 @@
 {
-  "curated_o3_cursor": 4,
-  "rss_o3_cursor": 4,
-  "state_version": 29,
-  "updated_at": "2026-11-25T05:25:28.664060+00:00",
+  "curated_o3_cursor": 0,
+  "rss_o3_cursor": 0,
+  "state_version": 30,
+  "updated_at": "2026-11-26T15:26:20.520323+00:00",
   "handles": {
+    "hbo": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "hannarue": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
     "annickweber__": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
@@ -12,27 +20,11 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "acantina_ria": {
+    "ali__morris__writes": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "mpfaffenberger": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "bwentzel": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "tbille": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "chrismaggio": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "davidchipperfieldarchitects": {
+    "modelcontextprotocol": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -40,15 +32,31 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "hbo": {
+    "edouardjacquinet": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "gospelpartner.app": {
+    "ceciliejegsen": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "ali__morris__writes": {
+    "benjamindane": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "tbille": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "bwentzel": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "adtyavrdhn": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "mpfaffenberger": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
@@ -60,27 +68,19 @@
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
+    "gospelpartner.app": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
+    "acantina_ria": {
+      "status": "ACTIVE_O4_SCOUT",
+      "tier": "O4_SCOUT"
+    },
     "douwem": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     },
-    "edouardjacquinet": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "hannarue": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "benjamindane": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "ceciliejegsen": {
-      "status": "ACTIVE_O4_SCOUT",
-      "tier": "O4_SCOUT"
-    },
-    "modelcontextprotocol": {
+    "davidchipperfieldarchitects": {
       "status": "ACTIVE_O4_SCOUT",
       "tier": "O4_SCOUT"
     }
