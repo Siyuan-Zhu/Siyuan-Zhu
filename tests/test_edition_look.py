@@ -215,13 +215,13 @@ def test_colophon_carries_number_date_and_credit() -> None:
     assert L.colophon_text("2026-11-24", CREDIT, "museum") == ["Test Photographer", "No. 25", "24 November 2026"]
 
 
-def _router_run(tmp_path: Path, monkeypatch=None, switch: bool = True, archetype_history=None):
+def _router_run(tmp_path: Path, monkeypatch=None, switch: bool = True, archetype_history=None, director=None):
     from src.zeitgeist.adk_pipeline import DirectorCommission
     from src.zeitgeist.visual_router import select_and_render_pulse_assets
 
     if switch:
         (tmp_path / "assets").mkdir(parents=True, exist_ok=True)
-        (tmp_path / "assets" / "edition_look.json").write_text(json.dumps({"look": "s1"}), encoding="utf-8")
+        (tmp_path / "assets" / "edition_look.json").write_text(json.dumps({"look": "s1", **({} if director is None else {"director": director})}), encoding="utf-8")
     buf = BytesIO()
     _photo("light").save(buf, format="JPEG", quality=90)
     commission = DirectorCommission(
@@ -497,3 +497,86 @@ def test_large_wall_label_sits_right_of_the_photograph_inside_the_plate() -> Non
         if op[0] == "text":
             assert op[5] >= box[0] + box[2]
     assert box[0] + box[2] < 940
+
+
+def test_comparison_render_without_captions_keeps_the_geometry() -> None:
+    photo = _photo("dark")
+    plan = _setting_plan("S1_WALL", "italic", "standard")
+    with_caps = _pair(photo, plan, scale=1)[0]
+    without = _pair(photo, plan, scale=1, captions=False)[0]
+    assert with_caps.size == without.size
+    assert not np.array_equal(np.asarray(with_caps), np.asarray(without))
+    plate = _setting_plan("S1_PLATE", "italic", "standard")        # no caption on this template
+    assert np.array_equal(np.asarray(_pair(photo, plate, scale=1)[0]), np.asarray(_pair(photo, plate, scale=1, captions=False)[0]))
+
+
+def test_layout_lines_list_word_and_gloss_for_every_kind_of_plan() -> None:
+    plan = _setting_plan("S1_WALL", "italic", "standard")
+    lines = L.layout_lines(plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+    assert lines[0][0] == "word" and lines[0][1] == "Relic"
+    assert " ".join(t for role, t, _w in lines if role == "gloss") == GLOSS
+    assert L.plan_fits(plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+
+
+def _live(monkeypatch) -> None:
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")
+
+
+def _fake_director(monkeypatch, result=None, error=None, outcome=None):
+    from src.zeitgeist import art_director
+
+    calls = []
+
+    def fake(photo, **kw):
+        calls.append(kw)
+        if error:
+            raise error
+        if outcome is not None and kw.get("outcome") is not None:
+            kw["outcome"].update(outcome)
+        return result
+
+    monkeypatch.setattr(art_director, "direct_night", fake)
+    return calls
+
+
+def test_director_is_not_called_when_the_run_is_not_live(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ZEITGEIST_LIVE_LLM", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")
+    calls = _fake_director(monkeypatch)
+    published = _router_run(tmp_path, director=True)
+    assert calls == [] and published.curatorial_archetype in L.TEMPLATES
+
+
+def test_director_is_not_called_without_a_key_or_without_the_switch(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    calls = _fake_director(monkeypatch)
+    _router_run(tmp_path / "a", director=True)
+    _live(monkeypatch)
+    _router_run(tmp_path / "b", director=False)
+    _router_run(tmp_path / "c")
+    assert calls == []
+
+
+def test_director_plan_is_used_when_live(tmp_path: Path, monkeypatch, capsys) -> None:
+    _live(monkeypatch)
+    plan = L.NightPlan("S1_PLATE", "wide", "italic", False, "none", False, None, "large")
+    calls = _fake_director(monkeypatch, result=plan, outcome={
+        "model": "gemini-4-neon", "calls": 4, "fallback": 0, "pick": "plate.wide.large", "reason": "none"})
+    published = _router_run(tmp_path, director=True)
+    assert len(calls) == 1 and published.curatorial_archetype == "S1_PLATE"
+    assert calls[0]["thesis"] and calls[0]["word"] == "Solastalgia"
+    assert "[art_director] model=gemini-4-neon calls=4 fallback=0 pick=plate.wide.large reason=none" in capsys.readouterr().out
+    with Image.open(tmp_path / "assets" / "daily_pulse_light.webp") as img:
+        assert img.size[0] == 2400
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("director failed")])
+def test_director_none_or_error_falls_back_to_rotation(tmp_path: Path, monkeypatch, error, capsys) -> None:
+    _live(monkeypatch)
+    calls = _fake_director(monkeypatch, result=None, error=error)
+    published = _router_run(tmp_path, director=True)
+    assert len(calls) == 1 and published.curatorial_archetype in L.TEMPLATES
+    if error:
+        assert "[art_director] model=none calls=0 fallback=0 pick=rotation reason=error" in capsys.readouterr().out

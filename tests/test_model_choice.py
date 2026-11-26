@@ -154,13 +154,17 @@ def test_art_director_resolution_order_env_then_config_then_neon():
     assert mc.resolve_run_models({}, {}).art_director == mc.NEON
     cfg = {"budget_guardrails": {"art_director_model": mc.HYDROGEN}}
     assert mc.resolve_run_models(cfg, {}).art_director == mc.HYDROGEN
-    assert mc.resolve_run_models(cfg, {mc.ART_DIRECTOR_ENV: mc.FLASH}).art_director == mc.FLASH
+    assert mc.resolve_run_models(cfg, {mc.ART_DIRECTOR_ENV: mc.NEON}).art_director == mc.NEON
     assert mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: ""}).art_director == mc.NEON
 
 
-def test_art_director_unknown_value_is_flagged_and_defaults_to_neon():
+def test_art_director_unknown_or_flash_value_means_no_art_director_and_is_flagged():
     rm = mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: "gemini-5"})
-    assert rm.art_director == mc.NEON and rm.unrecognized
+    assert rm.art_director == "" and rm.unrecognized
+    rm = mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: mc.FLASH})
+    assert rm.art_director == "" and rm.unrecognized
+    rm = mc.resolve_run_models({"budget_guardrails": {"art_director_model": mc.FLASH}}, {})
+    assert rm.art_director == "" and rm.unrecognized
     assert not mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: mc.NEON}).unrecognized
 
 
@@ -190,3 +194,10 @@ def test_give_up_never_touches_the_art_director():
     assert rm.give_up("art_director") is False
     assert rm.give_up("judge") is True
     assert rm.art_director == mc.NEON
+
+
+def test_a_failing_art_director_call_leaves_director_and_judge_alone():
+    rm = mc.resolve_run_models({}, {mc.DIRECTOR_ENV: mc.HYDROGEN, mc.JUDGE_ENV: mc.HYDROGEN})
+    with pytest.raises(RuntimeError):
+        rm.call("art_director", lambda model: (_ for _ in ()).throw(RuntimeError("down")))
+    assert (rm.current("director"), rm.current("judge"), rm.fallback_fired) == (mc.HYDROGEN, mc.HYDROGEN, False)

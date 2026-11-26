@@ -83,13 +83,22 @@ def _config_text_model(config: Mapping[str, Any], key: str, default: str = FLASH
     return value if value in _TEXT_MODELS else default
 
 
+def _art_director_model(config: Mapping[str, Any], environ: Mapping[str, str]) -> Tuple[str, bool]:
+    """Environment, then config, then Neon; only a Gemini 4 model counts, anything else means no art director."""
+    guardrails = config.get("budget_guardrails") if isinstance(config, Mapping) else None
+    configured = guardrails.get("art_director_model") if isinstance(guardrails, Mapping) else None
+    raw = (environ.get(ART_DIRECTOR_ENV) or "").strip() or (configured.strip() if isinstance(configured, str) else "")
+    if not raw:
+        return NEON, False
+    return (raw, False) if raw in GEMINI_4 else ("", True)
+
+
 def resolve_run_models(config: Mapping[str, Any], environ: Optional[Mapping[str, str]] = None) -> RunModels:
     environ = os.environ if environ is None else environ
     director, bad_d = _pick(environ.get(DIRECTOR_ENV), _config_text_model(config, "primary_text_model"), _TEXT_MODELS)
     judge, bad_j = _pick(environ.get(JUDGE_ENV), _config_text_model(config, "multimodal_judge_model"), _TEXT_MODELS)
     embedding, bad_e = _pick(environ.get(EMBEDDING_ENV), EMBED_001, _EMBEDDING_MODELS)
-    art, bad_a = _pick(environ.get(ART_DIRECTOR_ENV), _config_text_model(config, "art_director_model", NEON),
-                       _TEXT_MODELS)
+    art, bad_a = _art_director_model(config, environ)
     return RunModels(director, judge, embedding, unrecognized=bad_d or bad_j or bad_e or bad_a, art_director=art)
 
 

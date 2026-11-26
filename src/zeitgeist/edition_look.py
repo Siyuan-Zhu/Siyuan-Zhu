@@ -488,10 +488,15 @@ def _composite(base: Image.Image, painter) -> Image.Image:
     return out.convert("RGB")
 
 
-def render_edition_pair(photo, *, word, gloss, date_iso, credit, plan: NightPlan, scale: int = SCALE):
-    """Light and dark plates for the planned night, WIDTH * scale wide. Layout is on the 1200 px grid."""
+def render_edition_pair(photo, *, word, gloss, date_iso, credit, plan: NightPlan, scale: int = SCALE,
+                        captions: bool = True):
+    """Light and dark plates for the planned night, WIDTH * scale wide. Layout is on the 1200 px grid.
+
+    captions=False leaves the number, date and credit undrawn; the layout is unchanged (comparison renders).
+    """
     facts = analyse_photo(photo)
-    return tuple(_render(photo, word, gloss, date_iso, credit, plan, facts, th, scale) for th in ("light", "dark"))
+    return tuple(_render(photo, word, gloss, date_iso, credit, plan, facts, th, scale, captions)
+                 for th in ("light", "dark"))
 
 
 def _scaled_line(text, st: Style, align, x, base, s: int):
@@ -499,7 +504,7 @@ def _scaled_line(text, st: Style, align, x, base, s: int):
     return text, st.scaled(s), align, x * s, base * s
 
 
-def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE):
+def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE, captions=True):
     if plan.template in ON_PHOTO:
         return _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts, s)
     page, ink = THEMES[theme]["page"], THEMES[theme]["ink"]
@@ -523,6 +528,8 @@ def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE):
                     x0, y0 = op[1] * s, op[2] * s
                     draw.rectangle([x0, y0, x0 + 47 * s - 1, y0 + 5 * s - 1], fill=_rgba(rule_fill))
         for role, text, st, align, x, base in texts:
+            if role == "col" and not captions:
+                continue
             fill = {"word": _rgba(word_fill), "gloss": _rgba(ink), "col": _rgba(ink, COL_ALPHA)}[role]
             _draw_line(draw, x, base, text, st, fill, align, _rgba(stop_fill) if role == "gloss" else None)
 
@@ -539,6 +546,19 @@ def _checked_texts(ops, size, s: int, template: str) -> list:
         if left < 0 or left + w > size[0] or base - asc < 0 or base + desc > size[1]:
             raise ValueError("text leaves the plate: " + template)
     return texts
+
+
+def layout_lines(plan: NightPlan, word: str, gloss: str, date_iso: str, credit: str) -> list:
+    """(role, text, width) for each line of type, in order: the word, then the gloss lines, then captions."""
+    if plan.template in ON_PHOTO:
+        if plan.placement is None:
+            raise ValueError("no placement")
+        lines = list(plan.placement["lines"])
+        return [("word" if i == 0 else "gloss", t, st.width(t)) for i, (t, st, _a, _x, _b) in enumerate(lines)]
+    builder = {"S1_PLATE": _layout_plate, "S1_SLEEVE": _layout_sleeve, "S1_BLEED": _layout_bleed,
+               "S1_ENTRY": _layout_entry, "S1_WALL": _layout_wall}[plan.template]
+    ops, _height, _box = builder(plan, word, gloss, date_iso, credit)
+    return [(op[1], op[2], op[3].width(op[2])) for op in ops if op[0] == "text"]
 
 
 def plan_fits(plan: NightPlan, word: str, gloss: str, date_iso: str, credit: str) -> bool:

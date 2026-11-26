@@ -345,6 +345,16 @@ def edition_look_enabled(root: Path) -> bool:
     return isinstance(data, dict) and str(data.get("look", "")).strip().lower() == "s1"
 
 
+def edition_look_director_enabled(root: Path) -> bool:
+    """True when the switch file asks for the art director and the run is live with a Gemini key (SIY-244)."""
+    try:
+        data = json.loads((Path(root) / EDITION_LOOK_SWITCH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(data, dict) and data.get("director") is True
+            and os.environ.get("ZEITGEIST_LIVE_LLM") == "1" and bool(os.environ.get("GEMINI_API_KEY", "").strip()))
+
+
 def _edition_history(root: Path, history, date_iso: str = "") -> list:
     """Template history, newest first, led by the last published template when the feed lacks it.
 
@@ -400,17 +410,55 @@ def encode_plate(plate) -> bytes:
     raise ValueError("plate exceeds the byte budget at every quality and size")
 
 
-def _render_edition_look(hero_img, *, word: str, gloss: str, date_iso: str, history, credit: str):
-    """Plan and draw the S1 plates; any failure returns None so the current look renders instead."""
+def _art_director_plan(hero_img, *, word: str, gloss: str, thesis: str, date_iso: str, history, credit: str):
+    """The art director's plan, or None for rotation. Prints one line of numbers, ids and enum words."""
+    outcome: Dict[str, Any] = {}
+    plan = None
+    try:
+        from src.zeitgeist import art_director
+
+        plan = art_director.direct_night(
+            hero_img, word=word, gloss=gloss, thesis=thesis, date_iso=date_iso, credit=credit,
+            history=list(history or ()), outcome=outcome)
+        if outcome:
+            print(art_director.outcome_line(outcome), flush=True)
+    except Exception:  # the director never costs an edition
+        plan = None
+        print("[art_director] model=none calls=0 fallback=0 pick=rotation reason=error", flush=True)
+    return plan
+
+
+def _render_edition_look(hero_img, *, word: str, gloss: str, date_iso: str, history, credit: str,
+                         director: bool = False, thesis: str = ""):
+    """Plan and draw the S1 plates; any failure returns None so the current look renders instead.
+
+    With the director on, its plan is tried first; None or a failure to draw it means rotation decides.
+    """
     try:
         from src.zeitgeist import edition_look
 
-        plan = edition_look.plan_night(date_iso, list(history or ()), hero_img, word=word, gloss=gloss, credit=credit)
-        light, dark = edition_look.render_edition_pair(
-            hero_img, word=word, gloss=gloss, date_iso=date_iso, credit=credit, plan=plan
-        )
-        encoded = [encode_plate(plate) for plate in (light, dark)]
-        return plan.template, encoded[0], encoded[1]
+        plans = []
+        if director:
+            chosen = _art_director_plan(hero_img, word=word, gloss=gloss, thesis=thesis, date_iso=date_iso,
+                                        history=history, credit=credit)
+            if chosen is not None:
+                plans.append(chosen)
+        plans.append(None)  # rotation
+        for index, plan in enumerate(plans):
+            try:
+                if plan is None:
+                    plan = edition_look.plan_night(date_iso, list(history or ()), hero_img, word=word, gloss=gloss,
+                                                   credit=credit)
+                light, dark = edition_look.render_edition_pair(
+                    hero_img, word=word, gloss=gloss, date_iso=date_iso, credit=credit, plan=plan
+                )
+                encoded = [encode_plate(plate) for plate in (light, dark)]
+                return plan.template, encoded[0], encoded[1]
+            except Exception:
+                if index == len(plans) - 1:
+                    raise
+                logger.exception("art director plan failed to draw; rotation decides")
+        return None
     except Exception:  # never lose an edition to the new look
         logger.exception("edition look failed; rendering the current look instead")
         return None
@@ -1936,6 +1984,8 @@ def select_and_render_pulse_assets(
             date_iso=resolved_date,
             history=_edition_history(root, archetype_history_30d, resolved_date),
             credit=_edition_credit(attribution, visual_medium, credit_label),
+            director=edition_look_director_enabled(root),
+            thesis=thesis,
         )
     if look_plates is not None:
         chosen_archetype, light_bytes, dark_bytes = look_plates
