@@ -23,6 +23,7 @@ WIDTH = 1200
 # on high-density screens (GitHub shows them at 846 CSS px, about 1692 device px).
 SCALE = 2
 LOOK_NAME = "s1"
+PLATE_MARGIN = 48  # every line of type stays this far from the plate's left and right edges (plan_fits)
 
 TEMPLATES: tuple[str, ...] = (
     "S1_FRAME", "S1_SUBTITLE", "S1_PLATE", "S1_SLEEVE", "S1_BLEED", "S1_ENTRY", "S1_WALL", "S1_CAESURA",
@@ -303,10 +304,20 @@ class NightPlan:
     device: str
     centred: bool
     placement: Optional[dict] = field(default=None, compare=False)
+    setting: str = "standard"  # "large" gives the photograph about one sixth more width (Plate, Sleeve, Entry, Wall)
 
 
 def edition_number(date_iso: str) -> int:
     return (dt.date.fromisoformat(date_iso[:10]) - FIRST_EDITION).days + 1
+
+
+def device_for(template: str, colour_on: bool, ordinal: int) -> str:
+    """The colour device (none, word or rule) for a template on the night with this date ordinal."""
+    if not colour_on:
+        return "none"
+    if template in ON_PHOTO:
+        return "word"
+    return "word" if (ordinal // 2) % 2 == 0 else "rule"
 
 
 def plan_night(date_iso: str, history: Sequence[str], photo: Image.Image, *, word: str, gloss: str,
@@ -332,12 +343,7 @@ def plan_night(date_iso: str, history: Sequence[str], photo: Image.Image, *, wor
     # can carry it, unless it ran the night before.
     template = "S1_CAESURA" if "S1_CAESURA" in eligible else eligible[0]
     centred = template == "S1_BLEED" and sum(1 for h in recent if h == template) % 2 == 0
-    if not colour_on:
-        device = "none"
-    elif template in ON_PHOTO:
-        device = "word"
-    else:
-        device = "word" if (o // 2) % 2 == 0 else "rule"
+    device = device_for(template, colour_on, o)
     return NightPlan(template, voice, face_for.get(template, face), colour_on, device, centred,
                      placements.get(template))
 
@@ -483,10 +489,15 @@ def _composite(base: Image.Image, painter) -> Image.Image:
     return out.convert("RGB")
 
 
-def render_edition_pair(photo, *, word, gloss, date_iso, credit, plan: NightPlan, scale: int = SCALE):
-    """Light and dark plates for the planned night, WIDTH * scale wide. Layout is on the 1200 px grid."""
+def render_edition_pair(photo, *, word, gloss, date_iso, credit, plan: NightPlan, scale: int = SCALE,
+                        captions: bool = True):
+    """Light and dark plates for the planned night, WIDTH * scale wide. Layout is on the 1200 px grid.
+
+    captions=False leaves the number, date and credit undrawn; the layout is unchanged (comparison renders).
+    """
     facts = analyse_photo(photo)
-    return tuple(_render(photo, word, gloss, date_iso, credit, plan, facts, th, scale) for th in ("light", "dark"))
+    return tuple(_render(photo, word, gloss, date_iso, credit, plan, facts, th, scale, captions)
+                 for th in ("light", "dark"))
 
 
 def _scaled_line(text, st: Style, align, x, base, s: int):
@@ -494,7 +505,7 @@ def _scaled_line(text, st: Style, align, x, base, s: int):
     return text, st.scaled(s), align, x * s, base * s
 
 
-def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE):
+def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE, captions=True):
     if plan.template in ON_PHOTO:
         return _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts, s)
     page, ink = THEMES[theme]["page"], THEMES[theme]["ink"]
@@ -507,13 +518,7 @@ def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE):
                "S1_ENTRY": _layout_entry, "S1_WALL": _layout_wall}[plan.template]
     ops, height, (px, py, pw, ph) = builder(plan, word, gloss, date_iso, credit)
     size = (WIDTH * s, int(round(height)) * s)
-    texts = [(op[1],) + _scaled_line(*op[2:], s) for op in ops if op[0] == "text"]
-    for _role, text, st, align, x, base in texts:
-        w = st.width(text)
-        left = x if align == "left" else (x - w / 2 if align == "center" else x - w)
-        asc, desc = st.ascent_descent()
-        if left < 0 or left + w > size[0] or base - asc < 0 or base + desc > size[1]:
-            raise ValueError("text leaves the plate: " + plan.template)
+    texts = _checked_texts(ops, size, s, plan.template)
     canvas = Image.new("RGB", size, page)
     canvas.paste(_fit_photo(photo, (pw * s, ph * s)), (int(px) * s, int(py) * s))
 
@@ -524,10 +529,56 @@ def _render(photo, word, gloss, date_iso, credit, plan, facts, theme, s=SCALE):
                     x0, y0 = op[1] * s, op[2] * s
                     draw.rectangle([x0, y0, x0 + 47 * s - 1, y0 + 5 * s - 1], fill=_rgba(rule_fill))
         for role, text, st, align, x, base in texts:
+            if role == "col" and not captions:
+                continue
             fill = {"word": _rgba(word_fill), "gloss": _rgba(ink), "col": _rgba(ink, COL_ALPHA)}[role]
             _draw_line(draw, x, base, text, st, fill, align, _rgba(stop_fill) if role == "gloss" else None)
 
     return _composite(canvas, paint)
+
+
+def _checked_texts(ops, size, s: int, template: str) -> list:
+    """The plate's lines of type on a canvas s times the grid; raises when any leaves the plate."""
+    texts = [(op[1],) + _scaled_line(*op[2:], s) for op in ops if op[0] == "text"]
+    for _role, text, st, align, x, base in texts:
+        w = st.width(text)
+        left = x if align == "left" else (x - w / 2 if align == "center" else x - w)
+        asc, desc = st.ascent_descent()
+        if left < 0 or left + w > size[0] or base - asc < 0 or base + desc > size[1]:
+            raise ValueError("text leaves the plate: " + template)
+    return texts
+
+
+def layout_lines(plan: NightPlan, word: str, gloss: str, date_iso: str, credit: str) -> list:
+    """(role, text, width) for each line of type, in order: the word, then the gloss lines, then captions."""
+    if plan.template in ON_PHOTO:
+        if plan.placement is None:
+            raise ValueError("no placement")
+        lines = list(plan.placement["lines"])
+        return [("word" if i == 0 else "gloss", t, st.width(t)) for i, (t, st, _a, _x, _b) in enumerate(lines)]
+    builder = {"S1_PLATE": _layout_plate, "S1_SLEEVE": _layout_sleeve, "S1_BLEED": _layout_bleed,
+               "S1_ENTRY": _layout_entry, "S1_WALL": _layout_wall}[plan.template]
+    ops, _height, _box = builder(plan, word, gloss, date_iso, credit)
+    return [(op[1], op[2], op[3].width(op[2])) for op in ops if op[0] == "text"]
+
+
+def plan_fits(plan: NightPlan, word: str, gloss: str, date_iso: str, credit: str) -> bool:
+    """True when an off-photo plan's type stays on its plate (the bounds check, without drawing)."""
+    if plan.template in ON_PHOTO:
+        return plan.placement is not None
+    builder = {"S1_PLATE": _layout_plate, "S1_SLEEVE": _layout_sleeve, "S1_BLEED": _layout_bleed,
+               "S1_ENTRY": _layout_entry, "S1_WALL": _layout_wall}[plan.template]
+    try:
+        ops, height, _box = builder(plan, word, gloss, date_iso, credit)
+        texts = _checked_texts(ops, (WIDTH, int(round(height))), 1, plan.template)
+    except ValueError:
+        return False
+    for _role, text, st, align, x, _base in texts:
+        w = st.width(text)
+        left = x if align == "left" else (x - w / 2 if align == "center" else x - w)
+        if left < PLATE_MARGIN or left + w > WIDTH - PLATE_MARGIN:
+            return False
+    return True
 
 
 def _render_on_photo(photo, word, gloss, date_iso, credit, plan, facts, s=SCALE):
@@ -561,9 +612,11 @@ def _txt(role, text, st, align, x, base):
 
 def _layout_plate(plan, word, gloss, date_iso, credit):
     ops, cx, y = [], WIDTH / 2, 72
-    photo_box = (132, y, 936, 624)
-    y += 624 + 38
-    wst = fit_word(plan.voice, word, 936)
+    pw = 1080 if plan.setting == "large" else 936
+    ph = pw * 2 // 3
+    photo_box = ((WIDTH - pw) // 2, y, pw, ph)
+    y += ph + 38
+    wst = fit_word(plan.voice, word, pw)
     ops.append(_txt("word", word, wst, "center", cx, y + wst.baseline_in_line()))
     y += wst.line_height
     if plan.device == "rule":
@@ -573,14 +626,16 @@ def _layout_plate(plan, word, gloss, date_iso, credit):
     else:
         y += 28
     gst = gloss_style(plan.gloss_face)
-    for g in break_gloss(gloss, gst, 936):
+    for g in break_gloss(gloss, gst, pw):
         ops.append(_txt("gloss", g, gst, "center", cx, y + gst.baseline_in_line()))
         y += gst.line_height
     return ops, y + 88, photo_box
 
 
 def _layout_sleeve(plan, word, gloss, date_iso, credit):
-    ops, left, right, y = [], 132, WIDTH - 132, 72
+    large = plan.setting == "large"
+    left = 60 if large else 132
+    ops, right, y = [], WIDTH - left, 72
     if plan.device == "rule":
         ops.append(("rule", left, y))
         y += 24
@@ -590,8 +645,10 @@ def _layout_sleeve(plan, word, gloss, date_iso, credit):
     cst = col_style()
     ops.append(_txt("col", colophon_text(date_iso, credit, "short")[0], cst, "right", right, base))
     y += wst.line_height + 30
-    photo_box = (left, y, 936, 624)
-    y += 624 + 28
+    pw = right - left
+    ph = pw * 2 // 3
+    photo_box = (left, y, pw, ph)
+    y += ph + 28
     gst = gloss_style(plan.gloss_face)
     first = y + gst.baseline_in_line()
     credit_text = colophon_text(date_iso, credit, "cred")[0]
@@ -643,9 +700,11 @@ def _layout_bleed(plan, word, gloss, date_iso, credit):
 
 
 def _layout_entry(plan, word, gloss, date_iso, credit):
-    ops, left, width, y = [], 192, 816, 76
-    photo_box = (left, y, width, 544)
-    y += 544
+    width = 952 if plan.setting == "large" else 816
+    ops, left, y = [], (WIDTH - width) // 2, 76
+    ph = round(width * 2 / 3)
+    photo_box = (left, y, width, ph)
+    y += ph
     if plan.device == "rule":
         y += 34
         ops.append(("rule", left, y))
@@ -689,8 +748,15 @@ def _layout_entry(plan, word, gloss, date_iso, credit):
 
 
 def _layout_wall(plan, word, gloss, date_iso, credit):
-    ops, x, width, foot = [], 872, 290, 600
-    photo_box = (96, 110, 735, 490)
+    ops = []
+    if plan.setting == "large":
+        pw, ph, px, py = 858, 572, 48, 96
+    else:
+        pw, ph, px, py = 735, 490, 96, 110
+    x = px + pw + (30 if plan.setting == "large" else 41)
+    width = (WIDTH - PLATE_MARGIN) - x
+    foot = py + ph
+    photo_box = (px, py, pw, ph)
     wst = fit_word(plan.voice, word, width, 0.6)
     gst = gloss_style(plan.gloss_face, 33 / GLOSS_SPEC[plan.gloss_face][2], 1.32)
     glines = wrap_greedy(gloss, gst, width)
@@ -712,4 +778,4 @@ def _layout_wall(plan, word, gloss, date_iso, credit):
     for c in clines:
         ops.append(_txt("col", c, cst, "left", x, y + cst.baseline_in_line()))
         y += cst.line_height
-    return ops, 710, photo_box
+    return ops, py + ph + py, photo_box

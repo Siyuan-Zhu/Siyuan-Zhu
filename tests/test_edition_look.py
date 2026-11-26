@@ -215,13 +215,13 @@ def test_colophon_carries_number_date_and_credit() -> None:
     assert L.colophon_text("2026-11-24", CREDIT, "museum") == ["Test Photographer", "No. 25", "24 November 2026"]
 
 
-def _router_run(tmp_path: Path, monkeypatch=None, switch: bool = True, archetype_history=None):
+def _router_run(tmp_path: Path, monkeypatch=None, switch: bool = True, archetype_history=None, director=None):
     from src.zeitgeist.adk_pipeline import DirectorCommission
     from src.zeitgeist.visual_router import select_and_render_pulse_assets
 
     if switch:
         (tmp_path / "assets").mkdir(parents=True, exist_ok=True)
-        (tmp_path / "assets" / "edition_look.json").write_text(json.dumps({"look": "s1"}), encoding="utf-8")
+        (tmp_path / "assets" / "edition_look.json").write_text(json.dumps({"look": "s1", **({} if director is None else {"director": director})}), encoding="utf-8")
     buf = BytesIO()
     _photo("light").save(buf, format="JPEG", quality=90)
     commission = DirectorCommission(
@@ -445,3 +445,151 @@ def test_fonts_use_basic_layout_everywhere() -> None:
 
     st = L.voice_style("italic")
     assert st.font.layout_engine == ImageFont.Layout.BASIC
+
+
+LARGE_TEMPLATES = ("S1_PLATE", "S1_SLEEVE", "S1_ENTRY", "S1_WALL")
+
+
+def _setting_plan(template: str, voice: str, setting: str, device: str = "rule"):
+    return L.NightPlan(template, voice, L.PAIRS[voice][0], True, device, False, None, setting)
+
+
+def test_night_plan_setting_defaults_to_standard() -> None:
+    assert L.NightPlan("S1_PLATE", "italic", "sans", True, "rule", False).setting == "standard"
+
+
+@pytest.mark.parametrize("template", LARGE_TEMPLATES)
+@pytest.mark.parametrize("voice", L.VOICES)
+@pytest.mark.parametrize("device", ("rule", "word"))
+def test_large_setting_widens_the_photograph_and_keeps_text_on_the_plate(template, voice, device) -> None:
+    standard = _setting_plan(template, voice, "standard", device)
+    large = _setting_plan(template, voice, "large", device)
+    _, _, box_s = LAYOUTS[template](standard, "Climacteric", GLOSS, "2026-12-02", CREDIT)
+    ops, height, box_l = LAYOUTS[template](large, "Climacteric", GLOSS, "2026-12-02", CREDIT)
+    assert box_l[2] > box_s[2]
+    assert box_l[0] >= 0 and box_l[0] + box_l[2] <= L.WIDTH
+    for op in ops:
+        if op[0] == "text":
+            assert op[6] > 0
+    light, dark = _pair(_photo("dark"), large, scale=1)       # the bounds check raises when text leaves the plate
+    assert light.size[0] == L.WIDTH and dark.size == light.size
+
+
+@pytest.mark.parametrize("template,standard,large", [
+    ("S1_PLATE", 936, 1080), ("S1_SLEEVE", 936, 1080), ("S1_ENTRY", 816, 952), ("S1_WALL", 735, 858),
+])
+def test_large_setting_photograph_widths(template, standard, large) -> None:
+    for setting, want in (("standard", standard), ("large", large)):
+        plan = _setting_plan(template, "italic", setting)
+        _, _, box = LAYOUTS[template](plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+        assert box[2] == want
+
+
+def test_large_sleeve_has_sixty_pixel_side_margins() -> None:
+    _, _, box = L._layout_sleeve(_setting_plan("S1_SLEEVE", "italic", "large"), "Relic", GLOSS, "2026-12-02", CREDIT)
+    assert box[0] == 60 and box[0] + box[2] == L.WIDTH - 60
+
+
+def test_large_wall_label_sits_right_of_the_photograph_inside_the_plate() -> None:
+    plan = _setting_plan("S1_WALL", "italic", "large")
+    ops, _, box = L._layout_wall(plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+    for op in ops:
+        if op[0] == "text":
+            assert op[5] >= box[0] + box[2]
+    assert box[0] + box[2] < 940
+
+
+def test_comparison_render_without_captions_keeps_the_geometry() -> None:
+    photo = _photo("dark")
+    plan = _setting_plan("S1_WALL", "italic", "standard")
+    with_caps = _pair(photo, plan, scale=1)[0]
+    without = _pair(photo, plan, scale=1, captions=False)[0]
+    assert with_caps.size == without.size
+    assert not np.array_equal(np.asarray(with_caps), np.asarray(without))
+    plate = _setting_plan("S1_PLATE", "italic", "standard")        # no caption on this template
+    assert np.array_equal(np.asarray(_pair(photo, plate, scale=1)[0]), np.asarray(_pair(photo, plate, scale=1, captions=False)[0]))
+
+
+def test_layout_lines_list_word_and_gloss_for_every_kind_of_plan() -> None:
+    plan = _setting_plan("S1_WALL", "italic", "standard")
+    lines = L.layout_lines(plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+    assert lines[0][0] == "word" and lines[0][1] == "Relic"
+    assert " ".join(t for role, t, _w in lines if role == "gloss") == GLOSS
+    assert L.plan_fits(plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+
+
+def _live(monkeypatch) -> None:
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")
+
+
+def _fake_director(monkeypatch, result=None, error=None, outcome=None):
+    from src.zeitgeist import art_director
+
+    calls = []
+
+    def fake(photo, **kw):
+        calls.append(kw)
+        if error:
+            raise error
+        if outcome is not None and kw.get("outcome") is not None:
+            kw["outcome"].update(outcome)
+        return result
+
+    monkeypatch.setattr(art_director, "direct_night", fake)
+    return calls
+
+
+def test_director_is_not_called_when_the_run_is_not_live(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ZEITGEIST_LIVE_LLM", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")
+    calls = _fake_director(monkeypatch)
+    published = _router_run(tmp_path, director=True)
+    assert calls == [] and published.curatorial_archetype in L.TEMPLATES
+
+
+def test_director_is_not_called_without_a_key_or_without_the_switch(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZEITGEIST_LIVE_LLM", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    calls = _fake_director(monkeypatch)
+    _router_run(tmp_path / "a", director=True)
+    _live(monkeypatch)
+    _router_run(tmp_path / "b", director=False)
+    _router_run(tmp_path / "c")
+    assert calls == []
+
+
+def test_director_plan_is_used_when_live(tmp_path: Path, monkeypatch, capsys) -> None:
+    _live(monkeypatch)
+    plan = L.NightPlan("S1_PLATE", "wide", "italic", False, "none", False, None, "large")
+    calls = _fake_director(monkeypatch, result=plan, outcome={
+        "model": "gemini-4-neon", "calls": 4, "fallback": 0, "pick": "plate.wide.large", "reason": "none"})
+    published = _router_run(tmp_path, director=True)
+    assert len(calls) == 1 and published.curatorial_archetype == "S1_PLATE"
+    assert calls[0]["thesis"] and calls[0]["word"] == "Solastalgia"
+    assert "[art_director] model=gemini-4-neon calls=4 fallback=0 pick=plate.wide.large reason=none" in capsys.readouterr().out
+    with Image.open(tmp_path / "assets" / "daily_pulse_light.webp") as img:
+        assert img.size[0] == 2400
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("director failed")])
+def test_director_none_or_error_falls_back_to_rotation(tmp_path: Path, monkeypatch, error, capsys) -> None:
+    _live(monkeypatch)
+    calls = _fake_director(monkeypatch, result=None, error=error)
+    published = _router_run(tmp_path, director=True)
+    assert len(calls) == 1 and published.curatorial_archetype in L.TEMPLATES
+    if error:
+        assert "[art_director] model=none calls=0 fallback=0 pick=rotation reason=error" in capsys.readouterr().out
+
+
+def test_plan_fits_keeps_every_line_forty_eight_pixels_from_the_edges() -> None:
+    plan = _setting_plan("S1_WALL", "italic", "large")
+    assert not L.plan_fits(plan, "Relic", GLOSS, "2026-12-02", CREDIT)       # the caption runs to the edge
+    _pair(_photo("dark"), plan, scale=1)                                       # though the bounds check alone passes
+    short = _setting_plan("S1_PLATE", "italic", "standard")
+    assert L.plan_fits(short, "Relic", GLOSS, "2026-12-02", CREDIT)
+
+
+def test_shipped_switch_turns_the_director_on() -> None:
+    switch = json.loads((Path(__file__).resolve().parents[1] / "assets" / "edition_look.json").read_text())
+    assert switch == {"look": "s1", "director": True}

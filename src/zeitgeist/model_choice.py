@@ -20,12 +20,13 @@ EMBED_2 = "gemini-embedding-2"
 DIRECTOR_ENV = "ZEITGEIST_DIRECTOR_MODEL"
 JUDGE_ENV = "ZEITGEIST_JUDGE_MODEL"
 EMBEDDING_ENV = "ZEITGEIST_EMBEDDING_MODEL"
+ART_DIRECTOR_ENV = "ZEITGEIST_ART_DIRECTOR_MODEL"
 
 # The Gemini 4 models: each gets the Director's candidate slate and its own judge calibration.
 GEMINI_4 = frozenset({HYDROGEN, NEON})
 _TEXT_MODELS = frozenset({FLASH}) | GEMINI_4
 _EMBEDDING_MODELS = frozenset({EMBED_001, EMBED_2})
-_ROLES = ("director", "judge", "embedding")
+_ROLES = ("director", "judge", "embedding", "art_director")
 
 
 @dataclass
@@ -35,6 +36,8 @@ class RunModels:
     embedding: str
     fallback_fired: bool = False
     unrecognized: bool = False
+    art_director: str = NEON
+    art_director_unrecognized: bool = False
 
     def current(self, role: str) -> str:
         if role not in _ROLES:
@@ -44,6 +47,8 @@ class RunModels:
     def call(self, role: str, fn: Callable[[str], T]) -> T:
         """A non-Flash model that fails hands the run to Flash; a block after a provider call propagates."""
         model = self.current(role)
+        if role == "art_director":
+            return fn(model)  # never Flash: the art director returns None and rotation decides
         try:
             return fn(model)
         except Exception as error:
@@ -73,10 +78,20 @@ def _pick(raw: Optional[str], default: str, allowed: frozenset) -> Tuple[str, bo
     return default, True
 
 
-def _config_text_model(config: Mapping[str, Any], key: str) -> str:
+def _config_text_model(config: Mapping[str, Any], key: str, default: str = FLASH) -> str:
     guardrails = config.get("budget_guardrails") if isinstance(config, Mapping) else None
     value = guardrails.get(key) if isinstance(guardrails, Mapping) else None
-    return value if value in _TEXT_MODELS else FLASH
+    return value if value in _TEXT_MODELS else default
+
+
+def _art_director_model(config: Mapping[str, Any], environ: Mapping[str, str]) -> Tuple[str, bool]:
+    """Environment, then config, then Neon; only a Gemini 4 model counts, anything else means no art director."""
+    guardrails = config.get("budget_guardrails") if isinstance(config, Mapping) else None
+    configured = guardrails.get("art_director_model") if isinstance(guardrails, Mapping) else None
+    raw = (environ.get(ART_DIRECTOR_ENV) or "").strip() or (configured.strip() if isinstance(configured, str) else "")
+    if not raw:
+        return NEON, False
+    return (raw, False) if raw in GEMINI_4 else ("", True)
 
 
 def resolve_run_models(config: Mapping[str, Any], environ: Optional[Mapping[str, str]] = None) -> RunModels:
@@ -84,7 +99,9 @@ def resolve_run_models(config: Mapping[str, Any], environ: Optional[Mapping[str,
     director, bad_d = _pick(environ.get(DIRECTOR_ENV), _config_text_model(config, "primary_text_model"), _TEXT_MODELS)
     judge, bad_j = _pick(environ.get(JUDGE_ENV), _config_text_model(config, "multimodal_judge_model"), _TEXT_MODELS)
     embedding, bad_e = _pick(environ.get(EMBEDDING_ENV), EMBED_001, _EMBEDDING_MODELS)
-    return RunModels(director, judge, embedding, unrecognized=bad_d or bad_j or bad_e)
+    art, bad_a = _art_director_model(config, environ)
+    return RunModels(director, judge, embedding, unrecognized=bad_d or bad_j or bad_e, art_director=art,
+                     art_director_unrecognized=bad_a)
 
 
 _ACTIVE: "contextvars.ContextVar[Optional[RunModels]]" = contextvars.ContextVar("zeitgeist_run_models", default=None)

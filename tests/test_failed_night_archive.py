@@ -35,7 +35,7 @@ OLD_SWITCH = evidence_archive.SWITCH_ENV
 # nights run on one-hot vectors (_seed_exact) and without GITHUB_SHA, and each publication id is reduced to its
 # shape (_platform_stable), so the digests hold on macOS and on Linux CI.
 MAIN_FINGERPRINTS = {
-    "published_old_on": "026f14e2ea980240de8fc8c5f7d7e868757bd45d8111a608a20bd93b6ce5aaf0",
+    "published_old_on": "bd94f6ae72c244e554cc61876137deed1ce20bf82d0685713b3f8ee6285fd43a",
     "published_off": "0cc4e0cf502f324c17bb489c0ee00926f331764ed5b1356ab6b62ba918818df1",
     "publish_fails_old_on": "6b7915b7a8fe62dfaf3206ce1809a3543649a4d469afaa28ae65ceffe55132e8",
     "director_fails_old_on": "f9fb1d92fbf3beb3153c9832877b2d6b29ee615c87f3b5e831aa675663235436",
@@ -185,8 +185,8 @@ def test_the_switch_is_on_only_for_one_with_the_evidence_archive_on(old, new, on
     assert evidence_archive.failed_night_enabled(environ) is on
 
 
-def test_the_switch_is_recorded_last_in_the_run_record():
-    assert run_record.SWITCH_NAMES[-1] == SWITCH
+def test_the_switch_is_recorded_in_the_run_record_before_the_art_director_model():
+    assert run_record.SWITCH_NAMES[-2:] == (SWITCH, "ZEITGEIST_ART_DIRECTOR_MODEL")
 
 
 DOLLAR = chr(36)
