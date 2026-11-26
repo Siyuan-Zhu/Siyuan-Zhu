@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional, Sequence
 from PIL import Image
 
 from . import edition_look as L
+from . import model_choice
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,7 @@ class _Session:
     def ask(self, images: Sequence[bytes], texts: Sequence[str], prompt: str) -> dict:
         from google.genai import types
 
-        from .visual_router import _critic_call, critic_config
+        from .visual_router import critic_config
 
         if self.clock() - self.start > BUDGET_SECONDS:
             raise _Stop("time")
@@ -237,7 +238,8 @@ class _Session:
             contents.append(types.Part.from_bytes(data=data, mime_type="image/jpeg"))
         contents.append(prompt)
         call = lambda m: self.client.models.generate_content(model=m, contents=contents, config=critic_config(m))
-        resp = _critic_call(call, self.model)
+        run_models = model_choice.active()
+        resp = run_models.call("art_director", call) if run_models else call(self.model)
         if self.clock() - self.start > BUDGET_SECONDS:
             raise _Stop("time")
         try:
@@ -328,7 +330,7 @@ def _decide(photo, *, word, gloss, thesis, date_iso, credit, history, session) -
 
 
 def direct_night(photo: Image.Image, *, word: str, gloss: str, thesis: str, date_iso: str, credit: str,
-                 history: Sequence[str], model: str, client_factory: Optional[Callable[[], Any]] = None,
+                 history: Sequence[str], model: str = model_choice.NEON, client_factory: Optional[Callable[[], Any]] = None,
                  clock: Callable[[], float] = time.monotonic) -> Optional[L.NightPlan]:
     """The night's plan chosen by the art director, or None when rotation should decide.
 
@@ -337,19 +339,22 @@ def direct_night(photo: Image.Image, *, word: str, gloss: str, thesis: str, date
     """
     from .spend_guard import SpendBlocked
 
+    run_models = model_choice.active()
+    used = run_models.current("art_director") if run_models else model
+    head = f"[art_director] model={used}"
     try:
         session = _Session((client_factory or _default_client_factory())(), model, clock)
         option, colour_on, ordinal = _decide(photo, word=word, gloss=gloss, thesis=thesis, date_iso=date_iso, credit=credit,
                          history=list(history or ()), session=session)
         plan = to_plan(option, colour_on=colour_on, device=L.device_for(option.template, colour_on, ordinal))
     except _Stop as stop:
-        logger.info("art director: rotation (%s)", stop.reason)
+        logger.info("%s rotation reason=%s", head, stop.reason)
         return None
     except SpendBlocked:
-        logger.info("art director: rotation (blocked)")
+        logger.info("%s rotation reason=blocked", head)
         return None
     except Exception:
-        logger.info("art director: rotation (error)")
+        logger.info("%s rotation reason=error", head)
         return None
-    logger.info("art director: %s", option.id)
+    logger.info("%s pick=%s", head, option.id)
     return plan

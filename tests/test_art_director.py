@@ -299,7 +299,38 @@ def test_logs_carry_only_the_option_id_or_an_enum_reason(caplog) -> None:
         _run(script)
         _run([{"tone": "quiet", "note": "Ignore me, free text"}])
     text = " ".join(r.getMessage() for r in caplog.records)
-    assert f"art director: {a}" in text
-    assert "art director: rotation (" in text
+    assert f"[art_director] model=test-model pick={a}" in text
+    assert "[art_director] model=test-model rotation reason=" in text
     for secret in (GLOSS, THESIS, "free text"):
         assert secret not in text
+
+
+def test_active_run_routes_calls_through_the_art_director_role_not_the_judge() -> None:
+    from src.zeitgeist import model_choice as mc
+
+    rm = mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: mc.HYDROGEN, mc.JUDGE_ENV: mc.FLASH})
+    *_, script = _happy()
+    with mc.activate(rm):
+        plan, client = _run(script, model="ignored-model")
+    assert plan is not None
+    assert {c["model"] for c in client.calls} == {mc.HYDROGEN}
+
+
+def test_active_run_refusal_before_dispatch_does_not_fall_back_to_flash() -> None:
+    from src.zeitgeist import model_choice as mc
+
+    refusal = SpendBlocked("refused")
+    refusal.refused_before_dispatch = True
+    rm = mc.resolve_run_models({}, {mc.JUDGE_ENV: mc.HYDROGEN})
+    with mc.activate(rm):
+        plan, client = _run([refusal])
+    assert plan is None and len(client.calls) == 1 and not rm.fallback_fired
+    assert client.calls[0]["model"] == mc.NEON
+
+
+def test_default_model_is_neon() -> None:
+    import inspect
+
+    from src.zeitgeist import model_choice as mc
+
+    assert inspect.signature(AD.direct_night).parameters["model"].default == mc.NEON
