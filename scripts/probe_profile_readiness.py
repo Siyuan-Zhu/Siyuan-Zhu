@@ -114,6 +114,11 @@ def main():
         status = 'ready'
     except BaseException as exc:
         RESULT['error_class'] = type(exc).__name__
+        diag = getattr(exc, 'public_diagnostics', None)
+        if isinstance(diag, dict):
+            RESULT['code'] = str(diag.get('code'))[:60]
+            RESULT['provider'] = str(diag.get('provider'))[:20]
+            RESULT['status_code'] = diag.get('status') if isinstance(diag.get('status'), int) else None
     finally:
         logging.disable(previous_logging)
     print(json.dumps({'diag_step': STEP['name'], 'providers': PROVIDERS, 'result': RESULT}, sort_keys=True))
