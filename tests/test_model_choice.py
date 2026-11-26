@@ -159,12 +159,11 @@ def test_art_director_resolution_order_env_then_config_then_neon():
 
 
 def test_art_director_unknown_or_flash_value_means_no_art_director_and_is_flagged():
-    rm = mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: "gemini-5"})
-    assert rm.art_director == "" and rm.unrecognized
-    rm = mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: mc.FLASH})
-    assert rm.art_director == "" and rm.unrecognized
-    rm = mc.resolve_run_models({"budget_guardrails": {"art_director_model": mc.FLASH}}, {})
-    assert rm.art_director == "" and rm.unrecognized
+    for rm in (mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: "gemini-5"}),
+               mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: mc.FLASH}),
+               mc.resolve_run_models({"budget_guardrails": {"art_director_model": mc.FLASH}}, {})):
+        assert rm.art_director == "" and rm.art_director_unrecognized and not rm.unrecognized
+    assert not mc.resolve_run_models({}, {}).art_director_unrecognized
     assert not mc.resolve_run_models({}, {mc.ART_DIRECTOR_ENV: mc.NEON}).unrecognized
 
 

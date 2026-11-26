@@ -13,6 +13,8 @@ import json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
 from io import BytesIO
 from typing import Any, Callable, Optional, Sequence
@@ -104,7 +106,7 @@ SHORT = {
 }
 SETTINGS = {
     "S1_PLATE": ("standard", "large"), "S1_SLEEVE": ("standard", "large"),
-    "S1_ENTRY": ("standard", "large"), "S1_WALL": ("standard", "large"),
+    "S1_ENTRY": ("standard", "large"), "S1_WALL": ("standard",),  # Wall large: label too narrow
 }
 MAX_IN_SEVEN = 2  # a template used three times in the last seven nights is not offered
 
@@ -262,13 +264,18 @@ class _Session:
         self.client, self.model, self.clock = client, model, clock
         self.start = clock()
         self.calls = 0
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
+    def close(self) -> None:
+        self.executor.shutdown(wait=False, cancel_futures=True)
 
     def ask(self, images: Sequence[bytes], texts: Sequence[str], prompt: str) -> dict:
         from google.genai import types
 
         from .visual_router import critic_config
 
-        if self.clock() - self.start > BUDGET_SECONDS:
+        remaining = BUDGET_SECONDS - (self.clock() - self.start)
+        if remaining <= 0:
             raise _Stop("time")
         if len(images) > MAX_IMAGES:
             raise _Stop("error")
@@ -281,7 +288,12 @@ class _Session:
         call = lambda m: self.client.models.generate_content(model=m, contents=contents, config=critic_config(m))
         run_models = model_choice.active()
         self.calls += 1
-        resp = run_models.call("art_director", call) if run_models else call(self.model)
+        future = self.executor.submit(
+            (lambda: run_models.call("art_director", call)) if run_models else (lambda: call(self.model)))
+        try:
+            resp = future.result(timeout=remaining)
+        except FutureTimeout:
+            raise _Stop("time") from None
         if self.clock() - self.start > BUDGET_SECONDS:
             raise _Stop("time")
         try:
@@ -433,6 +445,9 @@ def direct_night(photo: Image.Image, *, word: str, gloss: str, thesis: str, date
         reason = "blocked"
     except Exception:
         reason = "error"
+    finally:
+        if session is not None:
+            session.close()
     if outcome is not None:
         outcome.update({"model": used or "none", "calls": session.calls if session else 0,
                         "fallback": int(bool(run_models and run_models.fallback_fired)), "pick": pick,

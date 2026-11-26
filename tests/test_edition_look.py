@@ -580,3 +580,16 @@ def test_director_none_or_error_falls_back_to_rotation(tmp_path: Path, monkeypat
     assert len(calls) == 1 and published.curatorial_archetype in L.TEMPLATES
     if error:
         assert "[art_director] model=none calls=0 fallback=0 pick=rotation reason=error" in capsys.readouterr().out
+
+
+def test_plan_fits_keeps_every_line_forty_eight_pixels_from_the_edges() -> None:
+    plan = _setting_plan("S1_WALL", "italic", "large")
+    assert not L.plan_fits(plan, "Relic", GLOSS, "2026-12-02", CREDIT)       # the caption runs to the edge
+    _pair(_photo("dark"), plan, scale=1)                                       # though the bounds check alone passes
+    short = _setting_plan("S1_PLATE", "italic", "standard")
+    assert L.plan_fits(short, "Relic", GLOSS, "2026-12-02", CREDIT)
+
+
+def test_shipped_switch_turns_the_director_on() -> None:
+    switch = json.loads((Path(__file__).resolve().parents[1] / "assets" / "edition_look.json").read_text())
+    assert switch == {"look": "s1", "director": True}

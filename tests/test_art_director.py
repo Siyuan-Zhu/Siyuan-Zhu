@@ -476,3 +476,66 @@ def test_default_model_is_neon() -> None:
     from src.zeitgeist import model_choice as mc
 
     assert inspect.signature(AD.direct_night).parameters["model"].default == mc.NEON
+
+
+def test_wall_is_never_offered_as_large() -> None:
+    for kind in ("dark", "busy"):
+        options, _ = _build(kind=kind)
+        assert not [o.id for o in options if o.id.startswith("wall.") and o.id.endswith(".large")]
+        assert any(o.template == "S1_WALL" for o in options)
+
+
+def test_default_client_factory_wraps_the_client_with_the_spend_guard(monkeypatch) -> None:
+    from google import genai
+
+    from src.zeitgeist import spend_guard
+
+    seen = {}
+
+    class RawClient:
+        def __init__(self, api_key=None):
+            seen["api_key"] = api_key
+
+    def guard(client, guard=None, *, credential_key=None):
+        seen["wrapped"], seen["credential_key"] = client, credential_key
+        return ("guarded", client)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")
+    monkeypatch.setattr(genai, "Client", RawClient)
+    monkeypatch.setattr(spend_guard, "guard_genai_client", guard)
+    made = AD._default_client_factory()()
+    assert made[0] == "guarded" and isinstance(seen["wrapped"], RawClient)
+    assert seen["api_key"] == "fixture-key" and seen["credential_key"] == "fixture-key"
+
+
+def test_default_client_factory_without_a_key_stops_the_director(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    outcome: dict = {}
+    plan = AD.direct_night(_photo(), word=WORD, gloss=GLOSS, thesis=THESIS, date_iso=DAY, credit=CREDIT, history=[],
+                           model="m", outcome=outcome)
+    assert plan is None and outcome["reason"] == "no_key"
+
+
+def test_a_call_that_outlasts_the_budget_returns_none_at_once_and_makes_no_more_calls(monkeypatch) -> None:
+    import time
+
+    required, a, b, short, script = _happy()
+    built = AD.build_options(_photo(), word=WORD, gloss=GLOSS, date_iso=DAY, credit=CREDIT, history=[])
+    monkeypatch.setattr(AD, "build_options", lambda *a, **k: built)     # option building is not what is timed
+    monkeypatch.setattr(AD, "BUDGET_SECONDS", 1.0)
+    client = FakeClient(script)
+    real = client.generate_content
+
+    def slow(**kw):
+        time.sleep(2.5)
+        return real(**kw)
+
+    client.generate_content = slow
+    outcome: dict = {}
+    started = time.monotonic()
+    plan = AD.direct_night(_photo(), word=WORD, gloss=GLOSS, thesis=THESIS, date_iso=DAY, credit=CREDIT, history=[],
+                           model="m", client_factory=lambda: client, outcome=outcome)
+    assert plan is None and outcome["reason"] == "time" and outcome["calls"] == 1
+    assert time.monotonic() - started < 1.4 + 0.5    # returned without waiting for the slow call
+    time.sleep(1.8)
+    assert len(client.calls) <= 1 and len(client.script) >= 3

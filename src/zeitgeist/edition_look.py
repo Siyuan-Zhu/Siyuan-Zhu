@@ -23,6 +23,7 @@ WIDTH = 1200
 # on high-density screens (GitHub shows them at 846 CSS px, about 1692 device px).
 SCALE = 2
 LOOK_NAME = "s1"
+PLATE_MARGIN = 48  # every line of type stays this far from the plate's left and right edges (plan_fits)
 
 TEMPLATES: tuple[str, ...] = (
     "S1_FRAME", "S1_SUBTITLE", "S1_PLATE", "S1_SLEEVE", "S1_BLEED", "S1_ENTRY", "S1_WALL", "S1_CAESURA",
@@ -569,9 +570,14 @@ def plan_fits(plan: NightPlan, word: str, gloss: str, date_iso: str, credit: str
                "S1_ENTRY": _layout_entry, "S1_WALL": _layout_wall}[plan.template]
     try:
         ops, height, _box = builder(plan, word, gloss, date_iso, credit)
-        _checked_texts(ops, (WIDTH, int(round(height))), 1, plan.template)
+        texts = _checked_texts(ops, (WIDTH, int(round(height))), 1, plan.template)
     except ValueError:
         return False
+    for _role, text, st, align, x, _base in texts:
+        w = st.width(text)
+        left = x if align == "left" else (x - w / 2 if align == "center" else x - w)
+        if left < PLATE_MARGIN or left + w > WIDTH - PLATE_MARGIN:
+            return False
     return True
 
 
@@ -748,7 +754,7 @@ def _layout_wall(plan, word, gloss, date_iso, credit):
     else:
         pw, ph, px, py = 735, 490, 96, 110
     x = px + pw + (30 if plan.setting == "large" else 41)
-    width = (WIDTH - (48 if plan.setting == "large" else 38)) - x
+    width = (WIDTH - PLATE_MARGIN) - x
     foot = py + ph
     photo_box = (px, py, pw, ph)
     wst = fit_word(plan.voice, word, width, 0.6)

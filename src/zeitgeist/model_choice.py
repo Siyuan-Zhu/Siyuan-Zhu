@@ -37,6 +37,7 @@ class RunModels:
     fallback_fired: bool = False
     unrecognized: bool = False
     art_director: str = NEON
+    art_director_unrecognized: bool = False
 
     def current(self, role: str) -> str:
         if role not in _ROLES:
@@ -99,7 +100,8 @@ def resolve_run_models(config: Mapping[str, Any], environ: Optional[Mapping[str,
     judge, bad_j = _pick(environ.get(JUDGE_ENV), _config_text_model(config, "multimodal_judge_model"), _TEXT_MODELS)
     embedding, bad_e = _pick(environ.get(EMBEDDING_ENV), EMBED_001, _EMBEDDING_MODELS)
     art, bad_a = _art_director_model(config, environ)
-    return RunModels(director, judge, embedding, unrecognized=bad_d or bad_j or bad_e or bad_a, art_director=art)
+    return RunModels(director, judge, embedding, unrecognized=bad_d or bad_j or bad_e, art_director=art,
+                     art_director_unrecognized=bad_a)
 
 
 _ACTIVE: "contextvars.ContextVar[Optional[RunModels]]" = contextvars.ContextVar("zeitgeist_run_models", default=None)
