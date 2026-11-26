@@ -310,6 +310,15 @@ def edition_number(date_iso: str) -> int:
     return (dt.date.fromisoformat(date_iso[:10]) - FIRST_EDITION).days + 1
 
 
+def device_for(template: str, colour_on: bool, ordinal: int) -> str:
+    """The colour device (none, word or rule) for a template on the night with this date ordinal."""
+    if not colour_on:
+        return "none"
+    if template in ON_PHOTO:
+        return "word"
+    return "word" if (ordinal // 2) % 2 == 0 else "rule"
+
+
 def plan_night(date_iso: str, history: Sequence[str], photo: Image.Image, *, word: str, gloss: str,
                credit: str) -> NightPlan:
     """Choose the night's template and treatment. history is most recent first."""
@@ -333,12 +342,7 @@ def plan_night(date_iso: str, history: Sequence[str], photo: Image.Image, *, wor
     # can carry it, unless it ran the night before.
     template = "S1_CAESURA" if "S1_CAESURA" in eligible else eligible[0]
     centred = template == "S1_BLEED" and sum(1 for h in recent if h == template) % 2 == 0
-    if not colour_on:
-        device = "none"
-    elif template in ON_PHOTO:
-        device = "word"
-    else:
-        device = "word" if (o // 2) % 2 == 0 else "rule"
+    device = device_for(template, colour_on, o)
     return NightPlan(template, voice, face_for.get(template, face), colour_on, device, centred,
                      placements.get(template))
 
