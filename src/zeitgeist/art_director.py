@@ -27,7 +27,7 @@ from . import model_choice
 logger = logging.getLogger(__name__)
 
 # ---- everything the model is told or may answer lives here (the art direction file's text) ------------
-BUDGET_SECONDS = 90.0
+BUDGET_SECONDS = 240.0  # four Gemini 4 Neon calls at medium thinking, about 45 s each (2026-11-26)
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7
 

@@ -376,7 +376,8 @@ def test_any_other_error_returns_none() -> None:
 
 def test_exceeding_the_time_budget_returns_none() -> None:
     required, a, b, short, script = _happy()
-    ticks = iter([0.0, 1.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0])
+    over = AD.BUDGET_SECONDS + 10.0
+    ticks = iter([0.0, 1.0] + [over + i for i in range(8)])
     plan, client = _run(script, clock=lambda: next(ticks))
     assert plan is None and len(client.calls) < 4
 
@@ -539,3 +540,9 @@ def test_a_call_that_outlasts_the_budget_returns_none_at_once_and_makes_no_more_
     assert time.monotonic() - started < 1.4 + 0.5    # returned without waiting for the slow call
     time.sleep(1.8)
     assert len(client.calls) <= 1 and len(client.script) >= 3
+
+
+def test_budget_fits_four_neon_calls_at_medium_thinking() -> None:
+    # Gemini 4 Neon at medium thinking took about 45 s per call on 2026-11-26; four calls must fit.
+    assert AD.BUDGET_SECONDS >= 4 * 50
+    assert AD.BUDGET_SECONDS <= 300
