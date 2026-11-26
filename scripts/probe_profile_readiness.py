@@ -38,6 +38,11 @@ class ReadOnlySpendStore:
         raise RuntimeError('Read-only readiness cannot commit')
 
 
+STEP = {'name': 'start'}
+PROVIDERS = {}
+RESULT = {}
+
+
 def probe(env, *, root=ROOT, now=None):
     """Return no private data; any failed dependency fails the entire probe."""
     repository = env.get('GITHUB_REPOSITORY')
@@ -52,6 +57,7 @@ def probe(env, *, root=ROOT, now=None):
             or repository not in {
                 'Siyuan-Zhu/readme-live-sandbox', 'Siyuan-Zhu/Siyuan-Zhu'}):
         raise RuntimeError('Owner manual dispatch required')
+    STEP['name'] = 'configuration'
     if configuration_errors(env, daily=True, visitor=True):
         raise RuntimeError('Incomplete reviewed configuration')
     if not re.fullmatch('[a-f0-9]{64}', env.get('SPEND_POLICY_SHA256', '')):
@@ -60,14 +66,17 @@ def probe(env, *, root=ROOT, now=None):
         if not env.get(name):
             raise RuntimeError('Provider credential required')
 
+    STEP['name'] = 'store'
     # Explicit factory mode refuses checkout fallback and performs no mirrors.
     store = get_state_store(repo_root=root, backend='firestore',
                             collection_prefix=env.get('FIRESTORE_COLLECTION_PREFIX', ''))
     if not store.canonical_only:
         raise RuntimeError('Canonical-only store required')
     projection = store.canonical_projections(write_mirrors=False)
+    STEP['name'] = 'bundle'
     manifest = verify_publication_bundle(root, require_manifest=True,
                                          require_current_pulse=True)
+    STEP['name'] = 'current_pulse'
     pulse = projection['zeitgeist_state.json']
     verify_current_pulse(pulse, manifest)
     if pulse.get('publication_id') != manifest['publication_id']:
@@ -77,15 +86,19 @@ def probe(env, *, root=ROOT, now=None):
         report = observe_provider_metadata(policy, env, observed_now)
         with httpx.Client(timeout=20, follow_redirects=False) as client:
             report['unsplash'] = inspect_unsplash(client, env['UNSPLASH_ACCESS_KEY'])
+        for provider in ('apify', 'gemini', 'bfl', 'unsplash'):
+            PROVIDERS[provider] = str(report.get(provider, {}).get('status'))[:40]
         if any(report.get(provider, {}).get('status') != 'metadata_verified'
                for provider in ('apify', 'gemini', 'bfl', 'unsplash')):
             raise RuntimeError('Provider metadata unavailable')
         return report
 
+    STEP['name'] = 'spend_control'
     result = maintain_spend_control(ReadOnlySpendStore(PrivateFirestoreStore()),
         expected_policy_sha=env['SPEND_POLICY_SHA256'], observer=observer,
         now=now or datetime.now(timezone.utc), apply=False)
     # Pending handoff recovery must not be presented as readiness to dispatch.
+    RESULT['status'] = str(result.status)[:40]
     if result.status != 'planned':
         raise RuntimeError('Accounting requires reconciliation')
 
@@ -99,10 +112,11 @@ def main():
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             probe(os.environ)
         status = 'ready'
-    except BaseException:
-        pass
+    except BaseException as exc:
+        RESULT['error_class'] = type(exc).__name__
     finally:
         logging.disable(previous_logging)
+    print(json.dumps({'diag_step': STEP['name'], 'providers': PROVIDERS, 'result': RESULT}, sort_keys=True))
     print(json.dumps({'status': status, 'mode': 'read_only',
                       'paid_calls': 0, 'ledger_writes': 0}, sort_keys=True))
     return 0 if status == 'ready' else 2
