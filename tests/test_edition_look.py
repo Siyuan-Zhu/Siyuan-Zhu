@@ -445,3 +445,55 @@ def test_fonts_use_basic_layout_everywhere() -> None:
 
     st = L.voice_style("italic")
     assert st.font.layout_engine == ImageFont.Layout.BASIC
+
+
+LARGE_TEMPLATES = ("S1_PLATE", "S1_SLEEVE", "S1_ENTRY", "S1_WALL")
+
+
+def _setting_plan(template: str, voice: str, setting: str, device: str = "rule"):
+    return L.NightPlan(template, voice, L.PAIRS[voice][0], True, device, False, None, setting)
+
+
+def test_night_plan_setting_defaults_to_standard() -> None:
+    assert L.NightPlan("S1_PLATE", "italic", "sans", True, "rule", False).setting == "standard"
+
+
+@pytest.mark.parametrize("template", LARGE_TEMPLATES)
+@pytest.mark.parametrize("voice", L.VOICES)
+@pytest.mark.parametrize("device", ("rule", "word"))
+def test_large_setting_widens_the_photograph_and_keeps_text_on_the_plate(template, voice, device) -> None:
+    standard = _setting_plan(template, voice, "standard", device)
+    large = _setting_plan(template, voice, "large", device)
+    _, _, box_s = LAYOUTS[template](standard, "Climacteric", GLOSS, "2026-12-02", CREDIT)
+    ops, height, box_l = LAYOUTS[template](large, "Climacteric", GLOSS, "2026-12-02", CREDIT)
+    assert box_l[2] > box_s[2]
+    assert box_l[0] >= 0 and box_l[0] + box_l[2] <= L.WIDTH
+    for op in ops:
+        if op[0] == "text":
+            assert op[6] > 0
+    light, dark = _pair(_photo("dark"), large, scale=1)       # the bounds check raises when text leaves the plate
+    assert light.size[0] == L.WIDTH and dark.size == light.size
+
+
+@pytest.mark.parametrize("template,standard,large", [
+    ("S1_PLATE", 936, 1080), ("S1_SLEEVE", 936, 1080), ("S1_ENTRY", 816, 952), ("S1_WALL", 735, 858),
+])
+def test_large_setting_photograph_widths(template, standard, large) -> None:
+    for setting, want in (("standard", standard), ("large", large)):
+        plan = _setting_plan(template, "italic", setting)
+        _, _, box = LAYOUTS[template](plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+        assert box[2] == want
+
+
+def test_large_sleeve_has_sixty_pixel_side_margins() -> None:
+    _, _, box = L._layout_sleeve(_setting_plan("S1_SLEEVE", "italic", "large"), "Relic", GLOSS, "2026-12-02", CREDIT)
+    assert box[0] == 60 and box[0] + box[2] == L.WIDTH - 60
+
+
+def test_large_wall_label_sits_right_of_the_photograph_inside_the_plate() -> None:
+    plan = _setting_plan("S1_WALL", "italic", "large")
+    ops, _, box = L._layout_wall(plan, "Relic", GLOSS, "2026-12-02", CREDIT)
+    for op in ops:
+        if op[0] == "text":
+            assert op[5] >= box[0] + box[2]
+    assert box[0] + box[2] < 940
