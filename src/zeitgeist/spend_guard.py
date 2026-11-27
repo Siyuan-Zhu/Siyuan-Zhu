@@ -35,6 +35,7 @@ NEON_MODEL = "gemini-4-neon"
 NEON_OPERATION = "generate_content:" + NEON_MODEL
 NEON_OUTPUT_TOKENS = HYDROGEN_OUTPUT_TOKENS
 NEON_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
+MIN_REQUEST_SECONDS = 10  # Gemini refuses a shorter request deadline with a 400 (live probe, 2026-11-27)
 NEON_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
 # Measured 2026-11-25 (Neon probe): the same 67 prompt tokens above countTokens as Hydrogen.
 NEON_PROMPT_ALLOWANCE_TOKENS = 256
@@ -923,7 +924,7 @@ class BudgetGuard:
             return copy.deepcopy(limits), duration
         limits, duration = self.ledger.mutate(read)
         if max_request_seconds is not None:
-            if type(max_request_seconds) is not int or not 1 <= max_request_seconds <= duration:
+            if type(max_request_seconds) is not int or not MIN_REQUEST_SECONDS <= max_request_seconds <= duration:
                 raise SpendBlocked("Request timeout must narrow the verified request duration")
             duration = max_request_seconds
         config = kwargs.get("config") or {}

@@ -8,6 +8,7 @@ offered list and values from fixed enums. Calls go through the engine's art_dire
 
 from __future__ import annotations
 
+import atexit
 import datetime as dt
 import json
 import logging
@@ -35,7 +36,8 @@ logger = logging.getLogger(__name__)
 BUDGET_SECONDS = 420.0
 CALL_SECONDS = 120.0
 REQUEST_SECONDS = 100  # Google is told to stop here too (X-Server-Timeout); the slowest real answer was 86 s
-MAX_RETRIES = 1        # per night, for a deadline or server failure only
+MAX_RETRIES = 1        # per night, for a deadline, a server failure or a stalled token count only
+EXIT_GRACE_SECONDS = 30.0  # at exit, wait this long at most for abandoned calls, so their holds can settle
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7
 
@@ -269,9 +271,9 @@ def _default_client_factory() -> Callable[[], Any]:
 
 
 def _run_detached(fn: Callable[[], Any]) -> Future:
-    """Run fn on a daemon thread: a call the director gives up on cannot keep the process alive at exit.
-
-    Its spend hold then stays reserved at its full bound, as for any call whose outcome is unknown.
+    """Run fn on a daemon thread. At exit, a call the director gave up on gets at most EXIT_GRACE_SECONDS to
+    finish, so its spend hold can settle; after that it dies with the process and its hold stays reserved at its
+    full bound, as for any call whose outcome is unknown.
     """
     future: Future = Future()
 
@@ -280,16 +282,52 @@ def _run_detached(fn: Callable[[], Any]) -> Future:
             future.set_result(fn())
         except BaseException as error:  # handed to the waiting director, never raised on this thread
             future.set_exception(error)
+        finally:
+            with _IN_FLIGHT_LOCK:
+                _IN_FLIGHT.discard(threading.current_thread())
 
-    threading.Thread(target=run, name="art-director-call", daemon=True).start()
+    thread = threading.Thread(target=run, name="art-director-call", daemon=True)
+    with _IN_FLIGHT_LOCK:  # started under the lock, so the exit drain never sees an unstarted thread
+        _IN_FLIGHT.add(thread)
+        thread.start()
     return future
 
 
+_IN_FLIGHT: set = set()
+_IN_FLIGHT_LOCK = threading.Lock()
+
+
+@atexit.register
+def _let_abandoned_calls_settle() -> None:
+    """Give calls the director gave up on a short, bounded chance to finish, so their spend holds settle."""
+    deadline = time.monotonic() + EXIT_GRACE_SECONDS
+    with _IN_FLIGHT_LOCK:
+        pending = list(_IN_FLIGHT)
+    for thread in pending:
+        thread.join(max(0.0, deadline - time.monotonic()))
+
+
+_TRANSIENT_COUNT_ERRORS = frozenset({"ReadTimeout", "ConnectTimeout", "WriteTimeout", "PoolTimeout", "TimeoutException",
+                                     "ConnectError", "ReadError", "WriteError", "RemoteProtocolError"})
+
+
 def _retryable(error: BaseException) -> bool:
-    """A deadline or a server failure (Gemini sometimes stalls); never a spend block or a request the API refused."""
+    """A deadline, a server failure or a stalled token count; never another spend block or a refused request."""
     import httpx
     from google.genai import errors
 
+    from .spend_guard import SpendBlocked, refused_before_dispatch
+
+    if isinstance(error, SpendBlocked):
+        # A failed token count is refused before any reservation or paid call, so a retry costs nothing; retry it
+        # only when the failure is transient (a server error, a timeout or a broken connection).
+        diagnostics = getattr(error, "public_diagnostics", {}) or {}
+        if not refused_before_dispatch(error) or diagnostics.get("code") != "token-metadata-unavailable":
+            return False
+        status = diagnostics.get("status")
+        if status is not None:
+            return status >= 500
+        return diagnostics.get("error_type") in _TRANSIENT_COUNT_ERRORS
     if isinstance(error, httpx.TimeoutException):
         return True
     return isinstance(error, errors.ServerError) and isinstance(getattr(error, "code", None), int) and error.code >= 500
@@ -303,7 +341,7 @@ class _Session:
         self.retries = 0
 
     def close(self) -> None:
-        """Nothing to release: an abandoned call finishes, or dies with the process, on its own thread."""
+        """Nothing to release: an abandoned call finishes on its own thread, within the exit grace at the latest."""
 
     def ask(self, images: Sequence[bytes], texts: Sequence[str], prompt: str) -> dict:
         from google.genai import types
@@ -463,9 +501,10 @@ def direct_night(photo: Image.Image, *, word: str, gloss: str, thesis: str, date
                  clock: Callable[[], float] = time.monotonic, outcome: Optional[dict] = None) -> Optional[L.NightPlan]:
     """The night's plan chosen by the art director, or None when rotation should decide.
 
-    Exactly four model calls on the happy path (brief, two comparisons, critic). SpendBlocked or any other
-    error ends the director with no further calls. outcome, when given, receives the numbers, ids and enum
-    reason for the run log; nothing the model wrote is kept.
+    Exactly four model calls on the happy path (brief, two comparisons, critic). One deadline, server failure or
+    stalled token count per night is retried when a call's time is left (see _retryable); any other spend block or
+    error ends the director with no further calls. outcome, when given, receives the numbers, ids and enum reason
+    for the run log (calls counts attempts); nothing the model wrote is kept.
     """
     from .spend_guard import SpendBlocked
 
