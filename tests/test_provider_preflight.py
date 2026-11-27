@@ -326,7 +326,9 @@ def test_changed_provider_default_does_not_block_the_available_exact_configured_
     [
         ("actId", "foreign-actor"),
         ("buildNumber", "0.0.999"),
-        ("imageDigest", None),
+        ("imageDigest", "not-a-digest"),
+        ("imageDigest", ""),
+        ("imageDigest", 0),
         ("id", "foreign-build"),
     ],
 )
@@ -455,3 +457,27 @@ def test_non_numeric_pin_cannot_trigger_metadata_or_validation_requests(pin):
     )
     assert report["apify"]["status"] == "unavailable"
     assert requests == []
+
+
+def test_a_build_without_an_image_digest_is_verified_by_its_immutable_id():
+    # Apify stopped returning imageDigest on 2026-11-27 for every build; the immutable build ID, actor, number,
+    # input schema and pricing still identify it (SIY-285).
+    base, requests = provider_client(default_build="0.0.649")
+
+    def handler(request):
+        response = base._transport.handle_request(request)
+        if request.url.path.startswith("/v2/actor-builds/"):
+            body = response.json()
+            body["data"].pop("imageDigest", None)
+            return httpx.Response(200, json=body)
+        return response
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    report = run_preflight(
+        client,
+        {"APIFY_TOKEN": "DO_NOT_DISCLOSE", "APIFY_INSTAGRAM_BUILD": "0.0.648"},
+        now=NOW,
+    )
+    assert report["apify"]["status"] == "metadata_verified"
+    assert report["apify"]["image_digest"] is None
+    assert report["apify"]["build_pin_verified"] is True

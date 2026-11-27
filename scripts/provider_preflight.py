@@ -231,8 +231,10 @@ def _exact_apify_build(get, actor, configured_build, configured_build_id=None):
         or build.get("buildNumber") != configured_build
     ):
         raise MetadataUnavailable()
+    # Apify stopped returning imageDigest on 2026-11-27; the immutable build ID, actor, number, schema and pricing
+    # still identify the build. A digest that is returned must still be well formed.
     image = build.get("imageDigest")
-    if not isinstance(image, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", image):
+    if image is not None and (not isinstance(image, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", image)):
         raise MetadataUnavailable()
     return build, default_number
 

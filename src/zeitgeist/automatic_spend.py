@@ -799,7 +799,7 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
                 billing.get('cycle_matches_limits') is not True or billing.get('usage_matches_limits') is not True or
                 fresh.get('configured_build') != pinned['actor_build'] or fresh.get('build_pin_verified') is not True or
                 fresh.get('build_id') != pinned['actor_build_id'] or
-                fresh.get('image_digest') != pinned['actor_image_digest'] or
+                (fresh.get('image_digest') is not None and fresh.get('image_digest') != pinned['actor_image_digest']) or
                 fresh.get('input_schema_sha256') != pinned['actor_schema_sha256'] or
                 digest(fresh.get('pricing')) != pinned['actor_pricing_sha256']):
                 raise SpendBlocked('Apify account, free grant, usage cycle, build or pricing changed')

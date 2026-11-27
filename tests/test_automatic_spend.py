@@ -1120,3 +1120,17 @@ def test_band_audit_rejects_a_duplicate_operation_and_rate():
     assert auto.verified_price_band_audit(account,'gemini') is False
     entries[-1]=dict(entries[0])
     assert auto.verified_price_band_audit(account,'gemini') is False
+
+
+def test_apify_without_an_image_digest_still_refreshes_on_the_pinned_build_id():
+    # Apify no longer returns the build's image digest (2026-11-27); build ID, schema and pricing still pin it.
+    ledger, policy, observation = fixtures()
+    observation['apify']['image_digest'] = None
+    refresh(ledger, policy, observation)
+
+
+def test_a_different_apify_image_digest_still_blocks():
+    ledger, policy, observation = fixtures()
+    observation['apify']['image_digest'] = 'sha256:' + 'f' * 64
+    with pytest.raises(SpendBlocked):
+        refresh(ledger, policy, observation)
