@@ -327,6 +327,8 @@ def test_changed_provider_default_does_not_block_the_available_exact_configured_
         ("actId", "foreign-actor"),
         ("buildNumber", "0.0.999"),
         ("imageDigest", "not-a-digest"),
+        ("imageDigest", ""),
+        ("imageDigest", 0),
         ("id", "foreign-build"),
     ],
 )
