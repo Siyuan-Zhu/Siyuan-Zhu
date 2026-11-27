@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 # two slow answers among four (SIY-284).
 BUDGET_SECONDS = 420.0
 CALL_SECONDS = 120.0
+REQUEST_SECONDS = 100  # Google is told to stop here too (X-Server-Timeout); the slowest real answer was 86 s
+MAX_RETRIES = 1        # per night, for a deadline or server failure only
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7
 
@@ -260,7 +262,8 @@ def _default_client_factory() -> Callable[[], Any]:
 
         from .spend_guard import guard_genai_client
 
-        return guard_genai_client(genai.Client(api_key=key), credential_key=key)
+        return guard_genai_client(genai.Client(api_key=key), credential_key=key,
+                                  request_timeout_seconds=REQUEST_SECONDS)
 
     return make
 
@@ -282,11 +285,22 @@ def _run_detached(fn: Callable[[], Any]) -> Future:
     return future
 
 
+def _retryable(error: BaseException) -> bool:
+    """A deadline or a server failure (Gemini sometimes stalls); never a spend block or a request the API refused."""
+    import httpx
+    from google.genai import errors
+
+    if isinstance(error, httpx.TimeoutException):
+        return True
+    return isinstance(error, errors.ServerError) and isinstance(getattr(error, "code", None), int) and error.code >= 500
+
+
 class _Session:
     def __init__(self, client, model: str, clock: Callable[[], float]):
         self.client, self.model, self.clock = client, model, clock
         self.start = clock()
         self.calls = 0
+        self.retries = 0
 
     def close(self) -> None:
         """Nothing to release: an abandoned call finishes, or dies with the process, on its own thread."""
@@ -296,9 +310,6 @@ class _Session:
 
         from .visual_router import critic_config
 
-        remaining = BUDGET_SECONDS - (self.clock() - self.start)
-        if remaining < CALL_SECONDS:  # never start a call that is unlikely to finish in time
-            raise _Stop("time")
         if len(images) > MAX_IMAGES:
             raise _Stop("error")
         contents: list = []
@@ -309,13 +320,21 @@ class _Session:
         contents.append(prompt)
         call = lambda m: self.client.models.generate_content(model=m, contents=contents, config=critic_config(m))
         run_models = model_choice.active()
-        self.calls += 1
-        future = _run_detached(
-            (lambda: run_models.call("art_director", call)) if run_models else (lambda: call(self.model)))
-        try:
-            resp = future.result(timeout=remaining)
-        except FutureTimeout:
-            raise _Stop("time") from None
+        work = (lambda: run_models.call("art_director", call)) if run_models else (lambda: call(self.model))
+        while True:
+            remaining = BUDGET_SECONDS - (self.clock() - self.start)
+            if remaining < CALL_SECONDS:  # never start a call that is unlikely to finish in time
+                raise _Stop("time")
+            self.calls += 1
+            try:
+                resp = _run_detached(work).result(timeout=remaining)
+                break
+            except FutureTimeout:
+                raise _Stop("time") from None
+            except Exception as error:
+                if not _retryable(error) or self.retries >= MAX_RETRIES:
+                    raise
+                self.retries += 1
         if self.clock() - self.start > BUDGET_SECONDS:
             raise _Stop("time")
         try:

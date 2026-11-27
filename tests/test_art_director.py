@@ -497,8 +497,9 @@ def test_default_client_factory_wraps_the_client_with_the_spend_guard(monkeypatc
         def __init__(self, api_key=None):
             seen["api_key"] = api_key
 
-    def guard(client, guard=None, *, credential_key=None):
+    def guard(client, guard=None, *, credential_key=None, request_timeout_seconds=None):
         seen["wrapped"], seen["credential_key"] = client, credential_key
+        seen["request_timeout_seconds"] = request_timeout_seconds
         return ("guarded", client)
 
     monkeypatch.setenv("GEMINI_API_KEY", "fixture-key")
@@ -678,3 +679,98 @@ def test_no_call_starts_with_less_than_a_call_left() -> None:
     plan, client = _run(script, clock=lambda: next(ticks), outcome=outcome)
     assert plan is None and outcome["reason"] == "time"
     assert len(client.calls) == 1 and outcome["calls"] == 1
+
+
+
+# ---- SIY-284: 100 s request deadline and one retry ---------------------------------------------------------
+
+def _deadline_504():
+    from google.genai import errors
+
+    return errors.ServerError(504, {"error": {"code": 504, "message": "Deadline expired", "status": "DEADLINE_EXCEEDED"}})
+
+
+def _read_timeout():
+    import httpx
+
+    return httpx.ReadTimeout("timed out")
+
+
+@pytest.mark.parametrize("failure", [_deadline_504, _read_timeout])
+def test_a_deadline_failure_is_retried_once(failure) -> None:
+    required, a, b, short, script = _happy()
+    outcome: dict = {}
+    plan, client = _run([failure()] + script, outcome=outcome)
+    assert plan is not None and outcome["calls"] == 5 and outcome["reason"] == "none"
+
+
+def test_only_one_retry_per_night() -> None:
+    required, a, b, short, script = _happy()
+    outcome: dict = {}
+    plan, client = _run([_deadline_504(), script[0], _deadline_504()] + script[1:], outcome=outcome)
+    assert plan is None and outcome["reason"] == "error" and outcome["calls"] == 3
+
+
+def test_two_failures_in_a_row_end_the_director() -> None:
+    required, a, b, short, script = _happy()
+    outcome: dict = {}
+    plan, client = _run([_deadline_504(), _read_timeout()] + script, outcome=outcome)
+    assert plan is None and outcome["reason"] == "error" and outcome["calls"] == 2
+
+
+def test_retry_applies_to_any_call() -> None:
+    required, a, b, short, script = _happy()
+    outcome: dict = {}
+    plan, client = _run(script[:3] + [_read_timeout()] + script[3:], outcome=outcome)
+    assert plan is not None and outcome["calls"] == 5 and outcome["reason"] == "none"
+
+
+def test_retry_waits_for_a_call_slot() -> None:
+    required, a, b, short, script = _happy()
+    clock, steps = _SteppedClock(), [AD.BUDGET_SECONDS - AD.CALL_SECONDS + 1.0, 60, 60, 60, 60]
+    client = FakeClient([_deadline_504()] + script)
+    answer = client.generate_content
+
+    def timed(**kw):
+        clock.now += steps.pop(0)
+        return answer(**kw)
+
+    client.generate_content = timed
+    outcome: dict = {}
+    plan = AD.direct_night(_photo(), word=WORD, gloss=GLOSS, thesis=THESIS, date_iso=DAY, credit=CREDIT, history=[],
+                           model="test-model", client_factory=lambda: client, clock=clock, outcome=outcome)
+    assert plan is None and outcome["reason"] == "time" and outcome["calls"] == 1
+
+
+def test_spend_blocks_are_not_retried() -> None:
+    from src.zeitgeist.spend_guard import SpendBlocked
+
+    required, a, b, short, script = _happy()
+    outcome: dict = {}
+    plan, client = _run([SpendBlocked("Call would exceed approved monthly cash ceiling")] + script, outcome=outcome)
+    assert plan is None and outcome["reason"] == "blocked" and outcome["calls"] == 1
+
+
+def test_client_errors_are_not_retried() -> None:
+    from google.genai import errors
+
+    required, a, b, short, script = _happy()
+    outcome: dict = {}
+    bad = errors.ClientError(400, {"error": {"code": 400, "message": "bad request", "status": "INVALID_ARGUMENT"}})
+    plan, client = _run([bad] + script, outcome=outcome)
+    assert plan is None and outcome["reason"] == "error" and outcome["calls"] == 1
+
+
+def test_the_default_client_asks_the_guard_for_the_request_deadline(monkeypatch) -> None:
+    from src.zeitgeist import spend_guard
+
+    seen = {}
+
+    def capture(client, guard=None, **kwargs):
+        seen.update(kwargs)
+        return client
+
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setattr(spend_guard, "guard_genai_client", capture)
+    AD._default_client_factory()()
+    assert seen.get("request_timeout_seconds") == AD.REQUEST_SECONDS == 100
