@@ -481,3 +481,71 @@ def test_a_build_without_an_image_digest_is_verified_by_its_immutable_id():
     assert report["apify"]["status"] == "metadata_verified"
     assert report["apify"]["image_digest"] is None
     assert report["apify"]["build_pin_verified"] is True
+
+
+# ---- newest build next to the pin (Apify newest safe build, Task 1) ----------------------------------------
+
+def _with_newest(newest="0.0.700", *, required=("username",), newest_status=200, legacy_refused=True):
+    base, requests = provider_client(default_build=newest)
+
+    def handler(request):
+        if request.method == "POST" and request.url.params.get("build") == newest:
+            requests.append(request)
+            body = json.loads(request.content)
+            if "usernames" in body:
+                return httpx.Response(400 if legacy_refused else 200, json={"valid": not legacy_refused})
+            return httpx.Response(200, json={"valid": True})
+        if request.url.path == "/v2/actor-builds/default-build-id":
+            if newest_status != 200:
+                return httpx.Response(newest_status, json={"error": {"type": "record-not-found"}})
+            response = base._transport.handle_request(request)
+            body = response.json()
+            body["data"]["buildNumber"] = newest
+            body["data"]["inputSchema"]["required"] = list(required)
+            return httpx.Response(200, json=body)
+        return base._transport.handle_request(request)
+
+    return httpx.Client(transport=httpx.MockTransport(handler)), requests
+
+
+def _apify(client):
+    return run_preflight(client, {"APIFY_TOKEN": "DO_NOT_DISCLOSE", "APIFY_INSTAGRAM_BUILD": "0.0.648"}, now=NOW)["apify"]
+
+
+def test_the_newest_build_equal_to_the_pin_is_reported_as_the_pin():
+    client, _ = provider_client()
+    report = _apify(client)
+    assert report["status"] == "metadata_verified"
+    newest = report["newest_build"]
+    assert newest["number"] == "0.0.648" and newest["contract_ok"] is True and newest["validation_ok"] is True
+
+
+def test_a_newer_build_with_the_same_contract_is_reported_safe():
+    client, requests = _with_newest()
+    report = _apify(client)
+    assert report["status"] == "metadata_verified" and report["configured_build"] == "0.0.648"
+    newest = report["newest_build"]
+    assert (newest["number"], newest["id"], newest["status"]) == ("0.0.700", "default-build-id", "SUCCEEDED")
+    assert newest["contract_ok"] is True and newest["validation_ok"] is True
+    assert len(newest["input_schema_sha256"]) == 64
+    assert any(r.method == "POST" and r.url.params.get("build") == "0.0.700" for r in requests)
+    assert all(r.method in ("GET", "POST") for r in requests)
+
+
+def test_a_newer_build_that_no_longer_requires_username_breaks_the_contract():
+    client, _ = _with_newest(required=())
+    newest = _apify(client)["newest_build"]
+    assert newest["contract_ok"] is False
+
+
+def test_a_newer_build_that_accepts_the_legacy_field_fails_validation():
+    client, _ = _with_newest(legacy_refused=False)
+    newest = _apify(client)["newest_build"]
+    assert newest["validation_ok"] is False
+
+
+def test_a_newest_build_that_cannot_be_read_leaves_the_pin_verified():
+    client, _ = _with_newest(newest_status=404)
+    report = _apify(client)
+    assert report["status"] == "metadata_verified"
+    assert report["newest_build"] == {"unavailable": True}
