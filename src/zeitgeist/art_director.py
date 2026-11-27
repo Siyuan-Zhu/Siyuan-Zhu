@@ -29,9 +29,10 @@ logger = logging.getLogger(__name__)
 # ---- everything the model is told or may answer lives here (the art direction file's text) ------------
 # Measured on 26-27 Nov: Neon answers in 21-45 s (once 86 s), and the spend guard adds about 15 s per call
 # (admission before, settlement and plate drawing after). A call starts only with CALL_SECONDS left, so the
-# latest start (BUDGET_SECONDS - CALL_SECONDS = 210 s) stays before the old 240 s budget: a call that hangs until
-# the guard's request timeout can keep the run no longer than it could before (SIY-284).
-BUDGET_SECONDS = 330.0
+# latest start (BUDGET_SECONDS - CALL_SECONDS = 240 s) is no later than under the old 240 s budget: a call that
+# hangs until the guard's request timeout can keep the run no longer than it could before (SIY-284). One slow
+# (about 100 s) call anywhere among four still fits.
+BUDGET_SECONDS = 360.0
 CALL_SECONDS = 120.0
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7

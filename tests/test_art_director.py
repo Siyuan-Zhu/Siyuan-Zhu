@@ -558,6 +558,51 @@ def test_latest_call_start_is_no_later_than_before() -> None:
     assert AD.BUDGET_SECONDS - AD.CALL_SECONDS <= 240
 
 
+class _SteppedClock:
+    """A clock that only moves when a model call finishes, by that call's duration (guard work included)."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def _timed_night(durations):
+    required, a, b, short, script = _happy()
+    clock, steps = _SteppedClock(), list(durations)
+    client = FakeClient(script)
+    answer = client.generate_content
+
+    def timed(**kw):
+        clock.now += steps.pop(0)
+        return answer(**kw)
+
+    client.generate_content = timed
+    outcome: dict = {}
+    plan = AD.direct_night(_photo(), word=WORD, gloss=GLOSS, thesis=THESIS, date_iso=DAY, credit=CREDIT, history=[],
+                           model="test-model", client_factory=lambda: client, clock=clock, outcome=outcome)
+    return plan, outcome
+
+
+@pytest.mark.parametrize("durations", [
+    [60, 60, 60, 60],     # a typical night: Neon about 45 s plus about 15 s of guard work per call
+    [101, 60, 60, 60],    # the 86 s brief seen on 27 Nov, plus guard work
+    [60, 101, 60, 60],
+    [60, 60, 101, 60],
+    [60, 60, 60, 101],
+    [80, 80, 80, 60],     # the critic starts with exactly CALL_SECONDS left: it still runs
+])
+def test_a_night_with_one_slow_call_still_gets_the_directors_plan(durations) -> None:
+    plan, outcome = _timed_night(durations)
+    assert plan is not None and outcome["calls"] == 4 and outcome["reason"] == "none"
+
+
+def test_a_night_of_slow_calls_falls_back_to_rotation_without_starting_the_critic() -> None:
+    plan, outcome = _timed_night([101, 101, 101, 60])
+    assert plan is None and outcome["reason"] == "time" and outcome["calls"] == 3
+
+
 def test_no_call_starts_with_less_than_a_call_left() -> None:
     required, a, b, short, script = _happy()
     late = AD.BUDGET_SECONDS - AD.CALL_SECONDS + 1.0
