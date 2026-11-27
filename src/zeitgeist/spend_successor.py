@@ -236,3 +236,30 @@ def assert_no_hold_in_flight(ledger: dict, *, now: datetime, duration_seconds: i
             began = max(began, _time(record["submitted_at"]))
         if began > cutoff:
             raise RuntimeError("A reservation may still be in flight; retry after the request duration")
+
+
+# The Neon successor installed on 25 Nov: the base the Apify newest-safe-build successor changes.
+APIFY_BASE_POLICY_SHA256 = "25f5685bfd2b53eac7af18b521765ca558e8cda421ae0d3b254c81e4518366b8"
+
+
+def build_apify_newest_safe_successor(installed: dict) -> dict:
+    """The installed policy with the Apify build in newest_safe mode and no image-digest pin; nothing else.
+
+    Apify stopped reporting build image digests on 2026-11-27; the build ID, schema and pricing pins stay.
+    """
+    apify = installed.get("providers", {}).get("apify")
+    if not isinstance(apify, dict) or "actor_build" not in apify:
+        raise RuntimeError("Installed policy has no Apify build pin")
+    if apify.get("actor_build_mode", "pinned") != "pinned":
+        raise RuntimeError("Installed policy already follows the newest safe Apify build")
+    successor = copy.deepcopy(installed)
+    successor["providers"]["apify"]["actor_build_mode"] = "newest_safe"
+    successor["providers"]["apify"]["actor_image_digest"] = None
+    return successor
+
+
+def pointer_ledger(ledger: dict, policy_sha: str) -> dict:
+    """The ledger with only its policy pointer moved (the Apify build fields live in the policy, not the ledger)."""
+    result = copy.deepcopy(ledger)
+    result["automatic_policy_sha256"] = policy_sha
+    return result
