@@ -1,6 +1,82 @@
 {
   "entries": [
     {
+      "artwork_artist": "mindeurle lee",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Benediction",
+      "artwork_url": "https://unsplash.com/photos/ozDFb-HMi6w",
+      "cluster_keywords": [
+        "theology thanksgiving",
+        "englishman gives",
+        "gives thanks",
+        "englishman",
+        "theology"
+      ],
+      "commissioned_thesis": "Across today's strongest signals, the holiday is being lifted out of retail noise and examined as a serious theological and cultural posture. Even from an outsider's transatlantic vantage point, the ritual of pausing to give thanks reads as a counter-cultural discipline: naming what is good without pretending we earned all of it. Benediction captures that precise hinge between table and liturgy\u2014the moment before consumption when speech turns plenty into grace.",
+      "critic_scores": {
+        "semantic_alignment": 0.9,
+        "composite": 0.906
+      },
+      "date": "2026-11-27",
+      "fallback_webp_path": "assets/pulse/2026-11-27.webp",
+      "flux_model": null,
+      "gloss": "A spoken blessing over unmerited abundance.",
+      "headline": "Benediction \u2014 A spoken blessing over unmerited abundance.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/ozDFb-HMi6w",
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_sources_matched": [],
+      "publication_id": "6183f1a99bac689759fc",
+      "published_at": "2026-11-27T08:55:56.480030Z",
+      "quote": "A spoken blessing over unmerited abundance.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "Across today's strongest signals, the holiday is being lifted out of retail noise and examined as a serious theological and cultural posture. Even from an outsider's transatlantic vantage point, the ritual of pausing to give thanks reads as a counter-cultural discipline: naming what is good without pretending we earned all of it. Benediction captures that precise hinge between table and liturgy\u2014the moment before consumption when speech turns plenty into grace.",
+      "top_macro_themes": [
+        "theology thanksgiving",
+        "englishman gives",
+        "gives thanks",
+        "englishman",
+        "theology"
+      ],
+      "top_orbit_themes": [
+        "theology thanksgiving",
+        "englishman gives",
+        "gives thanks",
+        "englishman",
+        "theology"
+      ],
+      "unsplash_photographer": "mindeurle lee",
+      "unsplash_profile_url": "https://unsplash.com/@wholesee",
+      "updated_at": "2026-11-27T08:55:56.480030Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Benediction",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "ozDFb-HMi6w",
+        "source_url": "https://unsplash.com/photos/ozDFb-HMi6w",
+        "camera_make": "Apple",
+        "camera_model": "iPhone 12 Pro",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
       "artwork_artist": "Peter Herrmann",
       "artwork_source": "Unsplash",
       "artwork_title": "Doxology",
@@ -1610,8 +1686,8 @@
       "visual_tier_used": "PHOTOGRAPHY",
       "window_hours": 96,
       "word": "Relic",
-      "photo_selection_policy": "owner-approved-best-safe-photo",
       "photo_selection_policy_date": "2026-11-07",
+      "photo_selection_policy": "owner-approved-best-safe-photo",
       "media_provenance": {
         "version": 1,
         "classification": "PHOTOGRAPHY",
@@ -2022,8 +2098,8 @@
       "visual_tier_used": "DIGITAL_ARTWORK",
       "window_hours": 96,
       "word": "Insinuation",
-      "photo_selection_policy": "owner-approved-best-safe-photo",
       "photo_selection_policy_date": "2026-11-01",
+      "photo_selection_policy": "owner-approved-best-safe-photo",
       "media_provenance": {
         "version": 1,
         "classification": "DIGITAL_ARTWORK",
@@ -2114,6 +2190,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-26T15:31:22.842605Z",
+  "updated_at": "2026-11-27T08:55:56.480030Z",
   "version": "2.0"
 }

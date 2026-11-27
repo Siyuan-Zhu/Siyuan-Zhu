@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-26",
-  "word": "Doxology",
-  "gloss": "Gratitude elevated into a deliberate liturgy.",
-  "archetype": "S1_WALL",
+  "date": "2026-11-27",
+  "word": "Benediction",
+  "gloss": "A spoken blessing over unmerited abundance.",
+  "archetype": "S1_SUBTITLE",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "d229f2df2a91c9e97336eb6d06bcf892efdfaf00a8cf52e96f5e2bb24fcd20a8",
-    "assets/daily_pulse_dark.webp": "6cd01a959bdfde85e675a06e5810dc4f1f93c7f7ac76dd3e0af25e5cc27657f3",
-    "assets/daily_pulse.svg": "6d6043a38c8fd7525a9187f51965a816ba137d77f59a1ba5164cf213ee58c80d",
-    "assets/pulse/2026-11-26.webp": "93fddadd8692f644baed30376eaee0fdfaaa097e6e8044b859198acb34a03f4b"
+    "assets/daily_pulse_light.webp": "b643216a2d9d5dec8194338c95c129d732f971219186dc00437c40b48087525d",
+    "assets/daily_pulse_dark.webp": "b643216a2d9d5dec8194338c95c129d732f971219186dc00437c40b48087525d",
+    "assets/daily_pulse.svg": "c0adf15dc0d5f43a272928a1695ef0b0da5993d9d92a0ed561e12c5b4d9f30d6",
+    "assets/pulse/2026-11-27.webp": "669bc729bb9cd07aaaef3871a3dfe2371b1d3a4e0054809eec0840ba7f9e2dc7"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "uNGVQJr2bYM",
-    "source_url": "https://unsplash.com/photos/uNGVQJr2bYM",
-    "camera_make": "NIKON CORPORATION",
-    "camera_model": "NIKON Z 6",
+    "asset_id": "ozDFb-HMi6w",
+    "source_url": "https://unsplash.com/photos/ozDFb-HMi6w",
+    "camera_make": "Apple",
+    "camera_model": "iPhone 12 Pro",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "9cf799bbc514a71080cb"
+  "publication_id": "6183f1a99bac689759fc"
 }
