@@ -35,6 +35,7 @@ NEON_MODEL = "gemini-4-neon"
 NEON_OPERATION = "generate_content:" + NEON_MODEL
 NEON_OUTPUT_TOKENS = HYDROGEN_OUTPUT_TOKENS
 NEON_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
+MIN_REQUEST_SECONDS = 10  # Gemini refuses a shorter request deadline with a 400 (live probe, 2026-11-27)
 NEON_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
 # Measured 2026-11-25 (Neon probe): the same 67 prompt tokens above countTokens as Hydrogen.
 NEON_PROMPT_ALLOWANCE_TOKENS = 256
@@ -1217,9 +1218,6 @@ def get_spend_guard(*, credential_keys=None):
 def refused_before_dispatch(error):
     """True only for a SpendBlocked raised before any provider call was made."""
     return isinstance(error, SpendBlocked) and getattr(error, 'refused_before_dispatch', False) is True
-
-
-MIN_REQUEST_SECONDS = 10  # Gemini refuses a shorter deadline with a 400 (live probe, 2026-11-27)
 
 
 def guard_genai_client(client, guard=None, *, credential_key=None, request_timeout_seconds=None):

@@ -81,6 +81,41 @@ def test_a_token_count_stall_is_retried_without_any_paid_call():
     assert _records(guard) == ["settled"]                        # the stalled count reserved nothing
 
 
+def _count_failing_once(failure):
+    counted = counter(1400)
+    failures = [failure]
+
+    def count(**kwargs):
+        if failures:
+            raise failures.pop()
+        return counted(**kwargs)
+
+    return count
+
+
+def test_a_token_count_server_failure_is_retried():
+    guard, api, dispatched = _guarded([_answer()], _count_failing_once(
+        errors.ServerError(503, {"error": {"code": 503, "message": "unavailable", "status": "UNAVAILABLE"}})))
+    session = AD._Session(api, NEON_MODEL, time.monotonic)
+    assert session.ask([_plate()], ["The plate:"], "Check one finished plate.") == json.loads(VERDICT)
+    assert session.calls == 2 and session.retries == 1
+
+
+@pytest.mark.parametrize("failure", [
+    errors.ClientError(403, {"error": {"code": 403, "message": "denied", "status": "PERMISSION_DENIED"}}),
+    errors.ClientError(400, {"error": {"code": 400, "message": "bad", "status": "INVALID_ARGUMENT"}}),
+    ValueError("unexpected count payload"),
+])
+def test_a_token_count_failure_that_would_recur_is_not_retried(failure):
+    from src.zeitgeist.spend_guard import SpendBlocked
+
+    guard, api, dispatched = _guarded([_answer()], _count_failing_once(failure))
+    session = AD._Session(api, NEON_MODEL, time.monotonic)
+    with pytest.raises(SpendBlocked):
+        session.ask([_plate()], ["The plate:"], "Check one finished plate.")
+    assert session.calls == 1 and session.retries == 0 and dispatched == []
+
+
 def test_other_spend_blocks_are_still_never_retried():
     from src.zeitgeist.spend_guard import SpendBlocked
 

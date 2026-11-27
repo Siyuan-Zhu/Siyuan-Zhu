@@ -8,12 +8,12 @@ offered list and values from fixed enums. Calls go through the engine's art_dire
 
 from __future__ import annotations
 
+import atexit
 import datetime as dt
 import json
 import logging
 import os
 import time
-import atexit
 import threading
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -271,9 +271,9 @@ def _default_client_factory() -> Callable[[], Any]:
 
 
 def _run_detached(fn: Callable[[], Any]) -> Future:
-    """Run fn on a daemon thread: a call the director gives up on cannot keep the process alive at exit.
-
-    Its spend hold then stays reserved at its full bound, as for any call whose outcome is unknown.
+    """Run fn on a daemon thread. At exit, a call the director gave up on gets at most EXIT_GRACE_SECONDS to
+    finish, so its spend hold can settle; after that it dies with the process and its hold stays reserved at its
+    full bound, as for any call whose outcome is unknown.
     """
     future: Future = Future()
 
@@ -287,9 +287,9 @@ def _run_detached(fn: Callable[[], Any]) -> Future:
                 _IN_FLIGHT.discard(threading.current_thread())
 
     thread = threading.Thread(target=run, name="art-director-call", daemon=True)
-    with _IN_FLIGHT_LOCK:
+    with _IN_FLIGHT_LOCK:  # started under the lock, so the exit drain never sees an unstarted thread
         _IN_FLIGHT.add(thread)
-    thread.start()
+        thread.start()
     return future
 
 
@@ -307,6 +307,10 @@ def _let_abandoned_calls_settle() -> None:
         thread.join(max(0.0, deadline - time.monotonic()))
 
 
+_TRANSIENT_COUNT_ERRORS = frozenset({"ReadTimeout", "ConnectTimeout", "WriteTimeout", "PoolTimeout", "TimeoutException",
+                                     "ConnectError", "ReadError", "WriteError", "RemoteProtocolError"})
+
+
 def _retryable(error: BaseException) -> bool:
     """A deadline, a server failure or a stalled token count; never another spend block or a refused request."""
     import httpx
@@ -315,8 +319,15 @@ def _retryable(error: BaseException) -> bool:
     from .spend_guard import SpendBlocked, refused_before_dispatch
 
     if isinstance(error, SpendBlocked):
-        # The guard reports a failed token count as this refusal; no paid call was made, so a retry is free.
-        return refused_before_dispatch(error) and str(error) == "Token metadata unavailable; no paid call made"
+        # A failed token count is refused before any reservation or paid call, so a retry costs nothing; retry it
+        # only when the failure is transient (a server error, a timeout or a broken connection).
+        diagnostics = getattr(error, "public_diagnostics", {}) or {}
+        if not refused_before_dispatch(error) or diagnostics.get("code") != "token-metadata-unavailable":
+            return False
+        status = diagnostics.get("status")
+        if status is not None:
+            return status >= 500
+        return diagnostics.get("error_type") in _TRANSIENT_COUNT_ERRORS
     if isinstance(error, httpx.TimeoutException):
         return True
     return isinstance(error, errors.ServerError) and isinstance(getattr(error, "code", None), int) and error.code >= 500
@@ -330,7 +341,7 @@ class _Session:
         self.retries = 0
 
     def close(self) -> None:
-        """Nothing to release: an abandoned call finishes, or dies with the process, on its own thread."""
+        """Nothing to release: an abandoned call finishes on its own thread, within the exit grace at the latest."""
 
     def ask(self, images: Sequence[bytes], texts: Sequence[str], prompt: str) -> dict:
         from google.genai import types
