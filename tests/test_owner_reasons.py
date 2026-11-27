@@ -205,3 +205,11 @@ def test_unclassified_only_owner_act():
         assert reason.cls == ('owner-approve' if err == 'TypeError' else 'self-heal')
     code, reason = R.resolve(stage='spend_maintenance', code='bogus', error_type='ValueError')
     assert (code, reason.cls) == ('maintenance-unavailable', 'owner-approve')
+
+
+@pytest.mark.parametrize('code,cls', [('apify-newer-build-input-changed', 'owner-approve'),
+                                      ('apify-newer-build-unavailable', 'watch-on-it')])
+def test_an_apify_build_fallback_resolves_to_a_plain_words_review(code, cls):
+    out, reason = R.resolve(stage='spend_maintenance', code=code)
+    assert out == code and reason.cls == cls
+    assert 'last good' in reason.tonight
