@@ -13,7 +13,8 @@ import json
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
 from io import BytesIO
@@ -27,12 +28,11 @@ from . import model_choice
 logger = logging.getLogger(__name__)
 
 # ---- everything the model is told or may answer lives here (the art direction file's text) ------------
-# Measured on 26-27 Nov: Neon answers in 21-45 s (once 86 s), and the spend guard adds about 15 s per call
-# (admission before, settlement and plate drawing after). A call starts only with CALL_SECONDS left, so the
-# latest start (BUDGET_SECONDS - CALL_SECONDS = 240 s) is no later than under the old 240 s budget: a call that
-# hangs until the guard's request timeout can keep the run no longer than it could before (SIY-284). One slow
-# (about 100 s) call anywhere among four still fits.
-BUDGET_SECONDS = 360.0
+# Measured on 26-27 Nov: Neon answers in 21-45 s (once 86 s, once never: a 504 at the 300 s deadline), and the
+# spend guard adds about 15 s per call. A call starts only with CALL_SECONDS left. Calls run on daemon threads,
+# so a call the director gives up on never holds the run open; the budget is the director's whole cost and fits
+# two slow answers among four (SIY-284).
+BUDGET_SECONDS = 420.0
 CALL_SECONDS = 120.0
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7
@@ -265,15 +265,31 @@ def _default_client_factory() -> Callable[[], Any]:
     return make
 
 
+def _run_detached(fn: Callable[[], Any]) -> Future:
+    """Run fn on a daemon thread: a call the director gives up on cannot keep the process alive at exit.
+
+    Its spend hold then stays reserved at its full bound, as for any call whose outcome is unknown.
+    """
+    future: Future = Future()
+
+    def run() -> None:
+        try:
+            future.set_result(fn())
+        except BaseException as error:  # handed to the waiting director, never raised on this thread
+            future.set_exception(error)
+
+    threading.Thread(target=run, name="art-director-call", daemon=True).start()
+    return future
+
+
 class _Session:
     def __init__(self, client, model: str, clock: Callable[[], float]):
         self.client, self.model, self.clock = client, model, clock
         self.start = clock()
         self.calls = 0
-        self.executor = ThreadPoolExecutor(max_workers=1)
 
     def close(self) -> None:
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        """Nothing to release: an abandoned call finishes, or dies with the process, on its own thread."""
 
     def ask(self, images: Sequence[bytes], texts: Sequence[str], prompt: str) -> dict:
         from google.genai import types
@@ -294,7 +310,7 @@ class _Session:
         call = lambda m: self.client.models.generate_content(model=m, contents=contents, config=critic_config(m))
         run_models = model_choice.active()
         self.calls += 1
-        future = self.executor.submit(
+        future = _run_detached(
             (lambda: run_models.call("art_director", call)) if run_models else (lambda: call(self.model)))
         try:
             resp = future.result(timeout=remaining)

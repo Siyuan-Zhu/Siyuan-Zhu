@@ -552,10 +552,11 @@ def test_budget_fits_four_neon_calls_with_guard_overhead() -> None:
     assert AD.CALL_SECONDS >= 86 + 15
 
 
-def test_latest_call_start_is_no_later_than_before() -> None:
-    # A call that hangs runs on until the guard's 300 s request timeout and the run waits for it before exiting;
-    # starting no call later than the old 240 s budget keeps that worst case inside the 15-minute job limit.
-    assert AD.BUDGET_SECONDS - AD.CALL_SECONDS <= 240
+def test_the_director_fits_the_job_limit_with_room() -> None:
+    # Abandoned calls no longer hold the process (daemon threads), so the director's own budget is its whole cost:
+    # with up to about 380 s of other work, the 15-minute job keeps at least 100 s of room.
+    assert 380 + AD.BUDGET_SECONDS <= 900 - 100
+    assert AD.BUDGET_SECONDS - AD.CALL_SECONDS <= 300
 
 
 class _SteppedClock:
@@ -591,7 +592,8 @@ def _timed_night(durations):
     [60, 101, 60, 60],
     [60, 60, 101, 60],
     [60, 60, 60, 101],
-    [80, 80, 80, 60],     # the critic starts with exactly CALL_SECONDS left: it still runs
+    [80, 80, 80, 60],     # a slow night that still leaves the critic its slot
+    [101, 101, 60, 60],   # two slow answers among four
 ])
 def test_a_night_with_one_slow_call_still_gets_the_directors_plan(durations) -> None:
     plan, outcome = _timed_night(durations)
@@ -601,6 +603,71 @@ def test_a_night_with_one_slow_call_still_gets_the_directors_plan(durations) -> 
 def test_a_night_of_slow_calls_falls_back_to_rotation_without_starting_the_critic() -> None:
     plan, outcome = _timed_night([101, 101, 101, 60])
     assert plan is None and outcome["reason"] == "time" and outcome["calls"] == 3
+
+
+def test_the_critic_starts_with_exactly_a_call_left() -> None:
+    first = AD.BUDGET_SECONDS - AD.CALL_SECONDS
+    plan, outcome = _timed_night([first / 3, first / 3, first / 3, 60])
+    assert plan is not None and outcome["calls"] == 4
+
+
+_EXIT_SCRIPT = """
+import sys, time
+sys.path.insert(0, {root!r})
+from src.zeitgeist import art_director as AD
+from tests.test_art_director import CREDIT, DAY, GLOSS, THESIS, WORD, FakeClient, _happy, _photo
+AD.BUDGET_SECONDS, AD.CALL_SECONDS = 1.0, 0.1
+client = FakeClient(_happy()[4])
+answer = client.generate_content
+def hang(**kw):
+    time.sleep(30)
+    return answer(**kw)
+client.generate_content = hang
+outcome = {{}}
+plan = AD.direct_night(_photo(), word=WORD, gloss=GLOSS, thesis=THESIS, date_iso=DAY, credit=CREDIT, history=[],
+                       model="test-model", client_factory=lambda: client, outcome=outcome)
+print("returned", plan is None, outcome["reason"], flush=True)
+"""
+
+
+def test_an_abandoned_call_does_not_hold_the_process_open() -> None:
+    import pathlib
+    import subprocess
+    import sys
+    import time
+
+    root = str(pathlib.Path(__file__).resolve().parents[1])
+    started = time.monotonic()
+    done = subprocess.run([sys.executable, "-c", _EXIT_SCRIPT.format(root=root)], cwd=root, capture_output=True,
+                          text=True, timeout=120)
+    elapsed = time.monotonic() - started
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert "returned True time" in done.stdout
+    assert elapsed < 20, elapsed      # the hung call sleeps 30 s; the process must not wait for it
+
+
+def test_a_late_answer_is_ignored(monkeypatch) -> None:
+    import time
+
+    required, a, b, short, script = _happy()
+    built = AD.build_options(_photo(), word=WORD, gloss=GLOSS, date_iso=DAY, credit=CREDIT, history=[])
+    monkeypatch.setattr(AD, "build_options", lambda *a, **k: built)     # option building is not what is timed
+    monkeypatch.setattr(AD, "BUDGET_SECONDS", 0.5)
+    monkeypatch.setattr(AD, "CALL_SECONDS", 0.1)
+    client = FakeClient(script)
+    answer = client.generate_content
+
+    def slow(**kw):
+        time.sleep(1.0)
+        return answer(**kw)
+
+    client.generate_content = slow
+    outcome: dict = {}
+    plan = AD.direct_night(_photo(), word=WORD, gloss=GLOSS, thesis=THESIS, date_iso=DAY, credit=CREDIT, history=[],
+                           model="m", client_factory=lambda: client, outcome=outcome)
+    before = dict(outcome)
+    time.sleep(1.5)                   # the abandoned call answers now
+    assert plan is None and outcome == before and before["reason"] == "time" and len(client.calls) == 1
 
 
 def test_no_call_starts_with_less_than_a_call_left() -> None:
