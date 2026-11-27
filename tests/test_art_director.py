@@ -524,6 +524,7 @@ def test_a_call_that_outlasts_the_budget_returns_none_at_once_and_makes_no_more_
     built = AD.build_options(_photo(), word=WORD, gloss=GLOSS, date_iso=DAY, credit=CREDIT, history=[])
     monkeypatch.setattr(AD, "build_options", lambda *a, **k: built)     # option building is not what is timed
     monkeypatch.setattr(AD, "BUDGET_SECONDS", 1.0)
+    monkeypatch.setattr(AD, "CALL_SECONDS", 0.1)
     client = FakeClient(script)
     real = client.generate_content
 
@@ -542,7 +543,26 @@ def test_a_call_that_outlasts_the_budget_returns_none_at_once_and_makes_no_more_
     assert len(client.calls) <= 1 and len(client.script) >= 3
 
 
-def test_budget_fits_four_neon_calls_at_medium_thinking() -> None:
-    # Gemini 4 Neon at medium thinking took about 45 s per call on 2026-11-26; four calls must fit.
-    assert AD.BUDGET_SECONDS >= 4 * 50
-    assert AD.BUDGET_SECONDS <= 300
+def test_budget_fits_four_neon_calls_with_guard_overhead() -> None:
+    # 26-27 Nov: Neon took 21-45 s per call (once 86 s) plus about 15 s of spend-guard work per call.
+    assert AD.BUDGET_SECONDS >= 4 * (45 + 15) + 30
+    # One slow call (86 s) among three typical ones still fits.
+    assert AD.BUDGET_SECONDS >= (86 + 15) + 3 * (45 + 15) + 20
+    # A call is allowed time for the slowest call seen plus the guard's work.
+    assert AD.CALL_SECONDS >= 86 + 15
+
+
+def test_latest_call_start_is_no_later_than_before() -> None:
+    # A call that hangs runs on until the guard's 300 s request timeout and the run waits for it before exiting;
+    # starting no call later than the old 240 s budget keeps that worst case inside the 15-minute job limit.
+    assert AD.BUDGET_SECONDS - AD.CALL_SECONDS <= 240
+
+
+def test_no_call_starts_with_less_than_a_call_left() -> None:
+    required, a, b, short, script = _happy()
+    late = AD.BUDGET_SECONDS - AD.CALL_SECONDS + 1.0
+    ticks = iter([0.0, 0.0, 0.0] + [late] * 8)    # session start, first call (before, after), then late
+    outcome: dict = {}
+    plan, client = _run(script, clock=lambda: next(ticks), outcome=outcome)
+    assert plan is None and outcome["reason"] == "time"
+    assert len(client.calls) == 1 and outcome["calls"] == 1

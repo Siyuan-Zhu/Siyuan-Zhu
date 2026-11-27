@@ -27,7 +27,12 @@ from . import model_choice
 logger = logging.getLogger(__name__)
 
 # ---- everything the model is told or may answer lives here (the art direction file's text) ------------
-BUDGET_SECONDS = 240.0  # four Gemini 4 Neon calls at medium thinking, about 45 s each (2026-11-26)
+# Measured on 26-27 Nov: Neon answers in 21-45 s (once 86 s), and the spend guard adds about 15 s per call
+# (admission before, settlement and plate drawing after). A call starts only with CALL_SECONDS left, so the
+# latest start (BUDGET_SECONDS - CALL_SECONDS = 210 s) stays before the old 240 s budget: a call that hangs until
+# the guard's request timeout can keep the run no longer than it could before (SIY-284).
+BUDGET_SECONDS = 330.0
+CALL_SECONDS = 120.0
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7
 
@@ -275,7 +280,7 @@ class _Session:
         from .visual_router import critic_config
 
         remaining = BUDGET_SECONDS - (self.clock() - self.start)
-        if remaining <= 0:
+        if remaining < CALL_SECONDS:  # never start a call that is unlikely to finish in time
             raise _Stop("time")
         if len(images) > MAX_IMAGES:
             raise _Stop("error")
