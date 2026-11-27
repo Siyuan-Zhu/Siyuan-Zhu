@@ -113,3 +113,42 @@ def test_rollback_without_an_install_receipt_is_refused(monkeypatch):
     wire, old_sha, ledger, policy = setup(monkeypatch)
     with pytest.raises(RuntimeError):
         rollback_module.rollback(wire.store, now=NOW)
+
+
+@pytest.mark.parametrize('module', [install_module, rollback_module])
+def test_main_refuses_another_installed_policy(monkeypatch, capsys, module):
+    import json
+
+    reads = []
+    monkeypatch.setattr(module, 'PrivateFirestoreStore', lambda *a, **k: reads.append(1))
+    monkeypatch.setenv('SPEND_POLICY_SHA256', 'e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f')
+    code = module.main([])
+    out = capsys.readouterr().out.strip().splitlines()
+    assert code == 1 and reads == [] and len(out) == 1 and 'error' in json.loads(out[0])
+
+
+@pytest.mark.parametrize('change', [{'closed_for_rollover': True}, {'reconciliation_required': True}])
+def test_a_frozen_ledger_blocks_the_install(monkeypatch, change):
+    wire, old_sha, ledger, policy = setup(monkeypatch)
+    wire.docs[ledger['month']].update(change)
+    with pytest.raises(RuntimeError):
+        install_module.install(wire.store, old_sha=old_sha, now=NOW)
+
+
+def test_the_month_boundary_blocks_the_install(monkeypatch):
+    wire, old_sha, ledger, policy = setup(monkeypatch)
+    end_of_month = NOW.replace(day=31, hour=23, minute=58)
+    wire.docs[ledger['month']]['month'] = end_of_month.strftime('%Y-%m')
+    with pytest.raises(RuntimeError):
+        install_module.install(wire.store, old_sha=old_sha, now=end_of_month)
+
+
+def test_after_the_install_a_refresh_follows_the_newest_safe_build():
+    from tests.test_automatic_spend import NEWER, refresh
+
+    ledger, policy, observation = fixtures()
+    successor = build_apify_newest_safe_successor(policy)
+    ledger['automatic_policy_sha256'] = auto.digest(successor)
+    observation['apify']['newest_build'] = NEWER
+    account = refresh(ledger, successor, observation)['providers']['apify']
+    assert (account['resolved_build'], account['resolved_reason']) == ('0.0.700', 'newest')

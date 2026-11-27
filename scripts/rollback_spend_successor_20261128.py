@@ -8,6 +8,7 @@ reservations are never rewritten. A repeated or uncertain dispatch reconciles by
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -122,6 +123,9 @@ def main(argv=None):
     parser.add_argument('--expected-plan-sha')
     args = parser.parse_args(argv)
     try:
+        # As for the Neon rollback: the workflow pins move back first, so the run names the base policy.
+        if os.environ.get('SPEND_POLICY_SHA256') != APIFY_BASE_POLICY_SHA256:
+            raise RuntimeError('SPEND_POLICY_SHA256 is not the reviewed installed policy')
         result = rollback(PrivateFirestoreStore(), apply=args.apply, expected_plan_sha=args.expected_plan_sha,
                           required_old_sha=APIFY_BASE_POLICY_SHA256)
     except RuntimeError as exc:

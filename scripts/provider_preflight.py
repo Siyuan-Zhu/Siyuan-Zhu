@@ -254,8 +254,10 @@ def _build_contract(client, headers, build):
     schema = schema if isinstance(schema, dict) else {}
     props = schema.get("properties") or {}
     required = schema.get("required") or []
+    username = props.get("username") if isinstance(props, dict) else None
     contract_ok = (
-        "username" in required and (props.get("username") or {}).get("type") == "array"
+        isinstance(required, list) and "username" in required
+        and isinstance(username, dict) and username.get("type") == "array"
     )
     schema_sha = hashlib.sha256(
         json.dumps(schema, sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -302,22 +304,25 @@ def _newest_apify_build(get, client, headers, actor, pinned_build, pinned_contra
 
     The newest build is only reported here. Spend maintenance decides whether a run may use it.
     """
-    latest = (actor.get("taggedBuilds") or {}).get("latest")
-    build_id = latest.get("buildId") if isinstance(latest, dict) else None
-    if not isinstance(build_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", build_id):
-        return {"unavailable": True}
-    if build_id == pinned_build.get("id"):
-        build, (contract_ok, validation_ok, _, schema_sha, _) = pinned_build, pinned_contract
-    else:
-        try:
+    try:
+        tagged = actor.get("taggedBuilds")
+        latest = tagged.get("latest") if isinstance(tagged, dict) else None
+        build_id = latest.get("buildId") if isinstance(latest, dict) else None
+        if not isinstance(build_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", build_id):
+            return {"unavailable": True}
+        if build_id == pinned_build.get("id"):
+            build, (contract_ok, validation_ok, validation, schema_sha, _) = pinned_build, pinned_contract
+        else:
             build = get("/actor-builds/" + build_id)
-        except MetadataUnavailable:
-            return {"unavailable": True}
-        number = build.get("buildNumber")
-        if (build.get("id") != build_id or build.get("actId") not in {APIFY_ACTOR_ID, APIFY_ACTOR}
-                or not isinstance(number, str) or not re.fullmatch(r"\d+\.\d+\.\d+", number)):
-            return {"unavailable": True}
-        contract_ok, validation_ok, _, schema_sha, _ = _build_contract(client, headers, build)
+            number = build.get("buildNumber")
+            if (build.get("id") != build_id or build.get("actId") not in {APIFY_ACTOR_ID, APIFY_ACTOR}
+                    or not isinstance(number, str) or not re.fullmatch(r"\d+\.\d+\.\d+", number)):
+                return {"unavailable": True}
+            contract_ok, validation_ok, validation, schema_sha, _ = _build_contract(client, headers, build)
+        if validation.get("legacy_plural_status") is None or validation.get("correct_singular_status") is None:
+            return {"unavailable": True}      # a transport error is not evidence that the input changed
+    except Exception:
+        return {"unavailable": True}
     return {
         "number": build.get("buildNumber"),
         "id": build.get("id"),

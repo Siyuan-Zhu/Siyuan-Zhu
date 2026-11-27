@@ -143,3 +143,10 @@ def test_a_plan_only_refresh_never_tells_the_owner_about_the_build(harness, monk
     _refreshed(monkeypatch, 'apify_newer_build_input_changed')
     assert maintenance.main([]) == 0
     assert calls == []
+
+
+def test_the_build_review_alert_never_silences_a_later_failure_alert(harness, monkeypatch):
+    root, emitted, calls, block = harness
+    _refreshed(monkeypatch, 'apify_newer_build_unavailable')
+    assert maintenance.main(['--apply']) == 0
+    assert len(emitted) == 1 and not (root / owner_alert.MARKER).exists()

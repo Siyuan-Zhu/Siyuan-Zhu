@@ -222,7 +222,8 @@ def _tell_owner_about_the_apify_build(result):
         reason = result.plan['after']['providers']['apify'].get('resolved_reason')
         code = APIFY_BUILD_ALERT_CODES.get(reason)
         if code is not None:
-            owner_alert.notify(stage='spend_maintenance', code=code, root=ROOT)
+            # No root: this review alert must not write the alerted marker, or a later failure would stay silent.
+            owner_alert.notify(stage='spend_maintenance', code=code)
     except BaseException:
         pass
 

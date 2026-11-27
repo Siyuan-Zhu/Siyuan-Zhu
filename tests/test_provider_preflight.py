@@ -485,12 +485,15 @@ def test_a_build_without_an_image_digest_is_verified_by_its_immutable_id():
 
 # ---- newest build next to the pin (Apify newest safe build, Task 1) ----------------------------------------
 
-def _with_newest(newest="0.0.700", *, required=("username",), newest_status=200, legacy_refused=True):
+def _with_newest(newest="0.0.700", *, required=("username",), newest_status=200, legacy_refused=True,
+                 shape=None, tagged=None, validate_error=False):
     base, requests = provider_client(default_build=newest)
 
     def handler(request):
         if request.method == "POST" and request.url.params.get("build") == newest:
             requests.append(request)
+            if validate_error:
+                raise httpx.ConnectError("connection reset")
             body = json.loads(request.content)
             if "usernames" in body:
                 return httpx.Response(400 if legacy_refused else 200, json={"valid": not legacy_refused})
@@ -502,14 +505,24 @@ def _with_newest(newest="0.0.700", *, required=("username",), newest_status=200,
             body = response.json()
             body["data"]["buildNumber"] = newest
             body["data"]["inputSchema"]["required"] = list(required)
+            if shape:
+                shape(body["data"]["inputSchema"])
             return httpx.Response(200, json=body)
-        return base._transport.handle_request(request)
+        response = base._transport.handle_request(request)
+        if tagged is not None and request.url.path.rstrip("/").endswith("instagram-post-scraper"):
+            body = response.json()
+            body["data"]["taggedBuilds"] = tagged
+            return httpx.Response(200, json=body)
+        return response
 
     return httpx.Client(transport=httpx.MockTransport(handler)), requests
 
 
-def _apify(client):
-    return run_preflight(client, {"APIFY_TOKEN": "DO_NOT_DISCLOSE", "APIFY_INSTAGRAM_BUILD": "0.0.648"}, now=NOW)["apify"]
+def _apify(client, build_id=None):
+    env = {"APIFY_TOKEN": "DO_NOT_DISCLOSE", "APIFY_INSTAGRAM_BUILD": "0.0.648"}
+    if build_id:
+        env["APIFY_INSTAGRAM_BUILD_ID"] = build_id    # as production passes the policy's pinned build ID
+    return run_preflight(client, env, now=NOW)["apify"]
 
 
 def test_the_newest_build_equal_to_the_pin_is_reported_as_the_pin():
@@ -546,6 +559,30 @@ def test_a_newer_build_that_accepts_the_legacy_field_fails_validation():
 
 def test_a_newest_build_that_cannot_be_read_leaves_the_pin_verified():
     client, _ = _with_newest(newest_status=404)
+    report = _apify(client)
+    assert report["status"] == "metadata_verified"
+    assert report["newest_build"] == {"unavailable": True}
+
+
+def _username_is_text(schema):
+    schema["properties"]["username"] = "array"
+
+
+def _required_is_text(schema):
+    schema["required"] = "username"
+
+
+@pytest.mark.parametrize("kw", [{"shape": _username_is_text}, {"shape": _required_is_text}, {"tagged": "latest"},
+                                {"tagged": {"latest": "YRl2lQehy4P0j1oCJ"}}])
+def test_malformed_newest_build_data_never_blocks_the_pinned_build(kw):
+    client, _ = _with_newest(**kw)
+    report = _apify(client, build_id="build-id")
+    assert report["status"] == "metadata_verified"
+    assert report["newest_build"].get("unavailable") is True or report["newest_build"]["contract_ok"] is False
+
+
+def test_a_transport_error_while_validating_the_newest_build_reads_as_unavailable():
+    client, _ = _with_newest(validate_error=True)
     report = _apify(client)
     assert report["status"] == "metadata_verified"
     assert report["newest_build"] == {"unavailable": True}
