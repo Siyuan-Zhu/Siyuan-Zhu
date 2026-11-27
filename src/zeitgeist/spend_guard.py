@@ -99,6 +99,7 @@ class SpendBlocked(RuntimeError):
         "Invalid countTokens metadata": "invalid-token-metadata",
         "Counted input exceeds verified token ceiling": "input-token-bound",
         "Requested output exceeds verified monetary bound": "output-token-bound",
+        "Request timeout must narrow the verified request duration": "request-timeout-bound",
         "Unregistered paid SDK method": "unregistered-sdk-method",
         "Comparison Director call limit reached": "comparison-call-limit",
         "Request exceeds verified operation tariff": "operation-tariff-bound",
