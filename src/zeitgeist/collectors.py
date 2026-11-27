@@ -12,6 +12,7 @@ import html
 import json
 import logging
 import os
+import copy
 import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -1311,6 +1312,18 @@ _MACRO_SCOUT_SOURCES: tuple[dict[str, Any], ...] = (
 )
 
 
+def _apify_resolution(guard):
+    """The ledger's Apify account (with this refresh's build resolution), or None; a failed read means the pin."""
+    ledger = getattr(guard, "ledger", None)
+    if not callable(getattr(ledger, "mutate", None)) or not getattr(guard, "automatic_policy", None):
+        return None
+    try:
+        account = ledger.mutate(lambda document: copy.deepcopy((document.get("providers") or {}).get("apify")))
+    except Exception:
+        return None
+    return account if isinstance(account, dict) else None
+
+
 def fetch_instagram_batch(
     handles: list[str],
     apify_token: str | None,
@@ -1379,8 +1392,10 @@ def fetch_instagram_batch(
     try:
         guard = spend_guard or get_spend_guard(credential_keys={"apify": token})
         from .automatic_spend import approved_apify_build
-        # The approved policy pins the build; an ambient value may only agree with it.
-        build = approved_apify_build(getattr(guard, "automatic_policy", None), configured_build)
+        # The approved policy chooses the build (its pin, or this refresh's newest safe build); an ambient value may
+        # only agree with it.
+        build = approved_apify_build(getattr(guard, "automatic_policy", None), configured_build,
+                                     resolution=_apify_resolution(guard))
         def request():
             nonlocal response_status
             with httpx.Client(timeout=request_timeout, follow_redirects=False) as client:

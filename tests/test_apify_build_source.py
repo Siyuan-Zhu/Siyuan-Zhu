@@ -68,3 +68,37 @@ def test_every_workflow_policy_pin_is_identical():
     for path in (ROOT / '.github/workflows').glob('*.yml'):
         pins.update(re.findall(r"SPEND_POLICY_SHA256:\s*['\"]([a-f0-9]{64})['\"]", path.read_text()))
     assert len(pins) <= 1, pins
+
+
+# ---- newest safe build (Task 3) ------------------------------------------------------------------------------
+
+SAFE = {'providers': {'apify': {'actor_build': '0.0.659', 'actor_build_id': 'Ih1cRmBcVyKVYQlOj',
+                                'actor_build_mode': 'newest_safe'}}}
+
+
+def resolution(observation='obs', resolved_from='obs', build='0.0.700'):
+    return {'automatic_observation_sha256': observation, 'resolved_observation_sha256': resolved_from,
+            'resolved_build': build, 'resolved_build_id': 'newer-build-id', 'resolved_reason': 'newest'}
+
+
+def test_newest_safe_uses_the_resolution_this_refresh_wrote():
+    assert approved_apify_build(SAFE, '', resolution=resolution()) == '0.0.700'
+
+
+def test_a_resolution_from_an_earlier_refresh_falls_back_to_the_verified_pin():
+    assert approved_apify_build(SAFE, '', resolution=resolution(observation='newer-obs')) == '0.0.659'
+
+
+@pytest.mark.parametrize('missing', [None, {}, {'automatic_observation_sha256': 'obs'}])
+def test_without_a_resolution_the_verified_pin_is_used(missing):
+    assert approved_apify_build(SAFE, '', resolution=missing) == '0.0.659'
+
+
+def test_a_configured_build_must_agree_with_the_resolved_build():
+    assert approved_apify_build(SAFE, '0.0.700', resolution=resolution()) == '0.0.700'
+    with pytest.raises(SpendBlocked):
+        approved_apify_build(SAFE, '0.0.659', resolution=resolution())
+
+
+def test_pinned_mode_ignores_any_resolution():
+    assert approved_apify_build(POLICY, '', resolution=resolution()) == '0.0.659'

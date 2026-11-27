@@ -59,19 +59,29 @@ def resolve_apify_build(fresh, pinned):
     return newest['number'], newest['id'], 'newest'
 
 
-def approved_apify_build(policy, configured=''):
-    """The Apify Instagram build: the approved policy's pin is the single source.
+def approved_apify_build(policy, configured='', *, resolution=None):
+    """The Apify Instagram build the run uses.
 
-    A configured build (environment or argument) is only an optional assertion:
-    under a policy it must equal the pin or the run stops. Without a policy, the
-    legacy verified numeric build is still required.
+    Under a policy in pinned mode, the pin. In newest_safe mode, the build that this
+    refresh resolved (resolution: the ledger's Apify account); a missing resolution, or
+    one an earlier refresh wrote, falls back to the pin, which every refresh verifies.
+    A configured build (environment or argument) is only an optional assertion: it must
+    equal the chosen build or the run stops. Without a policy, the legacy verified
+    numeric build is still required.
     """
     configured = str(configured or '').strip()
     if policy:
-        pinned = policy['providers']['apify']['actor_build']
-        if configured and configured != pinned:
+        apify = policy['providers']['apify']
+        chosen = apify['actor_build']
+        if apify.get('actor_build_mode', 'pinned') == 'newest_safe' and isinstance(resolution, dict):
+            fresh = resolution.get('automatic_observation_sha256')
+            resolved = resolution.get('resolved_build')
+            if (fresh and resolution.get('resolved_observation_sha256') == fresh
+                    and isinstance(resolved, str) and re.fullmatch(r'\d+\.\d+\.\d+', resolved)):
+                chosen = resolved
+        if configured and configured != chosen:
             raise SpendBlocked('APIFY_INSTAGRAM_BUILD differs from the approved policy pin')
-        return pinned
+        return chosen
     if not re.fullmatch(r'\d+\.\d+\.\d+', configured):
         from .collectors import IngestionUnavailable
         raise IngestionUnavailable('Verified, pinned APIFY_INSTAGRAM_BUILD required')
