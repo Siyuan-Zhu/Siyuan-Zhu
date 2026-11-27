@@ -923,7 +923,7 @@ class BudgetGuard:
             return copy.deepcopy(limits), duration
         limits, duration = self.ledger.mutate(read)
         if max_request_seconds is not None:
-            if type(max_request_seconds) is not int or not 1 <= max_request_seconds <= duration:
+            if type(max_request_seconds) is not int or not MIN_REQUEST_SECONDS <= max_request_seconds <= duration:
                 raise SpendBlocked("Request timeout must narrow the verified request duration")
             duration = max_request_seconds
         config = kwargs.get("config") or {}
@@ -1217,6 +1217,9 @@ def get_spend_guard(*, credential_keys=None):
 def refused_before_dispatch(error):
     """True only for a SpendBlocked raised before any provider call was made."""
     return isinstance(error, SpendBlocked) and getattr(error, 'refused_before_dispatch', False) is True
+
+
+MIN_REQUEST_SECONDS = 10  # Gemini refuses a shorter deadline with a 400 (live probe, 2026-11-27)
 
 
 def guard_genai_client(client, guard=None, *, credential_key=None, request_timeout_seconds=None):

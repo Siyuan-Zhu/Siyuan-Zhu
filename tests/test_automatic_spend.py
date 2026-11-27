@@ -1134,3 +1134,24 @@ def test_a_different_apify_image_digest_still_blocks():
     observation['apify']['image_digest'] = 'sha256:' + 'f' * 64
     with pytest.raises(SpendBlocked):
         refresh(ledger, policy, observation)
+
+
+def test_a_policy_may_omit_the_apify_image_digest_now_that_apify_no_longer_reports_it():
+    ledger, policy = fixtures()[:2]
+    policy['providers']['apify']['actor_image_digest'] = None
+    auto.validate_policy(policy, auto.digest(policy), NOW)
+
+
+def test_a_malformed_apify_image_digest_in_a_policy_is_still_refused():
+    ledger, policy = fixtures()[:2]
+    policy['providers']['apify']['actor_image_digest'] = 'not-a-digest'
+    with pytest.raises(SpendBlocked):
+        auto.validate_policy(policy, auto.digest(policy), NOW)
+
+
+def test_a_policy_without_a_digest_pin_refreshes_whatever_digest_apify_reports():
+    ledger, policy, observation = fixtures()
+    policy['providers']['apify']['actor_image_digest'] = None
+    ledger['automatic_policy_sha256'] = auto.digest(policy)
+    observation['apify']['image_digest'] = 'f' * 64
+    refresh(ledger, policy, observation)

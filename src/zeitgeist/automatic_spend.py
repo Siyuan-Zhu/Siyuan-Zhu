@@ -517,7 +517,8 @@ def validate_policy(policy, expected_policy_sha, now):
         if provider == 'apify' and (account['credit_kind'] != 'free' or account['plan_id'] != 'FREE' or money(item.get('credit_limit_usd')) != money('5')):
             raise SpendBlocked('Only the verified FREE five-dollar recurring grant is supported')
         if provider == 'apify' and (not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(item.get('actor_build_id','')))
-            or not re.fullmatch(r'(?:sha256:)?[a-f0-9]{64}',str(item.get('actor_image_digest','')))
+            or (item.get('actor_image_digest') is not None  # Apify stopped reporting image digests on 2026-11-27
+                and not re.fullmatch(r'(?:sha256:)?[a-f0-9]{64}',str(item.get('actor_image_digest'))))
             or not re.fullmatch(r'[a-f0-9]{64}',str(item.get('actor_schema_sha256','')))):
             raise SpendBlocked('Approved immutable actor build image and schema required')
     return policy
@@ -799,7 +800,8 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
                 billing.get('cycle_matches_limits') is not True or billing.get('usage_matches_limits') is not True or
                 fresh.get('configured_build') != pinned['actor_build'] or fresh.get('build_pin_verified') is not True or
                 fresh.get('build_id') != pinned['actor_build_id'] or
-                (fresh.get('image_digest') is not None and fresh.get('image_digest') != pinned['actor_image_digest']) or
+                (fresh.get('image_digest') is not None and pinned.get('actor_image_digest') is not None
+                 and fresh.get('image_digest') != pinned['actor_image_digest']) or
                 fresh.get('input_schema_sha256') != pinned['actor_schema_sha256'] or
                 digest(fresh.get('pricing')) != pinned['actor_pricing_sha256']):
                 raise SpendBlocked('Apify account, free grant, usage cycle, build or pricing changed')

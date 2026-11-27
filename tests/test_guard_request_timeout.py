@@ -25,8 +25,14 @@ def test_longer_timeout_never_widens():
         guard().bounded_genai_request(OP, request(), max_request_seconds=301)
 
 
-@pytest.mark.parametrize('value', [0, -5, True, 1.5, '100'])
-def test_timeout_must_be_a_whole_number_of_seconds_from_one(value):
+def test_the_shortest_timeout_google_accepts_is_allowed():
+    bounded = guard().bounded_genai_request(OP, request(), max_request_seconds=10)
+    assert bounded['config']['http_options']['timeout'] == 10000
+
+
+@pytest.mark.parametrize('value', [0, -5, 9, True, 1.5, '100'])
+def test_timeout_must_be_a_whole_number_of_seconds_google_accepts(value):
+    # Google refuses a deadline under about 10 s with a 400 (live probe, 27 Nov).
     with pytest.raises(SpendBlocked):
         guard().bounded_genai_request(OP, request(), max_request_seconds=value)
 

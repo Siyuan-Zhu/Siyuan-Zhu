@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import time
+import atexit
 import threading
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -35,7 +36,8 @@ logger = logging.getLogger(__name__)
 BUDGET_SECONDS = 420.0
 CALL_SECONDS = 120.0
 REQUEST_SECONDS = 100  # Google is told to stop here too (X-Server-Timeout); the slowest real answer was 86 s
-MAX_RETRIES = 1        # per night, for a deadline or server failure only
+MAX_RETRIES = 1        # per night, for a deadline, a server failure or a stalled token count only
+EXIT_GRACE_SECONDS = 30.0  # at exit, wait this long at most for abandoned calls, so their holds can settle
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7
 
@@ -280,16 +282,41 @@ def _run_detached(fn: Callable[[], Any]) -> Future:
             future.set_result(fn())
         except BaseException as error:  # handed to the waiting director, never raised on this thread
             future.set_exception(error)
+        finally:
+            with _IN_FLIGHT_LOCK:
+                _IN_FLIGHT.discard(threading.current_thread())
 
-    threading.Thread(target=run, name="art-director-call", daemon=True).start()
+    thread = threading.Thread(target=run, name="art-director-call", daemon=True)
+    with _IN_FLIGHT_LOCK:
+        _IN_FLIGHT.add(thread)
+    thread.start()
     return future
 
 
+_IN_FLIGHT: set = set()
+_IN_FLIGHT_LOCK = threading.Lock()
+
+
+@atexit.register
+def _let_abandoned_calls_settle() -> None:
+    """Give calls the director gave up on a short, bounded chance to finish, so their spend holds settle."""
+    deadline = time.monotonic() + EXIT_GRACE_SECONDS
+    with _IN_FLIGHT_LOCK:
+        pending = list(_IN_FLIGHT)
+    for thread in pending:
+        thread.join(max(0.0, deadline - time.monotonic()))
+
+
 def _retryable(error: BaseException) -> bool:
-    """A deadline or a server failure (Gemini sometimes stalls); never a spend block or a request the API refused."""
+    """A deadline, a server failure or a stalled token count; never another spend block or a refused request."""
     import httpx
     from google.genai import errors
 
+    from .spend_guard import SpendBlocked, refused_before_dispatch
+
+    if isinstance(error, SpendBlocked):
+        # The guard reports a failed token count as this refusal; no paid call was made, so a retry is free.
+        return refused_before_dispatch(error) and str(error) == "Token metadata unavailable; no paid call made"
     if isinstance(error, httpx.TimeoutException):
         return True
     return isinstance(error, errors.ServerError) and isinstance(getattr(error, "code", None), int) and error.code >= 500
@@ -463,9 +490,10 @@ def direct_night(photo: Image.Image, *, word: str, gloss: str, thesis: str, date
                  clock: Callable[[], float] = time.monotonic, outcome: Optional[dict] = None) -> Optional[L.NightPlan]:
     """The night's plan chosen by the art director, or None when rotation should decide.
 
-    Exactly four model calls on the happy path (brief, two comparisons, critic). SpendBlocked or any other
-    error ends the director with no further calls. outcome, when given, receives the numbers, ids and enum
-    reason for the run log; nothing the model wrote is kept.
+    Exactly four model calls on the happy path (brief, two comparisons, critic). One deadline, server failure or
+    stalled token count per night is retried when a call's time is left (see _retryable); any other spend block or
+    error ends the director with no further calls. outcome, when given, receives the numbers, ids and enum reason
+    for the run log (calls counts attempts); nothing the model wrote is kept.
     """
     from .spend_guard import SpendBlocked
 

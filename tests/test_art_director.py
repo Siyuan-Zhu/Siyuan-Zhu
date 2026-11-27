@@ -617,7 +617,7 @@ import sys, time
 sys.path.insert(0, {root!r})
 from src.zeitgeist import art_director as AD
 from tests.test_art_director import CREDIT, DAY, GLOSS, THESIS, WORD, FakeClient, _happy, _photo
-AD.BUDGET_SECONDS, AD.CALL_SECONDS = 1.0, 0.1
+AD.BUDGET_SECONDS, AD.CALL_SECONDS, AD.EXIT_GRACE_SECONDS = 1.0, 0.1, 1.0
 client = FakeClient(_happy()[4])
 answer = client.generate_content
 def hang(**kw):
