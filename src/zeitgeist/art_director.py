@@ -13,7 +13,8 @@ import json
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
 from io import BytesIO
@@ -27,7 +28,14 @@ from . import model_choice
 logger = logging.getLogger(__name__)
 
 # ---- everything the model is told or may answer lives here (the art direction file's text) ------------
-BUDGET_SECONDS = 240.0  # four Gemini 4 Neon calls at medium thinking, about 45 s each (2026-11-26)
+# Measured on 26-27 Nov: Neon answers in 21-45 s (once 86 s, once never: a 504 at the 300 s deadline), and the
+# spend guard adds about 15 s per call. A call starts only with CALL_SECONDS left. Calls run on daemon threads,
+# so a call the director gives up on never holds the run open; the budget is the director's whole cost and fits
+# two slow answers among four (SIY-284).
+BUDGET_SECONDS = 420.0
+CALL_SECONDS = 120.0
+REQUEST_SECONDS = 100  # Google is told to stop here too (X-Server-Timeout); the slowest real answer was 86 s
+MAX_RETRIES = 1        # per night, for a deadline or server failure only
 BRIEF_PX, PLATE_PX, PHONE_PX = 384, 384, 308   # longest side sent; the spend guard allows at most 384
 MAX_IMAGES = 7
 
@@ -254,9 +262,37 @@ def _default_client_factory() -> Callable[[], Any]:
 
         from .spend_guard import guard_genai_client
 
-        return guard_genai_client(genai.Client(api_key=key), credential_key=key)
+        return guard_genai_client(genai.Client(api_key=key), credential_key=key,
+                                  request_timeout_seconds=REQUEST_SECONDS)
 
     return make
+
+
+def _run_detached(fn: Callable[[], Any]) -> Future:
+    """Run fn on a daemon thread: a call the director gives up on cannot keep the process alive at exit.
+
+    Its spend hold then stays reserved at its full bound, as for any call whose outcome is unknown.
+    """
+    future: Future = Future()
+
+    def run() -> None:
+        try:
+            future.set_result(fn())
+        except BaseException as error:  # handed to the waiting director, never raised on this thread
+            future.set_exception(error)
+
+    threading.Thread(target=run, name="art-director-call", daemon=True).start()
+    return future
+
+
+def _retryable(error: BaseException) -> bool:
+    """A deadline or a server failure (Gemini sometimes stalls); never a spend block or a request the API refused."""
+    import httpx
+    from google.genai import errors
+
+    if isinstance(error, httpx.TimeoutException):
+        return True
+    return isinstance(error, errors.ServerError) and isinstance(getattr(error, "code", None), int) and error.code >= 500
 
 
 class _Session:
@@ -264,19 +300,16 @@ class _Session:
         self.client, self.model, self.clock = client, model, clock
         self.start = clock()
         self.calls = 0
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.retries = 0
 
     def close(self) -> None:
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        """Nothing to release: an abandoned call finishes, or dies with the process, on its own thread."""
 
     def ask(self, images: Sequence[bytes], texts: Sequence[str], prompt: str) -> dict:
         from google.genai import types
 
         from .visual_router import critic_config
 
-        remaining = BUDGET_SECONDS - (self.clock() - self.start)
-        if remaining <= 0:
-            raise _Stop("time")
         if len(images) > MAX_IMAGES:
             raise _Stop("error")
         contents: list = []
@@ -287,13 +320,21 @@ class _Session:
         contents.append(prompt)
         call = lambda m: self.client.models.generate_content(model=m, contents=contents, config=critic_config(m))
         run_models = model_choice.active()
-        self.calls += 1
-        future = self.executor.submit(
-            (lambda: run_models.call("art_director", call)) if run_models else (lambda: call(self.model)))
-        try:
-            resp = future.result(timeout=remaining)
-        except FutureTimeout:
-            raise _Stop("time") from None
+        work = (lambda: run_models.call("art_director", call)) if run_models else (lambda: call(self.model))
+        while True:
+            remaining = BUDGET_SECONDS - (self.clock() - self.start)
+            if remaining < CALL_SECONDS:  # never start a call that is unlikely to finish in time
+                raise _Stop("time")
+            self.calls += 1
+            try:
+                resp = _run_detached(work).result(timeout=remaining)
+                break
+            except FutureTimeout:
+                raise _Stop("time") from None
+            except Exception as error:
+                if not _retryable(error) or self.retries >= MAX_RETRIES:
+                    raise
+                self.retries += 1
         if self.clock() - self.start > BUDGET_SECONDS:
             raise _Stop("time")
         try:
