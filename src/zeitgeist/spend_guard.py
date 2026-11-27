@@ -898,8 +898,11 @@ class BudgetGuard:
                 or type(tokens) is not int or not 1 <= tokens <= 204800):
             raise SpendBlocked("Unverified Gemini Embedding 2 pricing or model policy")
 
-    def bounded_genai_request(self, operation, kwargs):
-        """Admit only the SDK request shapes whose costs were verified."""
+    def bounded_genai_request(self, operation, kwargs, *, max_request_seconds=None):
+        """Admit only the SDK request shapes whose costs were verified.
+
+        max_request_seconds may narrow, never widen, the verified request duration for one client's calls.
+        """
         method, model = operation.split(":", 1)
         if set(kwargs) - {"model", "contents", "prompt", "config"}:
             raise SpendBlocked("Unpriced SDK request option")
@@ -918,6 +921,10 @@ class BudgetGuard:
                 self._validate_embedding2_policy(limits)
             return copy.deepcopy(limits), duration
         limits, duration = self.ledger.mutate(read)
+        if max_request_seconds is not None:
+            if type(max_request_seconds) is not int or not 1 <= max_request_seconds <= duration:
+                raise SpendBlocked("Request timeout must narrow the verified request duration")
+            duration = max_request_seconds
         config = kwargs.get("config") or {}
         if hasattr(config, "model_dump"):
             config = config.model_dump(exclude_none=True)
@@ -1211,7 +1218,7 @@ def refused_before_dispatch(error):
     return isinstance(error, SpendBlocked) and getattr(error, 'refused_before_dispatch', False) is True
 
 
-def guard_genai_client(client, guard=None, *, credential_key=None):
+def guard_genai_client(client, guard=None, *, credential_key=None, request_timeout_seconds=None):
     """Wrap every SDK request in a shared reservation; unknown tariffs block.
 
     Bounds are operator-verified maxima, not claims of measured usage. The caller
@@ -1240,7 +1247,8 @@ def guard_genai_client(client, guard=None, *, credential_key=None):
                     operation = name + ":" + model
                     # Freeze inputs before counting so another caller cannot mutate
                     # the paid request after its admission count.
-                    bounded = guard.bounded_genai_request(operation, copy.deepcopy(kwargs))
+                    narrowing = {} if request_timeout_seconds is None else {"max_request_seconds": request_timeout_seconds}
+                    bounded = guard.bounded_genai_request(operation, copy.deepcopy(kwargs), **narrowing)
                     counted = guard.counted_genai_admission(operation, bounded, client.models.count_tokens)
                     automatic_invoke = getattr(guard, 'invoke_prepared_genai', None)
                     if getattr(guard, 'automatic_accounting_enabled', False) is True and callable(automatic_invoke):
