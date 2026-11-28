@@ -72,7 +72,7 @@ def test_reviewed_cash_ceiling_increase_is_bound_without_resetting_prior_holds()
     source,policy,obs=inputs();policy=with_approved_reload(policy)
     prepared=install.prepare_install(source,policy,obs,now=NOW,journal_path=Path('/approved/private/journal.json'))
     assert prepared['before']['cash_ceiling_usd']=='2.50'
-    assert prepared['after']['cash_ceiling_usd']=='10.00'
+    assert prepared['after']['cash_ceiling_usd']=='30.00'
     assert prepared['after']['reservations']==prepared['before']['reservations']
     assert prepared['after']['credit_only_providers']==['apify','bfl']
 

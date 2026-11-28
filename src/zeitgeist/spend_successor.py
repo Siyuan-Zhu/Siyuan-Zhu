@@ -10,10 +10,10 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from .automatic_spend import _time
-from .spend_guard import (EMBEDDING_2_DIMENSIONS, EMBEDDING_2_OPERATION, GEMINI_4, HYDROGEN_MODEL,
-                          HYDROGEN_OPERATION, HYDROGEN_OUTPUT_TOKENS, NEON_MODEL, NEON_OPERATION,
-                          NEON_OUTPUT_TOKENS)
+from .automatic_spend import CASH_CEILING_USD, _time
+from .spend_guard import (EMBEDDING_2_DIMENSIONS, EMBEDDING_2_OPERATION, GEMINI_4, GEMINI_38_2026_TARIFF,
+                          GEMINI_38_2027_TARIFF, GEMINI_38_TARIFFS, HYDROGEN_MODEL, HYDROGEN_OPERATION,
+                          HYDROGEN_OUTPUT_TOKENS, NEON_MODEL, NEON_OPERATION, NEON_OUTPUT_TOKENS)
 
 INSTALLED_POLICY_SHA256 = "e664ccce9873b17fedaa7eda48e7c928be7540fd3db6c7d99168a125045a661f"
 # The Hydrogen successor installed on 22 Nov: the base the Neon successor adds to.
@@ -318,3 +318,82 @@ def build_apify_price_cushion_successor(installed: dict, terms: dict = APIFY_APP
     successor = copy.deepcopy(installed)
     successor["providers"]["apify"]["actor_pricing_terms"] = copy.deepcopy(terms)
     return successor
+
+
+# The Apify price-cushion successor installed on 28 Nov: the base the December successor changes (SIY-198).
+DECEMBER_BASE_POLICY_SHA256 = "46c2c5c18e348aedb3c22800a0014f5b16c1e3a20af6a639ba3e0a861931b410"
+# The approval window of the 2027 Flash tariff, and so of the whole December successor.
+DECEMBER_VALID_UNTIL = GEMINI_38_TARIFFS[GEMINI_38_2027_TARIFF]
+DECEMBER_CASH_CEILING_USD = format(CASH_CEILING_USD, ".2f")
+DECEMBER_APPROVAL_REFERENCE = "SIY-198: David approved the December spend policy spec, 2026-11-28 07:54 ET"
+# What David reads on the Google AI Studio auto-reload settings after setting the monthly limit to 30 USD.
+RELOAD_OBSERVATION_KEYS = frozenset({"observed_at", "reference", "monthly_auto_charge_limit_usd",
+                                     "reload_amount_usd", "trigger_balance_usd"})
+
+
+def flash_cap_usd(limits: dict, rates: tuple) -> str:
+    """The exact Flash per-call cap: the full input window and the whole output allowance at these rates."""
+    total = Decimal(limits["max_input_tokens"]) * rates[0] + Decimal(limits["max_output_tokens"]) * rates[1]
+    return format((total / Decimal(1000000)).normalize(), "f")
+
+
+def build_december_successor(installed: dict, *, tariff_sha256: str, reload_observation: dict,
+                             approved_at: str) -> dict:
+    """The installed policy at the 30 USD ceiling with 3.8 Flash at its 2027 rate, approved through 2027.
+
+    Changes exactly: cash_ceiling_usd, valid_until, approved_at, approval_reference; the Gemini price
+    validity and tariff digest; the reload attestation's observed fields; and the Flash rates, validity
+    and cap. Every other provider, operation and limit stays byte-identical.
+    """
+    if not isinstance(tariff_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", tariff_sha256):
+        raise RuntimeError("Tariff digest must be 64 lowercase hex characters")
+    if not isinstance(reload_observation, dict) or set(reload_observation) != RELOAD_OBSERVATION_KEYS:
+        raise RuntimeError("The reload observation needs exactly: " + ", ".join(sorted(RELOAD_OBSERVATION_KEYS)))
+    if not _time(reload_observation["observed_at"]) <= _time(approved_at):
+        raise RuntimeError("The reload observation must precede the approval")
+    gemini = installed["providers"]["gemini"]
+    if gemini.get("price_evidence_mode") != "dynamic_snapshot":
+        raise RuntimeError("Installed Gemini pricing is not observed daily; a published validity cannot cover 2027")
+    if not isinstance(gemini.get("bounded_auto_reload_attestation"), dict):
+        raise RuntimeError("Installed policy has no bounded Gemini reload attestation")
+    account = gemini["account"]
+    flash = account.get("request_limits", {}).get(FLASH_OPERATION)
+    if not isinstance(flash, dict):
+        raise RuntimeError("Installed policy has no Flash limits")
+    rates = (Decimal(flash["input_token_usd_per_million"]), Decimal(flash["output_token_usd_per_million"]))
+    if rates != GEMINI_38_2026_TARIFF:
+        raise RuntimeError("Installed Flash is not at the 2026 tariff")
+    if Decimal(account["operation_caps_usd"][FLASH_OPERATION]) != Decimal(flash_cap_usd(flash, rates)):
+        raise RuntimeError("Installed Flash cap is not its full input window and output allowance")
+    successor = copy.deepcopy(installed)
+    successor.update(cash_ceiling_usd=DECEMBER_CASH_CEILING_USD, valid_until=DECEMBER_VALID_UNTIL,
+                     approved_at=approved_at, approval_reference=DECEMBER_APPROVAL_REFERENCE)
+    new = successor["providers"]["gemini"]
+    new.update(price_valid_until=DECEMBER_VALID_UNTIL, price_snapshot_sha256=tariff_sha256)
+    new["bounded_auto_reload_attestation"].update(copy.deepcopy(reload_observation))
+    limits = new["account"]["request_limits"][FLASH_OPERATION]
+    limits.update(input_token_usd_per_million=format(GEMINI_38_2027_TARIFF[0], "f"),
+                  output_token_usd_per_million=format(GEMINI_38_2027_TARIFF[1], "f"),
+                  pricing_valid_until=DECEMBER_VALID_UNTIL)
+    new["account"]["operation_caps_usd"][FLASH_OPERATION] = flash_cap_usd(limits, GEMINI_38_2027_TARIFF)
+    return successor
+
+
+def ceiling_ledger(ledger: dict, policy: dict, policy_sha: str) -> dict:
+    """The Gemini projection plus the policy's cash ceiling: the ledger must equal both."""
+    result = _project_ledger(ledger, policy, policy_sha)
+    result["cash_ceiling_usd"] = policy["cash_ceiling_usd"]
+    return result
+
+
+def assert_no_open_reservation(ledger: dict) -> None:
+    """A hold opened before the December successor could never settle under it: its approval is later and
+    the Flash limits differ. Every hold must settle first."""
+    if any(record.get("status") != "settled" for record in (ledger.get("reservations") or {}).values()):
+        raise RuntimeError("Open reservations must settle first; retry after the run")
+
+
+def effective_until(policy: dict) -> dict:
+    """When each provider's admission ends: the earlier of its price validity and the policy's."""
+    return {name: min(item["price_valid_until"], policy["valid_until"], key=_time)
+            for name, item in sorted(policy["providers"].items())}

@@ -273,8 +273,8 @@ def test_ledger_under_another_policy_refuses(monkeypatch):
 def test_cash_exposure_above_the_ceiling_refuses(monkeypatch):
     wire, sha, _, _ = setup(monkeypatch)
     # A settled Gemini liability near the ceiling: credit-only funding still passes, the ceiling does not.
-    wire.docs['2026-11']['reservations']['large'] = dict(settled_flash(), max_gross_usd='10.00',
-                                                         actual_gross_usd='9.99')
+    wire.docs['2026-11']['reservations']['large'] = dict(settled_flash(), max_gross_usd='30.00',
+                                                         actual_gross_usd='29.99')
     ledger = copy.deepcopy(wire.docs['2026-11'])
     with pytest.raises(RuntimeError, match='ceiling'):
         reconcile(wire, sha, apply=True, expected_plan_sha='0' * 64)

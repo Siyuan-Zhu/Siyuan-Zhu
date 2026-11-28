@@ -77,7 +77,7 @@ def setup(monkeypatch, **record_changes):
     account = ledger['providers']['apify']
     account['credential_fingerprint'] = NEW_TOKEN
     account['credential_rebinds'] = [{'from': OLD_TOKEN, 'to': NEW_TOKEN, 'at': '2026-11-10T00:00:00Z'}]
-    ledger.update(month='2026-11', automatic_policy_sha256=sha, cash_ceiling_usd='10.00',
+    ledger.update(month='2026-11', automatic_policy_sha256=sha, cash_ceiling_usd='30.00',
                   credit_only_providers=policy['credit_only_providers'],
                   reservations={hold.RESERVATION_ID: reservation(**record_changes)})
     wire = PrivateWire(monkeypatch, {'2026-11': ledger, 'policy_' + sha: policy})

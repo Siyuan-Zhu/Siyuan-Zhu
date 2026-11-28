@@ -28,6 +28,13 @@ HYDROGEN_OPERATION = "generate_content:" + HYDROGEN_MODEL
 HYDROGEN_OUTPUT_TOKENS = (4000, 6000, 8000, 10000, 15000)
 HYDROGEN_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
 HYDROGEN_PRICING_ANNOUNCED_UNTIL = "2026-12-31T23:59:59Z"
+# 3.8 Flash's approved Standard tariffs, (input, output) USD per 1M tokens, each with the latest
+# pricing_valid_until a policy may give it: the 2026 rate to Google's published end date, and the
+# rate Google publishes from 2027-01-01, approved through 2027 (David, 2026-11-28, SIY-198).
+GEMINI_38_2026_TARIFF = (Decimal("0.75"), Decimal("3.75"))
+GEMINI_38_2027_TARIFF = (Decimal("1.50"), Decimal("7.50"))
+GEMINI_38_TARIFFS = {GEMINI_38_2026_TARIFF: "2026-12-31T23:59:59Z",
+                     GEMINI_38_2027_TARIFF: "2027-12-31T23:59:59Z"}
 # Measured 2026-11-22: JSON-mode Hydrogen bills 67 prompt tokens above countTokens, plus 2 per image;
 # countTokens refuses the generation config, so the guard admits this allowance on top of the count.
 HYDROGEN_PROMPT_ALLOWANCE_TOKENS = 256
@@ -314,7 +321,7 @@ class SpendBlocked(RuntimeError):
         "Handoff rejection evidence is incomplete": "automatic-handoff-rejection-evidence-is-incomplete",
         "Handoff rejection history requires reconciliation": "automatic-handoff-rejection-history-requires-reconciliation",
         "Rejected handoff state requires reconciliation": "automatic-rejected-handoff-state-requires-reconciliation",
-        'Automatic policy exceeds the approved 10 USD cash ceiling': 'automatic-automatic-policy-exceeds-the-approved-10-usd-cash-ceiling',
+        'Automatic policy exceeds the approved 30 USD cash ceiling': 'automatic-automatic-policy-exceeds-the-approved-30-usd-cash-ceiling',
         'Credit-only provider has no remaining verified collateral': 'automatic-credit-only-provider-has-no-remaining-verified-collateral',
         'Retained liabilities exhaust the approved monthly cash ceiling': 'automatic-retained-liabilities-exhaust-the-approved-monthly-cash-ceiling',
         'Unapproved credit-only funding configuration': 'automatic-unapproved-credit-only-funding-configuration',
@@ -826,9 +833,10 @@ class BudgetGuard:
         return fn()
 
     def _validate_gemini38_policy(self, limits, duration):
-        """Introductory tariff and bounded multimodal shape, never inferred credits."""
-        if (money(limits.get("input_token_usd_per_million")) != Decimal("0.75")
-                or money(limits.get("output_token_usd_per_million")) != Decimal("3.75")
+        """An approved tariff and bounded multimodal shape, never inferred credits."""
+        announced = GEMINI_38_TARIFFS.get((money(limits.get("input_token_usd_per_million")),
+                                           money(limits.get("output_token_usd_per_million"))))
+        if (announced is None
                 or limits.get("thinking_level") not in ("low", "medium", "high")
                 or limits.get("image_tokens_per_image") != 1120
                 or limits.get("media_resolution") != "MEDIA_RESOLUTION_HIGH"):
@@ -842,8 +850,7 @@ class BudgetGuard:
         if type(images) is not int or not 0 <= images <= 9:
             raise SpendBlocked("Unverified Gemini 3.8 pricing or model policy")
         expires = self._timestamp(limits.get("pricing_valid_until"))
-        announced = self._timestamp("2026-12-31T23:59:59Z")
-        if not self.now() + timedelta(seconds=duration) < expires <= announced:
+        if not self.now() + timedelta(seconds=duration) < expires <= self._timestamp(announced):
             raise SpendBlocked("Gemini 3.8 pricing expires before bounded request completion")
 
     def _validate_hydrogen_policy(self, limits, duration, account):

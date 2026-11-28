@@ -49,7 +49,7 @@ def test_neon_successor_adds_only_neon_and_the_tariff_digest():
     assert new['price_snapshot_sha256'] == TARIFF
     for key in ('cash_ceiling_usd', 'approval_reference', 'approved_at', 'valid_until'):
         assert p2[key] == p1[key]
-    assert p2['cash_ceiling_usd'] == '10.00'
+    assert p2['cash_ceiling_usd'] == '30.00'
     assert new['bounded_auto_reload_attestation'] == old['bounded_auto_reload_attestation']
     assert auto.validate_policy(p2, auto.digest(p2), NOW) == p2
 
@@ -132,7 +132,8 @@ def test_neon_receipt_ids_follow_the_hydrogen_pair():
         'price_repair_20261103', 'apify_build_repair_20261106', 'price_repair_20261113',
         'spend_successor_20261122', 'spend_rollback_20261122', 'spend_successor_20261125', 'spend_rollback_20261125',
         'spend_successor_20261128', 'spend_rollback_20261128',
-        'spend_successor_20261128_cushion', 'spend_rollback_20261128_cushion')
+        'spend_successor_20261128_cushion', 'spend_rollback_20261128_cushion',
+        'spend_successor_december_2026', 'spend_rollback_december_2026')
 
 
 def test_neon_receipt_extends_the_chain_after_the_hydrogen_install(monkeypatch):

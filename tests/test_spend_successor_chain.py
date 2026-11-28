@@ -19,7 +19,8 @@ def test_receipt_ids_and_order():
         'price_repair_20261103', 'apify_build_repair_20261106', 'price_repair_20261113',
         'spend_successor_20261122', 'spend_rollback_20261122', 'spend_successor_20261125', 'spend_rollback_20261125',
         'spend_successor_20261128', 'spend_rollback_20261128',
-        'spend_successor_20261128_cushion', 'spend_rollback_20261128_cushion')
+        'spend_successor_20261128_cushion', 'spend_rollback_20261128_cushion',
+        'spend_successor_december_2026', 'spend_rollback_december_2026')
 
 
 def test_successor_receipt_extends_the_chain(monkeypatch):
