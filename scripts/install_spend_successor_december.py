@@ -99,12 +99,16 @@ def install(store, *, old_sha, tariff_sha256, reload_observation, approved_at, a
                        digest(current) == receipt.get('after_sha256'))
 
     ledger_snapshot = store.read(month)
+    if not ledger_snapshot.exists:
+        # The handoff into a new month needs the replaced policy, which this release refuses.
+        raise RuntimeError('No ledger for this month: revert this release, let the month handoff run, then install')
     ledger = ledger_snapshot.to_dict()
     if (ledger.get('automatic_policy_sha256') != old_sha or ledger.get('reconciliation_required')
             or ledger.get('closed_for_rollover') or ledger.get('month') != month):
         raise RuntimeError('Ledger changed or frozen; install must be replanned')
     if (now + timedelta(seconds=_request_window_seconds(old))).strftime('%Y-%m') != month:
-        raise RuntimeError('Too close to the month boundary to install; retry in the new month')
+        raise RuntimeError('Too close to the month boundary: revert this release before the handoff, then install '
+                           'after it')
     assert_no_open_reservation(ledger)
 
     observation = observer(now)

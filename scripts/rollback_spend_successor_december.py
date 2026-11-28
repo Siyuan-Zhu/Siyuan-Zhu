@@ -88,7 +88,7 @@ def rollback(store, *, required_old_sha, apply=False, expected_plan_sha=None, no
     if digest(old) != old_sha or digest(new) != new_sha:
         raise RuntimeError('Policy documents do not match the install receipt digests')
     if (now + timedelta(seconds=_request_window_seconds(old))).strftime('%Y-%m') != month:
-        raise RuntimeError('Too close to the month boundary to roll back; retry in the new month')
+        raise RuntimeError('Too close to the month boundary to roll back; this rollback works only in the install month')
     assert_no_open_reservation(ledger)
     if cash_exposure(ledger) > money(old['cash_ceiling_usd']):
         raise RuntimeError("The month's spend is above the replaced policy's ceiling; it cannot be rolled back")

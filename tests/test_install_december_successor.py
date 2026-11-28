@@ -164,9 +164,9 @@ def wire_for(monkeypatch, reservations=None):
     return wire, old_sha, ledger, old
 
 
-def install(wire, old_sha, page='dated', observed=None, **kw):
+def install(wire, old_sha, page='dated', observed=None, now=NOW, **kw):
     return install_module.install(wire.store, old_sha=old_sha, tariff_sha256=observation(page)['sha256'],
-                                  reload_observation=dict(RELOAD), approved_at=APPROVED_AT, now=NOW,
+                                  reload_observation=dict(RELOAD), approved_at=APPROVED_AT, now=now,
                                   observer=lambda now: observation(observed or page), **kw)
 
 
@@ -218,7 +218,8 @@ def test_apply_requires_the_planned_digest(monkeypatch):
     assert wire.posts == []
 
 
-@pytest.mark.parametrize('case', ['open_hold', 'other_policy', 'frozen', 'tariff_moved', 'rate_above', 'bad_digest'])
+@pytest.mark.parametrize('case', ['open_hold', 'other_policy', 'frozen', 'tariff_moved', 'rate_above', 'bad_digest',
+                                  'no_month_ledger', 'month_boundary'])
 def test_the_install_refuses_and_writes_nothing(monkeypatch, case):
     reservations = {'open': hold(NOW)} if case == 'open_hold' else None
     wire, old_sha, ledger, old = wire_for(monkeypatch, reservations)
@@ -233,7 +234,11 @@ def test_the_install_refuses_and_writes_nothing(monkeypatch, case):
         kw['page'] = 'above'
     if case == 'bad_digest':
         wire.docs['policy_' + old_sha]['cash_ceiling_usd'] = '9.00'
-    with pytest.raises(RuntimeError):
+    if case == 'no_month_ledger':
+        del wire.docs[ledger['month']]
+    if case == 'month_boundary':
+        kw['now'] = NOW.replace(hour=23, minute=58)
+    with pytest.raises(RuntimeError, match='revert this release' if case in ('no_month_ledger', 'month_boundary') else ''):
         install(wire, old_sha, **kw)
     assert wire.posts == []
 
