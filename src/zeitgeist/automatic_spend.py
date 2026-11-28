@@ -36,19 +36,52 @@ MODES = {'gemini': 'cash_only', 'bfl': 'nonrenewable_prepaid', 'apify': 'recurri
 PRICE_HOSTS = {'gemini': {'ai.google.dev'}, 'bfl': {'bfl.ai', 'docs.bfl.ai', 'help.bfl.ai'}, 'apify': {'apify.com', 'api.apify.com', 'docs.apify.com'}}
 
 
-def approved_apify_build(policy, configured=''):
-    """The Apify Instagram build: the approved policy's pin is the single source.
+APIFY_BUILD_MODES = ('pinned', 'newest_safe')
+APIFY_FALLBACK_REASONS = ('apify_newer_build_input_changed', 'apify_newer_build_unavailable')
 
-    A configured build (environment or argument) is only an optional assertion:
-    under a policy it must equal the pin or the run stops. Without a policy, the
-    legacy verified numeric build is still required.
+
+def resolve_apify_build(fresh, pinned):
+    """The night's Apify build under newest_safe: Apify's newest build when its input contract holds, else the pin.
+
+    The pin itself has already passed every check of this refresh. Apify prices the actor, not a build, so a price
+    change has already stopped the refresh: there is no build to fall back to at the old price.
+    """
+    pin = (pinned['actor_build'], pinned['actor_build_id'])
+    newest = fresh.get('newest_build')
+    if (not isinstance(newest, dict) or newest.get('unavailable') or newest.get('status') != 'SUCCEEDED'
+            or not re.fullmatch(r'\d+\.\d+\.\d+', str(newest.get('number', '')))
+            or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(newest.get('id', '')))):
+        return (*pin, 'apify_newer_build_unavailable')
+    if (newest['number'], newest['id']) == pin:
+        return (*pin, 'pinned_no_newer')
+    if newest.get('contract_ok') is not True or newest.get('validation_ok') is not True:
+        return (*pin, 'apify_newer_build_input_changed')
+    return newest['number'], newest['id'], 'newest'
+
+
+def approved_apify_build(policy, configured='', *, resolution=None):
+    """The Apify Instagram build the run uses.
+
+    Under a policy in pinned mode, the pin. In newest_safe mode, the build that this
+    refresh resolved (resolution: the ledger's Apify account); a missing resolution, or
+    one an earlier refresh wrote, falls back to the pin, which every refresh verifies.
+    A configured build (environment or argument) is only an optional assertion: it must
+    equal the chosen build or the run stops. Without a policy, the legacy verified
+    numeric build is still required.
     """
     configured = str(configured or '').strip()
     if policy:
-        pinned = policy['providers']['apify']['actor_build']
-        if configured and configured != pinned:
+        apify = policy['providers']['apify']
+        chosen = apify['actor_build']
+        if apify.get('actor_build_mode', 'pinned') == 'newest_safe' and isinstance(resolution, dict):
+            fresh = resolution.get('automatic_observation_sha256')
+            resolved = resolution.get('resolved_build')
+            if (fresh and resolution.get('resolved_observation_sha256') == fresh
+                    and isinstance(resolved, str) and re.fullmatch(r'\d+\.\d+\.\d+', resolved)):
+                chosen = resolved
+        if configured and configured != chosen:
             raise SpendBlocked('APIFY_INSTAGRAM_BUILD differs from the approved policy pin')
-        return pinned
+        return chosen
     if not re.fullmatch(r'\d+\.\d+\.\d+', configured):
         from .collectors import IngestionUnavailable
         raise IngestionUnavailable('Verified, pinned APIFY_INSTAGRAM_BUILD required')
@@ -521,6 +554,8 @@ def validate_policy(policy, expected_policy_sha, now):
                 and not re.fullmatch(r'(?:sha256:)?[a-f0-9]{64}',str(item.get('actor_image_digest'))))
             or not re.fullmatch(r'[a-f0-9]{64}',str(item.get('actor_schema_sha256','')))):
             raise SpendBlocked('Approved immutable actor build image and schema required')
+        if provider == 'apify' and item.get('actor_build_mode', 'pinned') not in APIFY_BUILD_MODES:
+            raise SpendBlocked('Approved immutable actor build image and schema required')
     return policy
 
 
@@ -834,6 +869,10 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
         account['credit_baseline_usd'] = str(min(baseline, observed_credit+confirmed))
         account['automatic_observed_at'] = observation['observed_at']
         account['automatic_observation_sha256'] = digest(observation)
+        if provider == 'apify' and pinned.get('actor_build_mode', 'pinned') == 'newest_safe':
+            build, build_id, reason = resolve_apify_build(fresh, pinned)
+            account.update(resolved_build=build, resolved_build_id=build_id, resolved_reason=reason,
+                           resolved_observation_sha256=account['automatic_observation_sha256'])
         # Preserve real manual observation timestamps and references exactly.
     assert_credit_only_funding(candidate, now=now)
     if cash_exposure(candidate) > money(policy['cash_ceiling_usd']):

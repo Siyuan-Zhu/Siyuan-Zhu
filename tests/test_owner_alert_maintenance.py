@@ -108,3 +108,45 @@ def test_stdout_summary_keys_unchanged(harness, monkeypatch, capsys):
     monkeypatch.setattr(maintenance, 'maintain_spend_control', transient)
     assert maintenance.main(['--apply']) == 75
     assert set(json.loads(capsys.readouterr().out)) == TRANSIENT_KEYS
+
+
+def _refreshed(monkeypatch, reason):
+    from src.zeitgeist.automatic_spend_runtime import MaintenanceResult
+
+    after = {'providers': {'apify': {} if reason is None else {'resolved_reason': reason}}}
+    monkeypatch.setattr(maintenance, 'maintain_spend_control', lambda store, **kw: MaintenanceResult(
+        status='refreshed', operation='refresh', month='2026-11', plan={'after': after}))
+
+
+@pytest.mark.parametrize('reason,code', [('apify_newer_build_input_changed', 'apify-newer-build-input-changed'),
+                                         ('apify_newer_build_unavailable', 'apify-newer-build-unavailable')])
+def test_a_refresh_that_fell_back_to_the_apify_pin_tells_the_owner_and_still_succeeds(harness, monkeypatch, capsys,
+                                                                                      reason, code):
+    root, emitted, calls, block = harness
+    _refreshed(monkeypatch, reason)
+    assert maintenance.main(['--apply']) == 0
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {
+        'status': 'refreshed', 'operation': 'refresh', 'month': '2026-11'}
+    assert [c['code'] for c in calls] == [code] and len(emitted) == 1
+
+
+@pytest.mark.parametrize('reason', ['newest', 'pinned_no_newer', None])
+def test_a_refresh_on_the_newest_build_or_the_pin_tells_nobody(harness, monkeypatch, reason):
+    root, emitted, calls, block = harness
+    _refreshed(monkeypatch, reason)
+    assert maintenance.main(['--apply']) == 0
+    assert calls == [] and emitted == []
+
+
+def test_a_plan_only_refresh_never_tells_the_owner_about_the_build(harness, monkeypatch):
+    root, emitted, calls, block = harness
+    _refreshed(monkeypatch, 'apify_newer_build_input_changed')
+    assert maintenance.main([]) == 0
+    assert calls == []
+
+
+def test_the_build_review_alert_never_silences_a_later_failure_alert(harness, monkeypatch):
+    root, emitted, calls, block = harness
+    _refreshed(monkeypatch, 'apify_newer_build_unavailable')
+    assert maintenance.main(['--apply']) == 0
+    assert len(emitted) == 1 and not (root / owner_alert.MARKER).exists()

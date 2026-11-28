@@ -1155,3 +1155,76 @@ def test_a_policy_without_a_digest_pin_refreshes_whatever_digest_apify_reports()
     ledger['automatic_policy_sha256'] = auto.digest(policy)
     observation['apify']['image_digest'] = 'f' * 64
     refresh(ledger, policy, observation)
+
+
+# ---- Apify newest safe build (Task 2) -------------------------------------------------------------------------
+
+def _newest_safe(newest=None):
+    ledger, policy, observation = fixtures()
+    policy['providers']['apify']['actor_build_mode'] = 'newest_safe'
+    ledger['automatic_policy_sha256'] = auto.digest(policy)
+    if newest is not None:
+        observation['apify']['newest_build'] = newest
+    return ledger, policy, observation
+
+
+NEWER = {'number': '0.0.700', 'id': 'newer-build-id', 'status': 'SUCCEEDED', 'contract_ok': True,
+         'validation_ok': True, 'input_schema_sha256': 'f' * 64}
+
+
+def _resolved(after):
+    account = after['providers']['apify']
+    return account.get('resolved_build'), account.get('resolved_build_id'), account.get('resolved_reason')
+
+
+def test_a_policy_build_mode_must_be_pinned_or_newest_safe():
+    ledger, policy = fixtures()[:2]
+    for mode in ('pinned', 'newest_safe'):
+        policy['providers']['apify']['actor_build_mode'] = mode
+        auto.validate_policy(policy, auto.digest(policy), NOW)
+    policy['providers']['apify']['actor_build_mode'] = 'latest'
+    with pytest.raises(SpendBlocked):
+        auto.validate_policy(policy, auto.digest(policy), NOW)
+
+
+def test_a_newest_safe_build_is_resolved_for_the_night():
+    ledger, policy, observation = _newest_safe(NEWER)
+    after = refresh(ledger, policy, observation)
+    assert _resolved(after) == ('0.0.700', 'newer-build-id', 'newest')
+    assert after['providers']['apify']['resolved_observation_sha256'] == auto.digest(observation)
+
+
+def test_newest_equal_to_pin_resolves_to_pin_quietly():
+    ledger, policy, observation = _newest_safe(dict(NEWER, number='0.0.648', id='immutable-test-build'))
+    assert _resolved(refresh(ledger, policy, observation)) == ('0.0.648', 'immutable-test-build', 'pinned_no_newer')
+
+
+@pytest.mark.parametrize('change', [{'contract_ok': False}, {'validation_ok': False}])
+def test_a_newer_build_that_changes_the_input_falls_back_to_the_pin(change):
+    ledger, policy, observation = _newest_safe(dict(NEWER, **change))
+    assert _resolved(refresh(ledger, policy, observation)) == (
+        '0.0.648', 'immutable-test-build', 'apify_newer_build_input_changed')
+
+
+@pytest.mark.parametrize('newest', [{'unavailable': True}, dict(NEWER, status='FAILED'), {}, None])
+def test_a_newer_build_that_cannot_be_verified_falls_back_to_the_pin(newest):
+    ledger, policy, observation = _newest_safe(newest)
+    if newest is None:
+        observation['apify'].pop('newest_build', None)
+    assert _resolved(refresh(ledger, policy, observation)) == (
+        '0.0.648', 'immutable-test-build', 'apify_newer_build_unavailable')
+
+
+def test_a_price_change_still_blocks_in_newest_safe_mode():
+    # Apify prices the actor, not a build: every build would run at the new price, so there is nothing to fall back to.
+    ledger, policy, observation = _newest_safe(NEWER)
+    observation['apify']['pricing'] = {'post': '.0030'}
+    with pytest.raises(SpendBlocked):
+        refresh(ledger, policy, observation)
+
+
+def test_pinned_mode_writes_no_resolution():
+    ledger, policy, observation = fixtures()
+    observation['apify']['newest_build'] = NEWER
+    account = refresh(ledger, policy, observation)['providers']['apify']
+    assert not any(key.startswith('resolved_') for key in account)

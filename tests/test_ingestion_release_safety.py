@@ -109,3 +109,30 @@ def test_live_collection_never_publishes_seeded_fresh_signals(tmp_path, monkeypa
             ZeitgeistADKOrchestrator(tmp_path, store).run(date_iso="2026-10-30")
     assert store.load_pulse_state()["word"] == "KEEP_ME"
     assert not (tmp_path / "assets" / "daily_pulse.svg").exists()
+
+
+class _Ledger:
+    def __init__(self, account):
+        self.document = {"providers": {"apify": account}}
+
+    def mutate(self, fn):
+        return fn(self.document)
+
+
+class NewestSafeGuard(ApprovedGuard):
+    automatic_policy = {"providers": {"apify": {"actor_build": "0.0.659", "actor_build_id": "Ih1cRmBcVyKVYQlOj",
+                                                "actor_build_mode": "newest_safe"}}}
+
+    def __init__(self, account):
+        super().__init__()
+        self.ledger = _Ledger(account)
+
+
+def test_instagram_runs_on_the_build_this_refresh_resolved():
+    account = {"automatic_observation_sha256": "obs", "resolved_observation_sha256": "obs",
+               "resolved_build": "0.0.700", "resolved_build_id": "newer-build-id", "resolved_reason": "newest"}
+    response = httpx.Response(200, json=[], request=httpx.Request("POST", "https://api.apify.com"))
+    with patch.object(collectors.httpx, "Client") as cls:
+        cls.return_value.__enter__.return_value.post.return_value = response
+        collectors.fetch_instagram_batch(["a24"], "test-token", spend_guard=NewestSafeGuard(account))
+        assert cls.return_value.__enter__.return_value.post.call_args.kwargs["params"]["build"] == "0.0.700"

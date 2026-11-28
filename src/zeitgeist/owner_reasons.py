@@ -22,6 +22,13 @@ def _r(cls, headline, tonight, fix):
 
 
 REASONS = {
+    # The run went ahead on the last good Apify build (newest_safe mode); nothing was lost.
+    'spend_apify_newer_input': _r('owner-approve', 'Apify released a scraper build that changes the input we send',
+        'The edition ran on the last good Apify build. Nothing was lost or spent extra.',
+        'Look at what the new build changed. Once the collector sends the new input, runs move to it by themselves.'),
+    'spend_apify_newer_unavailable': _r('watch-on-it', "Apify's newest scraper build could not be checked",
+        'The edition ran on the last good Apify build. Nothing was lost or spent extra.',
+        'Nothing to do unless this repeats for several nights; then check the build list on Apify.'),
     # Spend maintenance families (no paid call has happened).
     'spend_money': _r('owner-act', 'The approved money for this month does not cover the run',
         'No edition work started and nothing was spent. Later runs stop the same way until you decide.',
@@ -191,7 +198,8 @@ _CATEGORY_KEY = {c: 'cat_' + c for c in (
 _CATEGORY_STAGES = frozenset({'generation', 'readme_build', 'publication', 'startup'})
 
 _EXTRA_SPEND_CODES = frozenset({'budget-admission-rejected', 'maintenance-unavailable',
-                                'transient-anonymous-price-read', 'private-report-unavailable'})
+                                'transient-anonymous-price-read', 'private-report-unavailable',
+                                'apify-newer-build-input-changed', 'apify-newer-build-unavailable'})
 _SPEND_CODES = frozenset(SpendBlocked._PUBLIC_REASONS.values()) | _EXTRA_SPEND_CODES
 _B1_CODE = 'automatic-provider-metadata-or-credential-binding-failed'
 _B1_KEY = {'credential_rejected': 'b1_credential_rejected', 'provider_unreachable': 'b1_provider_unreachable',
@@ -204,6 +212,8 @@ _P = 'automatic-'
 # Codes named in spike rows B2-B9 are pinned here, ahead of the keyword rules.
 _EXPLICIT = {
     'transient-anonymous-price-read': 'spend_transient',
+    'apify-newer-build-input-changed': 'spend_apify_newer_input',
+    'apify-newer-build-unavailable': 'spend_apify_newer_unavailable',
     _P + 'credential-change-waits-until-open-requests-for-this-provider-settle': 'spend_wait',
     _P + 'apify-build-differs-from-policy-pin': 'spend_build',
     _P + 'apify-account-free-grant-usage-cycle-build-or-pricing-changed': 'spend_provider_changed',

@@ -163,6 +163,8 @@ def main(argv=None):
         finally:
             logging.disable(previous_logging)
         summary=result.public_status()
+        if args.apply:
+            _tell_owner_about_the_apify_build(result)
     except BaseException as error:
         now = datetime.now(timezone.utc)
         summary={'status':'blocked','operation':'maintenance',
@@ -206,6 +208,24 @@ def main(argv=None):
     print(json.dumps(summary,sort_keys=True))
     if summary['status']!='blocked': return 0
     return 75 if temporary and summary.get('retryable') is True else 2
+
+
+APIFY_BUILD_ALERT_CODES = {'apify_newer_build_input_changed': 'apify-newer-build-input-changed',
+                           'apify_newer_build_unavailable': 'apify-newer-build-unavailable'}
+
+
+def _tell_owner_about_the_apify_build(result):
+    """After a successful refresh that ran on the Apify pin instead of a newer build: one review alert. Never raises."""
+    try:
+        if getattr(result, 'status', None) != 'refreshed':
+            return
+        reason = result.plan['after']['providers']['apify'].get('resolved_reason')
+        code = APIFY_BUILD_ALERT_CODES.get(reason)
+        if code is not None:
+            # No root: this review alert must not write the alerted marker, or a later failure would stay silent.
+            owner_alert.notify(stage='spend_maintenance', code=code)
+    except BaseException:
+        pass
 
 
 if __name__ == "__main__":

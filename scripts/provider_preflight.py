@@ -239,29 +239,8 @@ def _exact_apify_build(get, actor, configured_build, configured_build_id=None):
     return build, default_number
 
 
-def inspect_apify(client, token, configured_build, now, *, configured_build_id=None):
-    if not isinstance(configured_build, str) or not re.fullmatch(
-        r"\d+\.\d+\.\d+", configured_build
-    ):
-        raise MetadataUnavailable()
-    headers = {"Authorization": "Bearer " + token}
-
-    def get(path, *, params=None):
-        body = request_json(
-            client, "GET", APIFY_BASE + path, headers=headers, params=params
-        )
-        data = body.get("data")
-        if not isinstance(data, dict):
-            raise MetadataUnavailable()
-        return data
-
-    user = get("/users/me")
-    usage = get("/users/me/usage/monthly")
-    limits = get("/users/me/limits")
-    actor = get("/actors/" + APIFY_ACTOR)
-    build, observed_default = _exact_apify_build(
-        get, actor, configured_build, configured_build_id
-    )
+def _build_contract(client, headers, build):
+    """The input contract for one exact build: schema shape, its digest, and Apify's own input validation."""
     observed = build["buildNumber"]
     definition = build.get("actorDefinition")
     schema = definition.get("input") if isinstance(definition, dict) else None
@@ -275,8 +254,10 @@ def inspect_apify(client, token, configured_build, now, *, configured_build_id=N
     schema = schema if isinstance(schema, dict) else {}
     props = schema.get("properties") or {}
     required = schema.get("required") or []
+    username = props.get("username") if isinstance(props, dict) else None
     contract_ok = (
-        "username" in required and (props.get("username") or {}).get("type") == "array"
+        isinstance(required, list) and "username" in required
+        and isinstance(username, dict) and username.get("type") == "array"
     )
     schema_sha = hashlib.sha256(
         json.dumps(schema, sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -315,6 +296,70 @@ def inspect_apify(client, token, configured_build, now, *, configured_build_id=N
         validation["legacy_plural_status"] == 400
         and validation.get("correct_input_valid") is True
     )
+    return contract_ok, validation_ok, validation, schema_sha, required
+
+
+def _newest_apify_build(get, client, headers, actor, pinned_build, pinned_contract):
+    """Apify's newest build of the pinned actor, with the same contract checks as the pin; never raises.
+
+    The newest build is only reported here. Spend maintenance decides whether a run may use it.
+    """
+    try:
+        tagged = actor.get("taggedBuilds")
+        latest = tagged.get("latest") if isinstance(tagged, dict) else None
+        build_id = latest.get("buildId") if isinstance(latest, dict) else None
+        if not isinstance(build_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", build_id):
+            return {"unavailable": True}
+        if build_id == pinned_build.get("id"):
+            build, (contract_ok, validation_ok, validation, schema_sha, _) = pinned_build, pinned_contract
+        else:
+            build = get("/actor-builds/" + build_id)
+            number = build.get("buildNumber")
+            if (build.get("id") != build_id or build.get("actId") not in {APIFY_ACTOR_ID, APIFY_ACTOR}
+                    or not isinstance(number, str) or not re.fullmatch(r"\d+\.\d+\.\d+", number)):
+                return {"unavailable": True}
+            contract_ok, validation_ok, validation, schema_sha, _ = _build_contract(client, headers, build)
+        if validation.get("legacy_plural_status") is None or validation.get("correct_singular_status") is None:
+            return {"unavailable": True}      # a transport error is not evidence that the input changed
+    except Exception:
+        return {"unavailable": True}
+    return {
+        "number": build.get("buildNumber"),
+        "id": build.get("id"),
+        "status": build.get("status"),
+        "contract_ok": bool(contract_ok),
+        "validation_ok": bool(validation_ok),
+        "input_schema_sha256": schema_sha,
+    }
+
+
+def inspect_apify(client, token, configured_build, now, *, configured_build_id=None):
+    if not isinstance(configured_build, str) or not re.fullmatch(
+        r"\d+\.\d+\.\d+", configured_build
+    ):
+        raise MetadataUnavailable()
+    headers = {"Authorization": "Bearer " + token}
+
+    def get(path, *, params=None):
+        body = request_json(
+            client, "GET", APIFY_BASE + path, headers=headers, params=params
+        )
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise MetadataUnavailable()
+        return data
+
+    user = get("/users/me")
+    usage = get("/users/me/usage/monthly")
+    limits = get("/users/me/limits")
+    actor = get("/actors/" + APIFY_ACTOR)
+    build, observed_default = _exact_apify_build(
+        get, actor, configured_build, configured_build_id
+    )
+    observed = build["buildNumber"]
+    pinned_contract = _build_contract(client, headers, build)
+    contract_ok, validation_ok, validation, schema_sha, required = pinned_contract
+    newest_build = _newest_apify_build(get, client, headers, actor, build, pinned_contract)
     active_prices = [
         p
         for p in actor.get("pricingInfos", [])
@@ -360,6 +405,7 @@ def inspect_apify(client, token, configured_build, now, *, configured_build_id=N
         "build_pin_verified": pin_ok,
         "build_id": build.get("id"),
         "image_digest": build.get("imageDigest"),
+        "newest_build": newest_build,
         "required_input_fields": required,
         "username_contract_verified": contract_ok,
         "input_validation": validation,
