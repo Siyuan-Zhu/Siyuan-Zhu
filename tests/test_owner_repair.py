@@ -30,7 +30,7 @@ D = chr(36)
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)  # 07:00 ET
 EDITION = '2026-11-16'
 CROCKFORD = set('0123456789ABCDEFGHJKMNPQRSTVWXYZ')
-POLICY_SHA = '25f5685bfd2b53eac7af18b521765ca558e8cda421ae0d3b254c81e4518366b8'
+POLICY_SHA = 'eeecd6d8b21b65c0ddcf4b0e66a6c8be2e1fd053f83f1fbbfb318875dfa9d483'
 GOOD_ENV = {
     'GITHUB_EVENT_NAME': 'workflow_dispatch',
     'GITHUB_ACTOR': 'Siyuan-Zhu',
