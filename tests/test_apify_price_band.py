@@ -30,11 +30,15 @@ def setup(observed=None, *, with_terms=True):
     for account in (ledger['providers']['apify'], policy['providers']['apify']['account']):
         account['operation_caps_usd'] = {OP: '.20'}
     apify = policy['providers']['apify']
-    apify['actor_pricing_sha256'] = auto.digest(TERMS)
+    # Production shape: the policy's Apify price snapshot is the pricing digest, and the live observer derives the
+    # snapshot from the pricing it read (automatic_spend_runtime.observe_provider_metadata).
+    apify['actor_pricing_sha256'] = apify['price_snapshot_sha256'] = auto.digest(TERMS)
     if with_terms:
         apify['actor_pricing_terms'] = copy.deepcopy(TERMS)
     ledger['automatic_policy_sha256'] = auto.digest(policy)
-    observation['apify']['pricing'] = copy.deepcopy(TERMS if observed is None else observed)
+    pricing = copy.deepcopy(TERMS if observed is None else observed)
+    observation['apify']['pricing'] = pricing
+    observation['price_snapshots']['apify']['sha256'] = auto.digest(pricing)
     return ledger, policy, observation
 
 
@@ -113,13 +117,34 @@ def test_refresh_redated_terms_is_no_rise():
 
 
 def test_refresh_without_terms_keeps_exact_compare():
-    with pytest.raises(SpendBlocked, match=CHANGED):
+    with pytest.raises(SpendBlocked, match='Primary price snapshot changed'):
         refresh(*setup({**TERMS, 'started_at': '2026-12-01T00:00:00.000Z'}, with_terms=False))
 
 
 def test_refresh_above_band_blocks():
     with pytest.raises(SpendBlocked, match=CHANGED):
         refresh(*setup(priced({'post:FREE': '0.0023'})))
+
+
+def test_a_snapshot_that_is_not_the_observed_pricing_still_blocks():
+    ledger, policy, observation = setup(priced({'post:FREE': '0.002'}))
+    observation['price_snapshots']['apify']['sha256'] = 'f' * 64
+    with pytest.raises(SpendBlocked, match='Primary price snapshot changed'):
+        refresh(ledger, policy, observation)
+
+
+def test_a_stale_snapshot_still_blocks():
+    ledger, policy, observation = setup(priced({'post:FREE': '0.002'}))
+    observation['price_snapshots']['apify']['observed_at'] = '2026-10-29T00:00:00+00:00'
+    with pytest.raises(SpendBlocked, match='Primary price snapshot changed'):
+        refresh(ledger, policy, observation)
+
+
+def test_a_rise_in_the_minimum_run_charge_alone_is_audited():
+    assert auto.apify_price_review(TERMS, {**TERMS, 'minimum_run_charge_cap_usd': '0.006'}) == [
+        {'operation': OP, 'rate': 'minimum_run_charge_cap_usd', 'approved': '0.005', 'observed': '0.006'}]
+    account = refresh(*setup({**TERMS, 'minimum_run_charge_cap_usd': '0.006'}))['providers']['apify']
+    assert auto.verified_price_band_audit(account, 'apify') is True
 
 
 def test_validate_policy_refuses_terms_that_do_not_match_the_pin():
@@ -217,7 +242,7 @@ def test_twenty_handles_in_band_fit_the_grown_cap():
 def test_a_limit_above_posts_at_the_charged_rate_is_refused():
     guard, _ = apify_guard(priced({'post:FREE': '0.002'}))
     with pytest.raises(SpendBlocked, match='tariff'):
-        guard.begin_provider_request('apify', OP, 0.13, DIGEST, context=context('0.002'))
+        guard.begin_provider_request('apify', OP, 0.1221, DIGEST, context=context('0.002'))
 
 
 def test_stale_rate_context_is_refused():
@@ -258,7 +283,8 @@ def collect(monkeypatch, guard, handles):
 HANDLES = ['handle%02d' % i for i in range(12)]
 
 
-@pytest.mark.parametrize('charged,limit', [('0.0017', '0.102'), ('0.002', '0.12'), ('0.00221', '0.1326')])
+# One post of headroom above posts at the charged rate, and never below today's fixed 0.002 a post.
+@pytest.mark.parametrize('charged,limit', [('0.0017', '0.12'), ('0.002', '0.122'), ('0.00221', '0.13481')])
 def test_collector_limit_follows_charged_rate(monkeypatch, charged, limit):
     guard = RatedGuard([], (Decimal(charged), Decimal('0.0017'), Decimal('0.0065')))
     assert collect(monkeypatch, guard, HANDLES) == [limit]
@@ -267,13 +293,13 @@ def test_collector_limit_follows_charged_rate(monkeypatch, charged, limit):
 
 def test_collector_floor_for_a_single_handle(monkeypatch):
     guard = RatedGuard([], (Decimal('0.0017'), Decimal('0.0017'), Decimal('0.0065')))
-    assert collect(monkeypatch, guard, ['solo']) == ['0.0085']
+    assert collect(monkeypatch, guard, ['solo']) == ['0.0102']
 
 
 def test_collector_never_sends_a_limit_below_the_floor(monkeypatch):
     # The fixture run charges 0.0068, so the floor here sits above it.
-    guard = RatedGuard([], (Decimal('0.0001'), Decimal('0.0017'), Decimal('0.007')))
-    assert collect(monkeypatch, guard, ['solo']) == ['0.007']
+    guard = RatedGuard([], (Decimal('0.0001'), Decimal('0.0017'), Decimal('0.011')))
+    assert collect(monkeypatch, guard, ['solo']) == ['0.011']
 
 
 def test_a_guard_without_rates_keeps_the_fixed_limit(monkeypatch):

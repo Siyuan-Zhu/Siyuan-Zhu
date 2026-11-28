@@ -165,6 +165,7 @@ def main(argv=None):
         summary=result.public_status()
         if args.apply:
             _tell_owner_about_the_apify_build(result)
+            _tell_owner_about_an_apify_price_rise(result)
     except BaseException as error:
         now = datetime.now(timezone.utc)
         summary={'status':'blocked','operation':'maintenance',
@@ -224,6 +225,21 @@ def _tell_owner_about_the_apify_build(result):
         if code is not None:
             # No root: this review alert must not write the alerted marker, or a later failure would stay silent.
             owner_alert.notify(stage='spend_maintenance', code=code)
+    except BaseException:
+        pass
+
+
+
+def _tell_owner_about_an_apify_price_rise(result):
+    """After a successful refresh that accepted an Apify price within the 30% band (SIY-291): one review alert.
+
+    Never raises. Like the build alert it writes no marker, so it never silences a later failure alert.
+    """
+    try:
+        if getattr(result, 'status', None) != 'refreshed':
+            return
+        if result.plan['after']['providers']['apify'].get('price_band_audit'):
+            owner_alert.notify(stage='spend_maintenance', code='apify-price-in-band')
     except BaseException:
         pass
 

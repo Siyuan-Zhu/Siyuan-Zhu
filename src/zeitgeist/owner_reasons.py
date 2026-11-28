@@ -29,6 +29,9 @@ REASONS = {
     'spend_apify_newer_unavailable': _r('watch-on-it', "Apify's newest scraper build could not be checked",
         'The edition ran on the last good Apify build. Nothing was lost or spent extra.',
         'Nothing to do unless this repeats for several nights; then check the build list on Apify.'),
+    'spend_apify_price_in_band': _r('watch-on-it', 'Apify raised its scraper price, within the 30% cushion',
+        'The edition ran at the new price. The rise is measured from the price you approved and stays in the free credit.',
+        'Nothing to do unless you want to approve the new price as the base; a rise above 30% would stop the run.'),
     # Spend maintenance families (no paid call has happened).
     'spend_money': _r('owner-act', 'The approved money for this month does not cover the run',
         'No edition work started and nothing was spent. Later runs stop the same way until you decide.',
@@ -199,7 +202,8 @@ _CATEGORY_STAGES = frozenset({'generation', 'readme_build', 'publication', 'star
 
 _EXTRA_SPEND_CODES = frozenset({'budget-admission-rejected', 'maintenance-unavailable',
                                 'transient-anonymous-price-read', 'private-report-unavailable',
-                                'apify-newer-build-input-changed', 'apify-newer-build-unavailable'})
+                                'apify-newer-build-input-changed', 'apify-newer-build-unavailable',
+                                'apify-price-in-band'})
 _SPEND_CODES = frozenset(SpendBlocked._PUBLIC_REASONS.values()) | _EXTRA_SPEND_CODES
 _B1_CODE = 'automatic-provider-metadata-or-credential-binding-failed'
 _B1_KEY = {'credential_rejected': 'b1_credential_rejected', 'provider_unreachable': 'b1_provider_unreachable',
@@ -214,6 +218,7 @@ _EXPLICIT = {
     'transient-anonymous-price-read': 'spend_transient',
     'apify-newer-build-input-changed': 'spend_apify_newer_input',
     'apify-newer-build-unavailable': 'spend_apify_newer_unavailable',
+    'apify-price-in-band': 'spend_apify_price_in_band',
     _P + 'credential-change-waits-until-open-requests-for-this-provider-settle': 'spend_wait',
     _P + 'apify-build-differs-from-policy-pin': 'spend_build',
     _P + 'apify-account-free-grant-usage-cycle-build-or-pricing-changed': 'spend_provider_changed',

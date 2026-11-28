@@ -150,3 +150,14 @@ def test_the_build_review_alert_never_silences_a_later_failure_alert(harness, mo
     _refreshed(monkeypatch, 'apify_newer_build_unavailable')
     assert maintenance.main(['--apply']) == 0
     assert len(emitted) == 1 and not (root / owner_alert.MARKER).exists()
+
+
+def test_an_in_band_apify_price_rise_tells_the_owner_and_still_succeeds(harness, monkeypatch, capsys):
+    from src.zeitgeist.automatic_spend_runtime import MaintenanceResult
+
+    root, emitted, calls, block = harness
+    after = {'providers': {'apify': {'resolved_reason': 'newest', 'price_band_audit': {'above_approval': [{}]}}}}
+    monkeypatch.setattr(maintenance, 'maintain_spend_control', lambda store, **kw: MaintenanceResult(
+        status='refreshed', operation='refresh', month='2026-11', plan={'after': after}))
+    assert maintenance.main(['--apply']) == 0
+    assert [c['code'] for c in calls] == ['apify-price-in-band']

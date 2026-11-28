@@ -141,6 +141,8 @@ def approved_rate(account, provider, operation, rate_key):
         value = account['request_limits'][operation][rate_key]
     elif provider == 'bfl' and rate_key == 'unit_price_usd':
         value = account['operation_caps_usd'][operation]
+    elif provider == 'apify' and rate_key == 'minimum_run_charge_cap_usd':
+        value = account['approved_pricing_terms']['minimum_run_charge_cap_usd']
     elif provider == 'apify' and isinstance(rate_key, str) and rate_key.startswith('event_price_usd:'):
         parts = rate_key.split(':')
         if len(parts) != 3:
@@ -334,12 +336,30 @@ def in_band_excess_usd(record):
     return excess + (unit or 0)
 
 
+def _apify_snapshot_is_its_pricing(pinned, fresh, price, now):
+    """True when a policy with approved Apify terms sees a fresh snapshot that is exactly the observed pricing.
+
+    The snapshot is then no separate evidence: the Apify branch compares the prices themselves. Any other mismatch
+    (another digest, source or age) still blocks in the snapshot check.
+    """
+    try:
+        return (pinned.get('actor_pricing_terms') is not None and isinstance(fresh.get('pricing'), dict)
+                and price.get('sha256') == digest(fresh['pricing'])
+                and price.get('source_url') == pinned['price_source_url']
+                and timedelta(0) <= now - _time(price.get('observed_at')) <= timedelta(hours=24))
+    except (SpendBlocked, TypeError, ValueError):
+        return False
+
+
 def apify_run_limit(posts, charged, floor):
-    """Apify's provider-enforced charge limit for one run: posts at the charged post rate, never below the floor.
+    """Apify's provider-enforced charge limit for one run: one post of headroom above posts at the charged rate,
+    never below today's fixed 0.002 a post or the run floor.
 
     Exact Decimal, rounded up to a millionth of a dollar. A ceiling the provider enforces, not a predicted bill.
     """
-    limit = max(Decimal('0.005'), Decimal(str(floor)), Decimal(int(posts)) * Decimal(str(charged)))
+    posts = int(posts)
+    limit = max(Decimal('0.005'), Decimal(str(floor)), posts * Decimal('0.002'),
+                (posts + 1) * Decimal(str(charged)))
     return limit.quantize(Decimal('0.000001'), rounding=ROUND_UP)
 
 
@@ -368,8 +388,14 @@ def apify_price_review(terms, fresh):
                 if observed > approved:
                     entries.append({'operation': APIFY_OPERATION, 'rate': f'event_price_usd:{event}:{tier}',
                                     'approved': str(approved_events[event][tier]), 'observed': str(tiers[tier])})
-        if not within_price_band('apify', fresh.get('minimum_run_charge_cap_usd'), terms['minimum_run_charge_cap_usd']):
+        approved_minimum = Decimal(str(terms['minimum_run_charge_cap_usd']))
+        observed_minimum = Decimal(str(fresh.get('minimum_run_charge_cap_usd')))
+        if not within_price_band('apify', observed_minimum, approved_minimum):
             return None
+        if observed_minimum > approved_minimum:
+            entries.append({'operation': APIFY_OPERATION, 'rate': 'minimum_run_charge_cap_usd',
+                            'approved': str(terms['minimum_run_charge_cap_usd']),
+                            'observed': str(fresh.get('minimum_run_charge_cap_usd'))})
         return entries
     except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError):
         return None
@@ -837,7 +863,9 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
             _rebind_credential(candidate, provider, account, pinned, fresh, observation['observed_at'])
         if pinned['price_evidence_mode'] == 'dynamic_snapshot':
             price = observation.get('price_snapshots', {}).get(provider, {})
-            if price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
+            if provider == 'apify' and _apify_snapshot_is_its_pricing(pinned, fresh, price, now):
+                pass  # The Apify branch below judges these prices against the approved terms (SIY-291).
+            elif price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
                 # A provider edits its pricing page without changing rates: compare the rates in effect.
                 checker = {'gemini': gemini_rate_review, 'bfl': bfl_rate_excess}.get(provider)
                 excess = checker(account, pinned, price, now) if checker else None
