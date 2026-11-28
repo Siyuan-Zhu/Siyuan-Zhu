@@ -7,7 +7,7 @@ reviewed operation. API observation times never replace manual evidence times.
 from __future__ import annotations
 import copy
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_UP, Decimal, InvalidOperation
 import hashlib
 import json
 import math
@@ -332,6 +332,15 @@ def in_band_excess_usd(record):
             raise SpendBlocked(tariff)
         excess += post * posts
     return excess + (unit or 0)
+
+
+def apify_run_limit(posts, charged, floor):
+    """Apify's provider-enforced charge limit for one run: posts at the charged post rate, never below the floor.
+
+    Exact Decimal, rounded up to a millionth of a dollar. A ceiling the provider enforces, not a predicted bill.
+    """
+    limit = max(Decimal('0.005'), Decimal(str(floor)), Decimal(int(posts)) * Decimal(str(charged)))
+    return limit.quantize(Decimal('0.000001'), rounding=ROUND_UP)
 
 
 def apify_price_review(terms, fresh):

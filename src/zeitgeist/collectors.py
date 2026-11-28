@@ -1376,7 +1376,9 @@ def fetch_instagram_batch(
     build = configured_build  # replaced by the policy pin once the guard is known
     # This is a provider-enforced total charge cap, not a predicted bill. Credits
     # and remaining cash are reserved separately by the shared account ledger.
-    maximum_charge = max(0.005, len(cleaned_handles) * per_handle_cap * 0.002)
+    posts = len(cleaned_handles) * per_handle_cap
+    maximum_charge = max(0.005, posts * 0.002)
+    hold_context = None
     from .spend_guard import get_spend_guard
     now_utc = datetime.now(timezone.utc)
     fetched_at = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1396,6 +1398,16 @@ def fetch_instagram_batch(
         # only agree with it.
         build = approved_apify_build(getattr(guard, "automatic_policy", None), configured_build,
                                      resolution=_apify_resolution(guard))
+        # Under a policy with approved price terms (SIY-291) the limit follows the charged post rate, and the hold
+        # records the rates it was admitted at.
+        read_rates = getattr(guard, "apify_post_rates", None)
+        rates = read_rates() if callable(read_rates) else None
+        if rates is not None:
+            from .automatic_spend import APIFY_POST_RATE, apify_run_limit
+            charged, approved, floor = rates
+            maximum_charge = float(apify_run_limit(posts, charged, floor))
+            hold_context = {APIFY_POST_RATE: str(charged), "approved_" + APIFY_POST_RATE: str(approved),
+                            "max_posts": posts}
         def request():
             nonlocal response_status
             with httpx.Client(timeout=request_timeout, follow_redirects=False) as client:
@@ -1413,7 +1425,8 @@ def fetch_instagram_batch(
         from .provider_lifecycle import begin_lifecycle, fetch_apify_lifecycle, request_digest
         digest = request_digest({"provider": "apify", "actor": "apify~instagram-post-scraper",
             "build": build, "maxTotalChargeUsd": maximum_charge, "timeout": 300, "input": payload})
-        lifecycle = begin_lifecycle(guard, "apify", "instagram-post-scraper", maximum_charge, digest)
+        lifecycle = begin_lifecycle(guard, "apify", "instagram-post-scraper", maximum_charge, digest,
+                                    context=hold_context)
         if lifecycle is None:
             dataset = guard.call("apify", "instagram-post-scraper", maximum_charge, request)
         else:

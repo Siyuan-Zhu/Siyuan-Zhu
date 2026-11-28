@@ -37,11 +37,14 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def begin_lifecycle(guard, provider, operation, maximum, digest):
+def begin_lifecycle(guard, provider, operation, maximum, digest, *, context=None):
     begin = getattr(guard, "begin_provider_request", None)
     if begin is None:
         return None
-    handle = begin(provider, operation, maximum, digest)
+    if context is None:
+        handle = begin(provider, operation, maximum, digest)
+    else:
+        handle = begin(provider, operation, maximum, digest, context=context)
     if handle is not None:
         if (
             not isinstance(handle.reservation_id, str)

@@ -157,3 +157,125 @@ def test_in_band_excess_counts_posts():
             context['max_posts'] = posts
         with pytest.raises(SpendBlocked):
             auto.in_band_excess_usd(_record(context))
+
+
+# --- Task 2: the hold records its post rates; the run's charge limit follows the charged rate ---
+
+import httpx
+
+from src.zeitgeist import collectors
+from src.zeitgeist.automatic_guard import AutomaticBudgetGuard
+from src.zeitgeist.spend_guard import MemoryLedger
+from tests import test_provider_lifecycle_receipts as lifecycle_tests
+
+DIGEST = 'a' * 64
+
+
+def apify_guard(observed=None):
+    ledger, policy, observation = setup(observed)
+    ledger.update(credential_binding_required=True, budget_scope='new_requests_after_cutoff')
+    ledger['automatic_policy_sha256'] = auto.digest(policy)
+    refreshed = auto.prepare_refresh(ledger, policy, observation, expected_policy_sha=auto.digest(policy), now=NOW)['after']
+    for item in refreshed['providers'].values():
+        item['verified_at'] = '2026-10-27T00:00:00Z'
+    store = MemoryLedger(refreshed)
+    guard = AutomaticBudgetGuard(store, policy, auto.digest(policy), lambda: NOW,
+                                 credential_fingerprints={'gemini': 'a' * 16, 'bfl': 'b' * 16, 'apify': 'c' * 16},
+                                 require_credential_binding=True)
+    return guard, store
+
+
+def context(charged, approved='0.0017', posts=60):
+    return {auto.APIFY_POST_RATE: charged, 'approved_' + auto.APIFY_POST_RATE: approved, 'max_posts': posts}
+
+
+def held(store):
+    (record,) = [r for r in store.mutate(lambda d: copy.deepcopy(d))['reservations'].values() if r['provider'] == 'apify']
+    return record
+
+
+def test_guard_reads_post_rates_and_run_floor():
+    guard, _ = apify_guard(priced({'post:FREE': '0.002'}))
+    assert guard.apify_post_rates() == (Decimal('0.002'), Decimal('0.0017'), Decimal('0.00650'))
+    guard, _ = apify_guard()
+    assert guard.apify_post_rates()[0] == Decimal('0.0017')
+
+
+def test_hold_records_post_rates():
+    guard, store = apify_guard(priced({'post:FREE': '0.002'}))
+    guard.begin_provider_request('apify', OP, 0.12, DIGEST, context=context('0.002'))
+    assert held(store)['request_context'] == context('0.002')
+
+
+def test_twenty_handles_in_band_fit_the_grown_cap():
+    guard, _ = apify_guard(priced({'post:FREE': '0.00221'}))
+    guard.begin_provider_request('apify', OP, 0.221, DIGEST, context=context('0.00221', posts=100))
+    guard, _ = apify_guard()
+    guard.begin_provider_request('apify', OP, 0.17, DIGEST, context=context('0.0017', posts=100))
+
+
+def test_a_limit_above_posts_at_the_charged_rate_is_refused():
+    guard, _ = apify_guard(priced({'post:FREE': '0.002'}))
+    with pytest.raises(SpendBlocked, match='tariff'):
+        guard.begin_provider_request('apify', OP, 0.13, DIGEST, context=context('0.002'))
+
+
+def test_stale_rate_context_is_refused():
+    guard, _ = apify_guard(priced({'post:FREE': '0.002'}))
+    with pytest.raises(SpendBlocked, match='retry admission'):
+        guard.begin_provider_request('apify', OP, 0.102, DIGEST, context=context('0.0017'))
+
+
+class RatedGuard(lifecycle_tests.Guard):
+    def __init__(self, events, rates):
+        super().__init__(events)
+        self.rates, self.contexts = rates, []
+
+    def apify_post_rates(self):
+        return self.rates
+
+    def begin_provider_request(self, provider, operation, maximum, digest, *, context=None):
+        self.contexts.append(context)
+        return super().begin_provider_request(provider, operation, maximum, digest)
+
+
+def collect(monkeypatch, guard, handles):
+    limits = []
+
+    def handle(request):
+        if request.method == 'POST':
+            limits.append(request.url.params['maxTotalChargeUsd'])
+            return httpx.Response(201, json={'data': lifecycle_tests.run_body('RUNNING')})
+        if request.url.path.endswith('/dataset/items'):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={'data': lifecycle_tests.run_body()})
+
+    lifecycle_tests.wire(monkeypatch, handle)
+    collectors.fetch_instagram_batch(handles, 'fixture-private-key', spend_guard=guard, actor_build='0.0.648')
+    return limits
+
+
+HANDLES = ['handle%02d' % i for i in range(12)]
+
+
+@pytest.mark.parametrize('charged,limit', [('0.0017', '0.102'), ('0.002', '0.12'), ('0.00221', '0.1326')])
+def test_collector_limit_follows_charged_rate(monkeypatch, charged, limit):
+    guard = RatedGuard([], (Decimal(charged), Decimal('0.0017'), Decimal('0.0065')))
+    assert collect(monkeypatch, guard, HANDLES) == [limit]
+    assert guard.contexts == [context(charged)]
+
+
+def test_collector_floor_for_a_single_handle(monkeypatch):
+    guard = RatedGuard([], (Decimal('0.0017'), Decimal('0.0017'), Decimal('0.0065')))
+    assert collect(monkeypatch, guard, ['solo']) == ['0.0085']
+
+
+def test_collector_never_sends_a_limit_below_the_floor(monkeypatch):
+    # The fixture run charges 0.0068, so the floor here sits above it.
+    guard = RatedGuard([], (Decimal('0.0001'), Decimal('0.0017'), Decimal('0.007')))
+    assert collect(monkeypatch, guard, ['solo']) == ['0.007']
+
+
+def test_a_guard_without_rates_keeps_the_fixed_limit(monkeypatch):
+    guard = lifecycle_tests.Guard([])
+    assert collect(monkeypatch, guard, HANDLES) == ['0.12']
