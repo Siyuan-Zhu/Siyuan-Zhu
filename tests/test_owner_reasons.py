@@ -213,3 +213,9 @@ def test_an_apify_build_fallback_resolves_to_a_plain_words_review(code, cls):
     out, reason = R.resolve(stage='spend_maintenance', code=code)
     assert out == code and reason.cls == cls
     assert 'last good' in reason.tonight
+
+
+def test_an_in_band_apify_price_rise_resolves_to_a_plain_words_watch():
+    out, reason = R.resolve(stage='spend_maintenance', code='apify-price-in-band')
+    assert out == 'apify-price-in-band' and reason.cls == 'watch-on-it'
+    assert '30%' in reason.headline and 'new price' in reason.tonight

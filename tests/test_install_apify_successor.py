@@ -41,7 +41,7 @@ def test_a_policy_already_in_newest_safe_mode_is_refused():
 def test_the_receipts_extend_the_policy_chain():
     assert runtime.APIFY_SUCCESSOR_RECEIPT_ID == 'spend_successor_20261128'
     assert runtime.APIFY_ROLLBACK_RECEIPT_ID == 'spend_rollback_20261128'
-    assert runtime.POLICY_REPAIR_RECEIPTS[-2:] == ('spend_successor_20261128', 'spend_rollback_20261128')
+    assert runtime.POLICY_REPAIR_RECEIPTS[-4:-2] == ('spend_successor_20261128', 'spend_rollback_20261128')
 
 
 def test_plan_writes_nothing_and_names_the_new_policy(monkeypatch):

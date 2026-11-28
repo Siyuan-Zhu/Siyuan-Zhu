@@ -168,8 +168,31 @@ class AutomaticBudgetGuard(BudgetGuard):
             raise SpendBlocked('Billing reconciliation required')
         return account
 
-    def begin_provider_request(self, provider, operation, maximum, request_sha256):
-        context = None
+    def apify_post_rates(self):
+        """(charged, approved, run floor) for one Apify basic-data post, from the refreshed ledger (SIY-291).
+
+        None under a policy that records no approved Apify price terms: the collector keeps its fixed limit.
+        """
+        def rates(document):
+            account = self._validate(document, 'apify')
+            try:
+                charged = accounting.charged_rate(account, 'apify', accounting.APIFY_OPERATION, accounting.APIFY_POST_RATE)
+                approved = accounting.approved_rate(account, 'apify', accounting.APIFY_OPERATION, accounting.APIFY_POST_RATE)
+                minimum = Decimal(str(account['approved_pricing_terms']['minimum_run_charge_cap_usd']))
+            except (KeyError, InvalidOperation, TypeError, ValueError):
+                return None
+            return charged, approved, minimum * (1 + accounting.PRICE_TOLERANCE['apify'])
+        return self.ledger.mutate(rates)
+
+    def begin_provider_request(self, provider, operation, maximum, request_sha256, *, context=None):
+        if context is not None:
+            # Only an Apify collection hold carries caller rates; they and its limit must be the ledger's own.
+            posts = context.get('max_posts') if isinstance(context, dict) else None
+            rates = self.apify_post_rates() if provider == 'apify' else None
+            if (rates is None or type(posts) is not int or posts < 1 or maximum is None
+                    or money(maximum) > accounting.apify_run_limit(posts, rates[0], rates[2])):
+                raise SpendBlocked('Request exceeds verified operation tariff')
+            return self._begin(provider, operation, maximum, request_sha256, context=copy.deepcopy(context))
         if provider == 'bfl' and maximum is None:
             # One image at the charged per-image rate; the hold records both rates.
             def rates(document):

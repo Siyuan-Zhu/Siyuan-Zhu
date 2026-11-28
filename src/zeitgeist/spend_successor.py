@@ -263,3 +263,58 @@ def pointer_ledger(ledger: dict, policy_sha: str) -> dict:
     result = copy.deepcopy(ledger)
     result["automatic_policy_sha256"] = policy_sha
     return result
+
+
+# The newest-safe-build successor installed on 27 Nov: the base the Apify price-cushion successor changes (SIY-291).
+APIFY_CUSHION_BASE_POLICY_SHA256 = "eeecd6d8b21b65c0ddcf4b0e66a6c8be2e1fd053f83f1fbbfb318875dfa9d483"
+# The Apify actor's price terms David approved, exactly as the provider check records them (read 27 Nov). Their
+# digest is the installed actor_pricing_sha256; the successor refuses any other.
+APIFY_APPROVED_PRICING_TERMS = {
+    "event_prices_usd": {
+        "music-data": {
+            "BRONZE": "0.006",
+            "DIAMOND": "0.002",
+            "FREE": "0.007",
+            "GOLD": "0.004",
+            "PLATINUM": "0.003",
+            "SILVER": "0.005"
+        },
+        "post": {
+            "BRONZE": "0.0015",
+            "DIAMOND": "0.0004",
+            "FREE": "0.0017",
+            "GOLD": "0.001",
+            "PLATINUM": "0.0008",
+            "SILVER": "0.0013"
+        },
+        "post-details": {
+            "BRONZE": "0.0008",
+            "DIAMOND": "0.0001",
+            "FREE": "0.001",
+            "GOLD": "0.0006",
+            "PLATINUM": "0.0002",
+            "SILVER": "0.0007"
+        }
+    },
+    "minimum_run_charge_cap_usd": "0.005",
+    "model": "PAY_PER_EVENT",
+    "started_at": "2026-10-07T13:39:36.280Z"
+}
+
+
+def build_apify_price_cushion_successor(installed: dict, terms: dict = APIFY_APPROVED_PRICING_TERMS) -> dict:
+    """The installed policy with the approved Apify price terms recorded beside their pin; nothing else.
+
+    With the terms recorded, a refresh accepts a price up to 30% above them (automatic_spend.apify_price_review).
+    """
+    apify = installed.get("providers", {}).get("apify")
+    if not isinstance(apify, dict) or "actor_pricing_sha256" not in apify:
+        raise RuntimeError("Installed policy has no Apify pricing pin")
+    if "actor_pricing_terms" in apify:
+        raise RuntimeError("Installed policy already records approved Apify price terms")
+    from .automatic_spend import digest
+    if digest(terms) != apify["actor_pricing_sha256"]:
+        raise RuntimeError("Approved Apify price terms do not match the installed pricing pin")
+    successor = copy.deepcopy(installed)
+    successor["providers"]["apify"]["actor_pricing_terms"] = copy.deepcopy(terms)
+    return successor

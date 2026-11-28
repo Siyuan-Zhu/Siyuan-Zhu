@@ -7,7 +7,7 @@ reviewed operation. API observation times never replace manual evidence times.
 from __future__ import annotations
 import copy
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_UP, Decimal, InvalidOperation
 import hashlib
 import json
 import math
@@ -43,8 +43,8 @@ APIFY_FALLBACK_REASONS = ('apify_newer_build_input_changed', 'apify_newer_build_
 def resolve_apify_build(fresh, pinned):
     """The night's Apify build under newest_safe: Apify's newest build when its input contract holds, else the pin.
 
-    The pin itself has already passed every check of this refresh. Apify prices the actor, not a build, so a price
-    change has already stopped the refresh: there is no build to fall back to at the old price.
+    The pin itself has already passed every check of this refresh. Apify prices the actor, not a build, so the
+    refresh has already judged the price for every build: exact, in band (SIY-291), or blocked.
     """
     pin = (pinned['actor_build'], pinned['actor_build_id'])
     newest = fresh.get('newest_build')
@@ -100,10 +100,13 @@ GEMINI_CONTRACT_CONSTANTS = {'schema_version': 2, 'provider': 'gemini', 'api': '
                              'currency': 'USD', 'service_tier': 'paid_standard', 'unit': '1000000_tokens'}
 
 
-# Owner-approved price tolerance per provider (2a, P2 and 2d, 2026-11-13): a current rate up to
-# approved * (1 + band) passes. The base is always the policy-approved rate, never an observation.
-# A provider with no entry (Apify) has no band.
-PRICE_TOLERANCE = {'gemini': Decimal('0.10'), 'bfl': Decimal('0.15')}
+# Owner-approved price tolerance per provider (2a, P2 and 2d, 2026-11-13; Apify 2026-11-27, SIY-291): a
+# current rate up to approved * (1 + band) passes. The base is always the policy-approved rate, never an
+# observation. Apify's band applies only under a policy that records its approved price terms.
+PRICE_TOLERANCE = {'gemini': Decimal('0.10'), 'bfl': Decimal('0.15'), 'apify': Decimal('0.30')}
+APIFY_OPERATION = 'instagram-post-scraper'
+# The one Apify rate a collection hold is charged at: a basic-data post on the FREE plan.
+APIFY_POST_RATE = 'event_price_usd:post:FREE'
 # David (2026-11-13): "if the spend increase isn't significant enough to cause a more than 5 dollar
 # monthly increase, take it, prioritize production stability and reliability technically."
 # The director reads that as: a provider-reported charge above its hold settles at the reported cost
@@ -138,6 +141,13 @@ def approved_rate(account, provider, operation, rate_key):
         value = account['request_limits'][operation][rate_key]
     elif provider == 'bfl' and rate_key == 'unit_price_usd':
         value = account['operation_caps_usd'][operation]
+    elif provider == 'apify' and rate_key == 'minimum_run_charge_cap_usd':
+        value = account['approved_pricing_terms']['minimum_run_charge_cap_usd']
+    elif provider == 'apify' and isinstance(rate_key, str) and rate_key.startswith('event_price_usd:'):
+        parts = rate_key.split(':')
+        if len(parts) != 3:
+            raise KeyError(rate_key)
+        value = account['approved_pricing_terms']['event_prices_usd'][parts[1]][parts[2]]
     else:
         raise KeyError(rate_key)
     return Decimal(str(value))
@@ -201,7 +211,8 @@ def charged_rate(account, provider, operation, rate_key):
 # The rates of one hold, each paired with the key under which the hold records its approved rate.
 _RATE_PAIRS = {'gemini': (('input_token_usd_per_million', 'approved_input_token_usd_per_million'),
                           ('output_token_usd_per_million', 'approved_output_token_usd_per_million')),
-               'bfl': (('unit_price_usd', 'approved_unit_price_usd'),)}
+               'bfl': (('unit_price_usd', 'approved_unit_price_usd'),),
+               'apify': ((APIFY_POST_RATE, 'approved_' + APIFY_POST_RATE),)}
 
 
 def effective_cap(account, provider, operation):
@@ -316,7 +327,78 @@ def in_band_excess_usd(record):
             raise SpendBlocked(tariff)
         excess += sum((Decimal(count) * (rate or 0) for count, rate in zip(tokens, deltas)), Decimal('0')) / 10**6
     unit = delta(*_RATE_PAIRS['bfl'][0])
+    post = delta(*_RATE_PAIRS['apify'][0])
+    if post is not None:
+        posts = context.get('max_posts')
+        if type(posts) is not int or posts < 0:
+            raise SpendBlocked(tariff)
+        excess += post * posts
     return excess + (unit or 0)
+
+
+def _apify_snapshot_is_its_pricing(pinned, fresh, price, now):
+    """True when a policy with approved Apify terms sees a fresh snapshot that is exactly the observed pricing.
+
+    The snapshot is then no separate evidence: the Apify branch compares the prices themselves. Any other mismatch
+    (another digest, source or age) still blocks in the snapshot check.
+    """
+    try:
+        return (pinned.get('actor_pricing_terms') is not None and isinstance(fresh.get('pricing'), dict)
+                and price.get('sha256') == digest(fresh['pricing'])
+                and price.get('source_url') == pinned['price_source_url']
+                and timedelta(0) <= now - _time(price.get('observed_at')) <= timedelta(hours=24))
+    except (SpendBlocked, TypeError, ValueError):
+        return False
+
+
+def apify_run_limit(posts, charged, floor):
+    """Apify's provider-enforced charge limit for one run: one post of headroom above posts at the charged rate,
+    never below today's fixed 0.002 a post or the run floor.
+
+    Exact Decimal, rounded up to a millionth of a dollar. A ceiling the provider enforces, not a predicted bill.
+    """
+    posts = int(posts)
+    limit = max(Decimal('0.005'), Decimal(str(floor)), posts * Decimal('0.002'),
+                (posts + 1) * Decimal(str(charged)))
+    return limit.quantize(Decimal('0.000001'), rounding=ROUND_UP)
+
+
+def apify_price_review(terms, fresh):
+    """Apify's in-band review of the actor's current price terms against the policy-approved terms (SIY-291).
+
+    None blocks: a changed pricing model, an added or removed event or tier, a malformed price, or any price or
+    the minimum run charge above approved * 1.30. Otherwise the audit entries, one per price above its approved
+    value, sorted; [] when nothing rose (a price entry re-issued at the same prices only changes started_at).
+    """
+    try:
+        if not isinstance(terms, dict) or not isinstance(fresh, dict) or fresh.get('model') != terms['model']:
+            return None
+        approved_events, observed_events = terms['event_prices_usd'], fresh.get('event_prices_usd')
+        if not isinstance(observed_events, dict) or set(observed_events) != set(approved_events):
+            return None
+        entries = []
+        for event in sorted(approved_events):
+            tiers = observed_events[event]
+            if not isinstance(tiers, dict) or set(tiers) != set(approved_events[event]):
+                return None
+            for tier in sorted(tiers):
+                approved, observed = Decimal(str(approved_events[event][tier])), Decimal(str(tiers[tier]))
+                if not within_price_band('apify', observed, approved):
+                    return None
+                if observed > approved:
+                    entries.append({'operation': APIFY_OPERATION, 'rate': f'event_price_usd:{event}:{tier}',
+                                    'approved': str(approved_events[event][tier]), 'observed': str(tiers[tier])})
+        approved_minimum = Decimal(str(terms['minimum_run_charge_cap_usd']))
+        observed_minimum = Decimal(str(fresh.get('minimum_run_charge_cap_usd')))
+        if not within_price_band('apify', observed_minimum, approved_minimum):
+            return None
+        if observed_minimum > approved_minimum:
+            entries.append({'operation': APIFY_OPERATION, 'rate': 'minimum_run_charge_cap_usd',
+                            'approved': str(terms['minimum_run_charge_cap_usd']),
+                            'observed': str(fresh.get('minimum_run_charge_cap_usd'))})
+        return entries
+    except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError):
+        return None
 
 
 def gemini_rates_within_approval(account, pinned, price, now):
@@ -556,6 +638,10 @@ def validate_policy(policy, expected_policy_sha, now):
             raise SpendBlocked('Approved immutable actor build image and schema required')
         if provider == 'apify' and item.get('actor_build_mode', 'pinned') not in APIFY_BUILD_MODES:
             raise SpendBlocked('Approved immutable actor build image and schema required')
+        if provider == 'apify' and 'actor_pricing_terms' in item and (
+                not isinstance(item['actor_pricing_terms'], dict)
+                or digest(item['actor_pricing_terms']) != item.get('actor_pricing_sha256')):
+            raise SpendBlocked('Approved immutable actor build image and schema required')
     return policy
 
 
@@ -777,7 +863,9 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
             _rebind_credential(candidate, provider, account, pinned, fresh, observation['observed_at'])
         if pinned['price_evidence_mode'] == 'dynamic_snapshot':
             price = observation.get('price_snapshots', {}).get(provider, {})
-            if price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
+            if provider == 'apify' and _apify_snapshot_is_its_pricing(pinned, fresh, price, now):
+                pass  # The Apify branch below judges these prices against the approved terms (SIY-291).
+            elif price.get('sha256') != pinned['price_snapshot_sha256'] or price.get('source_url') != pinned['price_source_url'] or not timedelta(0) <= now-_time(price.get('observed_at')) <= timedelta(hours=24):
                 # A provider edits its pricing page without changing rates: compare the rates in effect.
                 checker = {'gemini': gemini_rate_review, 'bfl': bfl_rate_excess}.get(provider)
                 excess = checker(account, pinned, price, now) if checker else None
@@ -837,9 +925,31 @@ def prepare_refresh(ledger, policy, observation, *, expected_policy_sha, now):
                 fresh.get('build_id') != pinned['actor_build_id'] or
                 (fresh.get('image_digest') is not None and pinned.get('actor_image_digest') is not None
                  and fresh.get('image_digest') != pinned['actor_image_digest']) or
-                fresh.get('input_schema_sha256') != pinned['actor_schema_sha256'] or
-                digest(fresh.get('pricing')) != pinned['actor_pricing_sha256']):
+                fresh.get('input_schema_sha256') != pinned['actor_schema_sha256']):
                 raise SpendBlocked('Apify account, free grant, usage cycle, build or pricing changed')
+            # The price: the pinned terms exactly, or (under a policy that records them) within the band of them.
+            terms = pinned.get('actor_pricing_terms')
+            if digest(fresh.get('pricing')) == pinned['actor_pricing_sha256']:
+                review = []
+            else:
+                review = apify_price_review(terms, fresh.get('pricing')) if terms is not None else None
+            if review is None:
+                raise SpendBlocked('Apify account, free grant, usage cycle, build or pricing changed')
+            if terms is not None:
+                account['approved_pricing_terms'] = copy.deepcopy(terms)
+            else:
+                account.pop('approved_pricing_terms', None)
+            if review:
+                account['price_observed_sha256'] = digest(fresh['pricing'])
+                account['price_observed_at'] = observation['observed_at']
+                account['price_band_audit'] = {
+                    'schema_version': 1, 'tolerance': str(PRICE_TOLERANCE[provider]),
+                    'basis': 'policy_approved_rate', 'observed_sha256': account['price_observed_sha256'],
+                    'observed_at': account['price_observed_at'], 'above_approval': review}
+            else:
+                account.pop('price_observed_sha256', None)
+                account.pop('price_observed_at', None)
+                account.pop('price_band_audit', None)
             cycle = billing['usage_cycle']; start, end = _time(cycle['startAt']), _time(cycle['endAt'])
             if not start <= now < end:
                 raise SpendBlocked('Apify cycle not active')

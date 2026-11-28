@@ -865,7 +865,7 @@ def band_audit(ledger,policy,obs,rates,**extra):
 
 
 def test_price_tolerance_is_the_owner_approved_per_provider_band():
-    assert auto.PRICE_TOLERANCE=={'gemini':Decimal('0.10'),'bfl':Decimal('0.15')}
+    assert auto.PRICE_TOLERANCE=={'gemini':Decimal('0.10'),'bfl':Decimal('0.15'),'apify':Decimal('0.30')}
 
 
 @pytest.mark.parametrize('rates,raised',[
