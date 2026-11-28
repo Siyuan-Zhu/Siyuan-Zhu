@@ -305,3 +305,45 @@ def test_collector_never_sends_a_limit_below_the_floor(monkeypatch):
 def test_a_guard_without_rates_keeps_the_fixed_limit(monkeypatch):
     guard = lifecycle_tests.Guard([])
     assert collect(monkeypatch, guard, HANDLES) == ['0.12']
+
+
+
+# --- End to end: the real collector through the real guard to settlement (production-shaped policy) ---
+
+def run_through(monkeypatch, observed, handles):
+    guard, store = apify_guard(observed)
+    sent = []
+
+    def handle(request):
+        if request.method == 'POST':
+            sent.append(request.url.params['maxTotalChargeUsd'])
+            return httpx.Response(201, json={'data': lifecycle_tests.run_body('RUNNING')})
+        if request.url.path.endswith('/dataset/items'):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={'data': lifecycle_tests.run_body()})
+
+    lifecycle_tests.wire(monkeypatch, handle)
+    # The guard's clock is the fixture's NOW; the lifecycle stamps the submission with its own clock.
+    from src.zeitgeist import provider_lifecycle
+    monkeypatch.setattr(provider_lifecycle, 'utc_now', lambda: NOW.isoformat().replace('+00:00', 'Z'))
+    collectors.fetch_instagram_batch(handles, 'fixture-private-key', spend_guard=guard, actor_build='0.0.648')
+    return sent, held(store), store
+
+
+@pytest.mark.parametrize('observed,charged,limit', [
+    (None, '0.0017', '0.12'),
+    (priced({'post:FREE': '0.00221'}), '0.00221', '0.13481'),
+])
+def test_a_collection_runs_through_the_real_guard_and_settles(monkeypatch, observed, charged, limit):
+    sent, record, store = run_through(monkeypatch, observed, HANDLES)
+    assert sent == [limit]
+    assert record['request_context'] == context(charged)
+    assert record['max_gross_usd'] == limit
+    assert record['status'] == 'settled' and record['actual_gross_usd'] == '0.0068'
+
+
+def test_after_a_rollback_a_hold_with_rates_still_counts_without_the_terms(monkeypatch):
+    sent, record, store = run_through(monkeypatch, priced({'post:FREE': '0.002'}), HANDLES)
+    ledger = store.mutate(lambda d: copy.deepcopy(d))
+    ledger['providers']['apify'].pop('approved_pricing_terms')
+    assert auto.month_spend_increase_usd(ledger) == Decimal('0.018')
