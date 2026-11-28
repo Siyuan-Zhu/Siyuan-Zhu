@@ -59,7 +59,7 @@ def test_the_successor_refuses_a_policy_with_terms():
 def test_the_receipts_extend_the_policy_chain():
     assert runtime.APIFY_CUSHION_RECEIPT_ID == 'spend_successor_20261128_cushion'
     assert runtime.APIFY_CUSHION_ROLLBACK_RECEIPT_ID == 'spend_rollback_20261128_cushion'
-    assert runtime.POLICY_REPAIR_RECEIPTS[-4:] == ('spend_successor_20261128', 'spend_rollback_20261128',
+    assert runtime.POLICY_REPAIR_RECEIPTS[-6:-2] == ('spend_successor_20261128', 'spend_rollback_20261128',
                                                    'spend_successor_20261128_cushion', 'spend_rollback_20261128_cushion')
 
 

@@ -1,7 +1,8 @@
 """Current public standard-paid tariffs for the two approved Gemini operations.
 
-The generation table publishes a December 31 deadline. The embedding table
-publishes a current rate only; no validity commitment is invented for it.
+The 3.8 Flash table published a dated schedule (a 2026 rate through December 31, the 2027
+rate from January 1); once Google drops that wording it publishes one current rate. The
+embedding table publishes a current rate only; no validity commitment is invented for either.
 """
 from __future__ import annotations
 from html.parser import HTMLParser
@@ -215,6 +216,24 @@ def _dated_rate(value):
     return format(money(match[1]).normalize(),'f'), format(money(match[2]).normalize(),'f')
 
 
+def _flash_operation(paid):
+    """3.8 Flash's rates: the dated 2026/2027 schedule, or one current rate per row once Google drops it.
+
+    Both rows must take the same form; a mix raises. The dated contract is unchanged, so its digest is too.
+    """
+    rows = paid['input price'], paid['output price (including thinking tokens)']
+    try:
+        (input_rate, future_input), (output_rate, future_output) = map(_dated_rate, rows)
+    except ValueError:
+        return _current_only_operation('gemini-3.8-flash')(paid)
+    return {'model':'gemini-3.8-flash','input_token_usd_per_million':input_rate,
+        'output_token_usd_per_million':output_rate,'output_includes_thinking':True,
+        'published_current_rate_through_date':'2026-12-31',
+        'published_future_rate_from_date':'2027-01-01',
+        'future_input_token_usd_per_million':future_input,
+        'future_output_token_usd_per_million':future_output}
+
+
 def _markdoc_section(identity, heading, content):
     output = []
     output.append('<h2 id="'+identity+'">'+escape(heading.split('{%')[0].strip())+'</h2>')
@@ -293,8 +312,8 @@ def _markdoc_html(body):
     return ''.join(output)
 
 
-def _gemini_4_operation(model):
-    """A Gemini 4 section's current text rates; it publishes no dated schedule."""
+def _current_only_operation(model):
+    """A section's current text rates, when it publishes no dated schedule."""
     return lambda paid: {'model':model,'input_token_usd_per_million':_current_rate(paid['input price']),
         'output_token_usd_per_million':_current_rate(paid['output price (including thinking tokens)']),
         'output_includes_thinking':True,'published_rate_schedule':'current_only'}
@@ -319,8 +338,8 @@ def normalize_gemini_tariff(html):
         generation, generation_conditions = _rows(parser, 'gemini-3.8-flash', (
             'input price','output price (including thinking tokens)','context caching price',
             'grounding with google search','grounding with google maps','used to improve our products'))
-        hydrogen = _optional_operation(parser, HYDROGEN_SECTION, GEMINI_4_ROWS, _gemini_4_operation('gemini-4-hydrogen'))
-        neon = _optional_operation(parser, NEON_SECTION, GEMINI_4_ROWS, _gemini_4_operation('gemini-4-neon'))
+        hydrogen = _optional_operation(parser, HYDROGEN_SECTION, GEMINI_4_ROWS, _current_only_operation('gemini-4-hydrogen'))
+        neon = _optional_operation(parser, NEON_SECTION, GEMINI_4_ROWS, _current_only_operation('gemini-4-neon'))
         # Other-modality rows are bound as labels only; only the text rate is emitted.
         embedding_2 = _optional_operation(parser, EMBEDDING_2_SECTION, (
             'text input price','image input price','audio input price','video input price',
@@ -328,19 +347,11 @@ def normalize_gemini_tariff(html):
             lambda paid: {'model':'gemini-embedding-2','input_token_usd_per_million':_current_rate(paid['text input price']),
                 'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'})
         embedding, embedding_conditions = _rows(parser, 'gemini-embedding', ('input price','used to improve our products'))
-        input_rate, future_input = _dated_rate(generation['input price'])
-        output_rate, future_output = _dated_rate(generation['output price (including thinking tokens)'])
         match = re.fullmatch(CURRENCY_PREFIX + r'(\d+(?:\.\d+)?)', embedding['input price'])
         if not match or money(match[1]) <= 0:
             raise ValueError('Unrecognized current input-only embedding tariff')
         operations = {
-            'generate_content:gemini-3.8-flash':{
-                'model':'gemini-3.8-flash','input_token_usd_per_million':input_rate,
-                'output_token_usd_per_million':output_rate,'output_includes_thinking':True,
-                'published_current_rate_through_date':'2026-12-31',
-                'published_future_rate_from_date':'2027-01-01',
-                'future_input_token_usd_per_million':future_input,
-                'future_output_token_usd_per_million':future_output},
+            'generate_content:gemini-3.8-flash':_flash_operation(generation),
             'embed_content:gemini-embedding-001':{
                 'model':'gemini-embedding-001','input_token_usd_per_million':format(money(match[1]).normalize(),'f'),
                 'billing_basis':'input_tokens','input_modalities':['text'],'output_type':'embedding'}}

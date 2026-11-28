@@ -64,24 +64,45 @@ def refresh(ledger,policy,observation,now=NOW):
     return auto.prepare_refresh(ledger,policy,observation,expected_policy_sha=auto.digest(policy),now=now)['after']
 
 
+# David, 2026-11-28 (SIY-198): a 30 USD policy ceiling, matching Google's 30 USD monthly auto-charge limit.
+RELOAD_CEILING = '30.00'
+
+
 def with_approved_reload(policy):
-    policy=copy.deepcopy(policy);policy.update(cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'])
+    policy=copy.deepcopy(policy);policy.update(cash_ceiling_usd=RELOAD_CEILING,credit_only_providers=['apify','bfl'])
     gemini=policy['providers']['gemini'];gemini.pop('top_up_disabled_attestation',None)
     gemini['billing_account_id']='AAAAAA-BBBBBB-CCCCCC'
     gemini['bounded_auto_reload_attestation']={'automatic_top_up_enabled':True,
         'billing_account_id':gemini['billing_account_id'],'trigger_balance_usd':'5',
-        'reload_amount_usd':'5','monthly_auto_charge_limit_usd':'10',
+        'reload_amount_usd':'5','monthly_auto_charge_limit_usd':'30',
         'observed_at':'2026-10-30T15:30:00Z','reference':'explicit-owner-approved-current-reload-settings'}
     return policy
 
 
-def test_explicit_approved_ten_cash_policy_keeps_bounded_reload_on():
+def test_explicit_approved_thirty_cash_policy_keeps_bounded_reload_on():
     ledger,policy,obs=fixtures();policy=with_approved_reload(policy)
-    ledger.update(cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'],automatic_policy_sha256=auto.digest(policy))
+    ledger.update(cash_ceiling_usd='30.00',credit_only_providers=['apify','bfl'],automatic_policy_sha256=auto.digest(policy))
     assert auto.validate_policy(policy,auto.digest(policy),NOW)==policy
-    assert refresh(ledger,policy,obs)['cash_ceiling_usd']=='10.00'
+    assert refresh(ledger,policy,obs)['cash_ceiling_usd']=='30.00'
     policy['providers']['gemini']['bounded_auto_reload_attestation']['monthly_auto_charge_limit_usd']='20'
     with pytest.raises(SpendBlocked):auto.validate_policy(policy,auto.digest(policy),NOW)
+
+
+def test_the_superseded_ten_dollar_reload_shape_is_refused():
+    policy=with_approved_reload(fixtures()[1]);policy['cash_ceiling_usd']='10.00'
+    policy['providers']['gemini']['bounded_auto_reload_attestation']['monthly_auto_charge_limit_usd']='10'
+    with pytest.raises(SpendBlocked,match='bounded Gemini reload'):
+        auto.validate_policy(policy,auto.digest(policy),NOW)
+
+
+@pytest.mark.parametrize('ceiling,accepted',[('30.00',True),('30.01',False),('0',False)])
+def test_policy_cash_ceiling_is_at_most_thirty(ceiling,accepted):
+    policy=fixtures()[1];policy['cash_ceiling_usd']=ceiling
+    if accepted:
+        assert auto.validate_policy(policy,auto.digest(policy),NOW)==policy
+    else:
+        with pytest.raises(SpendBlocked,match='30 USD cash ceiling'):
+            auto.validate_policy(policy,auto.digest(policy),NOW)
 
 
 def test_reload_on_cannot_fit_the_previous_two_fifty_policy_or_allow_peer_cash():
@@ -97,20 +118,20 @@ def hold(provider,amount,**kw):
 
 
 @pytest.mark.parametrize('change', ['reload_amount', 'threshold', 'monthly_limit', 'policy_ceiling'])
-def test_bounded_reload_requires_the_exact_user_approved_five_five_ten_shape(change):
+def test_bounded_reload_requires_the_exact_user_approved_five_five_thirty_shape(change):
     policy=with_approved_reload(fixtures()[1])
     reload=policy['providers']['gemini']['bounded_auto_reload_attestation']
     if change=='reload_amount': reload['reload_amount_usd']='10'
     if change=='threshold': reload['trigger_balance_usd']='100'
     if change=='monthly_limit': reload['monthly_auto_charge_limit_usd']='5'
-    if change=='policy_ceiling': policy['cash_ceiling_usd']='9'
+    if change=='policy_ceiling': policy['cash_ceiling_usd']='29'
     with pytest.raises(SpendBlocked,match='bounded Gemini reload'):
         auto.validate_policy(policy,auto.digest(policy),NOW)
 
 
 def reload_fixtures(now=NOW):
     ledger,policy,obs=fixtures(now);policy=with_approved_reload(policy)
-    ledger.update(cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'],
+    ledger.update(cash_ceiling_usd=RELOAD_CEILING,credit_only_providers=['apify','bfl'],
         automatic_policy_sha256=auto.digest(policy))
     return ledger,policy,obs
 
@@ -613,6 +634,52 @@ def test_current_only_rate_has_no_through_date_to_compare():
     observe_contract(obs,higher)
     excess=auto.gemini_rate_excess(ledger['providers']['gemini'],policy['providers']['gemini'],obs['price_snapshots']['gemini'],NOW)
     assert [(e['rate'],e['observed']) for e in excess]==[('input_token_usd_per_million','0.31')]
+
+
+def approved_through(ledger, policy, valid_until):
+    for limits in (ledger['providers']['gemini']['request_limits'][OP],
+                   policy['providers']['gemini']['account']['request_limits'][OP]):
+        limits['pricing_valid_until'] = valid_until
+    ledger['automatic_policy_sha256'] = auto.digest(policy)
+
+
+def dated_contract(future, from_date='2027-01-01'):
+    """Google's December page: a current rate through 2026-12-31 and the rate from the next day."""
+    return contract_for(rates=('0.15','1.25'), future_input_token_usd_per_million=future[0],
+                        future_output_token_usd_per_million=future[1], published_future_rate_from_date=from_date)
+
+
+def gemini_review(ledger, policy, obs):
+    return auto.gemini_rate_excess(ledger['providers']['gemini'], policy['providers']['gemini'],
+                                   obs['price_snapshots']['gemini'], NOW)
+
+
+def test_an_approval_past_the_dated_rate_reads_the_rate_published_from_the_next_day():
+    """SIY-198: a policy approved at the 2027 rate through 2027 refreshes on Google's December page."""
+    ledger,policy,obs=fixtures();approved_through(ledger,policy,'2027-12-31T23:59:59Z')
+    observe_contract(obs,dated_contract(('0.30','2.50')))
+    assert gemini_review(ledger,policy,obs)==[]
+    refresh(ledger,policy,obs)
+    observe_contract(obs,dated_contract(('0.32','2.50')))
+    assert [(e['rate'],e['observed']) for e in gemini_review(ledger,policy,obs)]==[('input_token_usd_per_million','0.32')]
+
+
+@pytest.mark.parametrize('contract',[
+    dated_contract(('0.34','2.50')),
+    dated_contract(('0.30','2.50'),from_date='2027-02-01'),
+    contract_for(rates=('0.15','1.25')),
+])
+def test_an_approval_past_the_dated_rate_blocks_without_a_covering_next_rate(contract):
+    ledger,policy,obs=fixtures();approved_through(ledger,policy,'2027-12-31T23:59:59Z')
+    observe_contract(obs,contract)
+    with pytest.raises(SpendBlocked,match=PRICE_BLOCK): refresh(ledger,policy,obs)
+
+
+def test_an_approval_within_the_dated_rate_never_reads_the_next_rate():
+    """The installed 2026 approval ends with the dated rate: a higher 2027 rate is not its concern."""
+    ledger,policy,obs=fixtures();approved_through(ledger,policy,'2026-12-31T23:59:59Z')
+    observe_contract(obs,dated_contract(('9','99')))
+    assert gemini_review(ledger,policy,obs)==[]
 
 
 def test_missing_through_date_without_marker_still_blocks():

@@ -31,7 +31,7 @@ def installed():
     account['operation_caps_usd'] = {FLASH_OPERATION: '0.054777', EMBEDDING_001_OPERATION: '0.03072'}
     ledger['providers']['gemini']['operation_caps_usd'] = copy.deepcopy(account['operation_caps_usd'])
     ledger['providers']['gemini']['request_limits'] = copy.deepcopy(account['request_limits'])
-    ledger.update(cash_ceiling_usd='10.00', automatic_policy_sha256=auto.digest(policy))
+    ledger.update(cash_ceiling_usd=policy['cash_ceiling_usd'], automatic_policy_sha256=auto.digest(policy))
     return ledger, policy
 
 
@@ -42,7 +42,7 @@ def test_successor_adds_only_hydrogen():
         'providers.gemini.account.operation_caps_usd.generate_content:gemini-4-hydrogen',
         'providers.gemini.account.request_limits.generate_content:gemini-4-hydrogen',
         'providers.gemini.price_snapshot_sha256']
-    assert p1['cash_ceiling_usd'] == '10.00'
+    assert p1['cash_ceiling_usd'] == p0['cash_ceiling_usd']
     assert (p1['providers']['gemini']['bounded_auto_reload_attestation']
             == p0['providers']['gemini']['bounded_auto_reload_attestation'])
 
@@ -167,7 +167,7 @@ def test_successor_with_embedding_2_adds_both_operations():
     assert account['operation_caps_usd'][HYDROGEN_OPERATION] == '0.128304'
     assert not VALIDITY_KEYS & set(account['request_limits'][EMBEDDING_2_OPERATION])
     assert auto.validate_policy(p1, auto.digest(p1), NOW) == p1
-    assert p1['cash_ceiling_usd'] == '10.00'
+    assert p1['cash_ceiling_usd'] == p0['cash_ceiling_usd']
 
 
 def test_without_embedding_2_the_successor_is_the_hydrogen_only_one():

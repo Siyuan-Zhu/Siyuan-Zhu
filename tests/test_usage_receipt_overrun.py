@@ -150,15 +150,15 @@ def tolerated_record(index, overrun, max_gross='0.07'):
             'basis': 'overruns_only', 'observed_at': NOW.isoformat()}}
 
 
-def tolerance_fixture(prior='0', ceiling='10.00', now=NOW):
-    """A reload-policy ledger (ceiling 10) with prior tolerated overruns and one open BFL hold of 0.07.
+def tolerance_fixture(prior='0', ceiling='30.00', now=NOW):
+    """A reload-policy ledger (ceiling 30) with prior tolerated overruns and one open BFL hold of 0.07.
 
     prior is one amount or a list of amounts, one tolerated record each; their overruns total
     the sum. Any other ceiling gives the plain (non-reload) policy at that ceiling. The ledger is
     ready for AutomaticBudgetGuard without a refresh. Returns (ledger, policy, observation).
     """
     ledger, policy, observation = fixtures(now)
-    if ceiling == '10.00':
+    if ceiling == '30.00':
         policy = with_approved_reload(policy)
         ledger.update(credit_only_providers=['apify', 'bfl'])
     else:

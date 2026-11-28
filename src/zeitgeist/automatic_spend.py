@@ -113,6 +113,9 @@ APIFY_POST_RATE = 'event_price_usd:post:FREE'
 # while the month's spend increase (month_spend_increase_usd) stays at or below this many USD, and the
 # monthly cash ceiling and every credit bound still hold.
 TOLERATED_MONTHLY_INCREASE_USD = money('5')
+# David, 2026-11-22 and 2026-11-28 (SIY-198): the policy's cash ceiling, and with bounded reload on, exactly
+# Google's monthly auto-charge limit for the Gemini prepay account. Reload amount and trigger stay 5 and 5.
+CASH_CEILING_USD = money('30')
 # What the increase counts: 'overruns_only' sums the tolerated overruns above holds; 'both_together'
 # also sums the in-band price excess of the month's holds. Any other value blocks on first use.
 MONTHLY_INCREASE_BASIS = 'both_together'
@@ -431,7 +434,7 @@ def gemini_rate_excess(account, pinned, price, now):
     rates; only the rates in effect matter. A rate above the band, a missing rate
     or operation blocks (None). Otherwise the result lists every rate above its
     approved rate (but within the band), sorted; it is empty when none is. Fields
-    prefixed future_ are never read.
+    prefixed future_ are read only when the approval outlasts the dated current rate.
     """
     review = gemini_rate_review(account, pinned, price, now)
     if review is None or review[1]:
@@ -487,6 +490,17 @@ def _gemini_operation_excess(operation, observed, approved):
             return None
         if input_only and Decimal(str(approved.get('output_token_usd_per_million', '0'))) != 0:
             return None
+        # An approval that outlasts a dated current rate also sees the rate published from the next day,
+        # which has no end date (SIY-198: Google's December page under a policy approved through 2027).
+        outlasts = False
+        if approved.get('pricing_valid_until') is not None and not (
+                observed.get('published_rate_schedule') == 'current_only'
+                and 'published_current_rate_through_date' not in observed):
+            through = date.fromisoformat(observed['published_current_rate_through_date'])
+            if through < _time(approved['pricing_valid_until']).date():
+                if observed.get('published_future_rate_from_date') != (through + timedelta(days=1)).isoformat():
+                    return None
+                outlasts = True
         for key in ('input_token_usd_per_million', 'output_token_usd_per_million'):
             rate = observed.get(key)
             # Input-only operations (embeddings) publish no output rate: that is zero.
@@ -494,18 +508,14 @@ def _gemini_operation_excess(operation, observed, approved):
                 rate = '0'
             if key in approved:
                 rate, ceiling = Decimal(str(rate)), Decimal(str(approved[key]))
+                if outlasts:
+                    rate = max(rate, Decimal(str(observed['future_' + key])))
                 if not rate.is_finite() or not ceiling.is_finite() or not within_price_band('gemini', rate, ceiling):
                     return None
                 if rate > ceiling:
                     excess.append({'operation': operation, 'rate': key,
                                    'approved': format(ceiling.normalize(), 'f'),
                                    'observed': format(rate.normalize(), 'f')})
-        if approved.get('pricing_valid_until') is not None and not (
-                observed.get('published_rate_schedule') == 'current_only'
-                and 'published_current_rate_through_date' not in observed):
-            through = date.fromisoformat(observed['published_current_rate_through_date'])
-            if through < _time(approved['pricing_valid_until']).date():
-                return None
         return excess
     except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError, SpendBlocked):
         return None
@@ -578,8 +588,8 @@ def validate_policy(policy, expected_policy_sha, now):
     if not _time(policy['approved_at']) <= now < _time(policy['valid_until']):
         raise SpendBlocked('Automatic policy expired or future dated')
     ceiling = money(policy.get('cash_ceiling_usd'))
-    if not 0 < ceiling <= money('10'):
-        raise SpendBlocked('Automatic policy exceeds the approved 10 USD cash ceiling')
+    if not 0 < ceiling <= CASH_CEILING_USD:
+        raise SpendBlocked('Automatic policy exceeds the approved 30 USD cash ceiling')
     if not isinstance(policy.get('credit_only_providers', []),list) or set(policy.get('credit_only_providers', []))-{'apify','bfl'}:
         raise SpendBlocked('Unapproved credit-only funding configuration')
     if policy.get('usage_accounting') != 'provider_usage_v1' or set(policy.get('providers', {})) != set(MODES):
@@ -617,10 +627,10 @@ def validate_policy(policy, expected_policy_sha, now):
                     or reload.get('billing_account_id') != item.get('billing_account_id')
                     or not re.fullmatch(r'[A-F0-9]{6}-[A-F0-9]{6}-[A-F0-9]{6}',str(item.get('billing_account_id','')))
                     or not _time(reload.get('observed_at')) <= _time(policy['approved_at'])
-                    or ceiling != money('10')
+                    or ceiling != CASH_CEILING_USD
                     or money(reload.get('reload_amount_usd')) != money('5')
                     or money(reload.get('trigger_balance_usd')) != money('5')
-                    or money(reload.get('monthly_auto_charge_limit_usd')) != money('10')
+                    or money(reload.get('monthly_auto_charge_limit_usd')) != CASH_CEILING_USD
                     or policy.get('credit_only_providers') != ['apify','bfl']):
                     raise SpendBlocked('Verified bounded Gemini reload and credit-only peer providers required')
             elif evidence.get('automatic_top_up_enabled') is not False or not evidence.get('reference') or not _time(evidence.get('observed_at')) <= _time(policy['approved_at']):

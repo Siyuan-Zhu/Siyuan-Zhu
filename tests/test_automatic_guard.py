@@ -201,18 +201,18 @@ def test_completion_near_policy_expiry_uses_original_admission_window():
     with pytest.raises(SpendBlocked):guard.begin_provider_request('bfl','image','.20','b'*64)
 
 
-def test_ten_cash_reload_policy_does_not_authorize_peer_provider_cash_overage():
+def test_thirty_cash_reload_policy_does_not_authorize_peer_provider_cash_overage():
     from tests.test_automatic_spend import with_approved_reload
     guard=budget();guard.automatic_policy=with_approved_reload(guard.automatic_policy)
     guard.expected_policy_sha=auto.digest(guard.automatic_policy)
     guard.ledger.document.update(automatic_policy_sha256=guard.expected_policy_sha,
-        cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'])
+        cash_ceiling_usd='30.00',credit_only_providers=['apify','bfl'])
     guard.ledger.document['providers']['bfl']['credit_baseline_usd']='.10'
     with pytest.raises(SpendBlocked,match='Credit-only'):
         guard.begin_provider_request('bfl','image','.20','a'*64)
     assert not guard.ledger.document['reservations']
     api,calls=client(guard);assert generate(api).response_id=='synthetic-server-response'
-    assert len(calls)==1 and guard.ledger.document['cash_ceiling_usd']=='10.00'
+    assert len(calls)==1 and guard.ledger.document['cash_ceiling_usd']=='30.00'
 
 
 def test_independent_reload_cap_cannot_share_cash_with_an_expired_peer_hold():
@@ -221,9 +221,8 @@ def test_independent_reload_cap_cannot_share_cash_with_an_expired_peer_hold():
     guard.expected_policy_sha=auto.digest(guard.automatic_policy)
     ledger=guard.ledger.document
     ledger.update(automatic_policy_sha256=guard.expected_policy_sha,
-        cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'])
-    # At 9.73 USD starting balance with a 5 USD threshold/reload, 9.74 USD usage triggers
-    # two reloads (10 USD cash). A separate .25 USD peer liability cannot share that cap.
+        cash_ceiling_usd='30.00',credit_only_providers=['apify','bfl'])
+    # 9.72 USD of Gemini reload cash is in use. A separate .25 USD peer liability cannot share that cap.
     for number in range(180):
         ledger['reservations'][str(number)]={'provider':'gemini','operation':OP,
             'status':'settled','max_gross_usd':'.054','actual_gross_usd':'.054',
@@ -243,7 +242,7 @@ def test_direct_gemini_admission_cannot_trust_unresolved_apify_collateral_outsid
     guard.expected_policy_sha=auto.digest(guard.automatic_policy)
     ledger=guard.ledger.document
     ledger.update(automatic_policy_sha256=guard.expected_policy_sha,
-        cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'])
+        cash_ceiling_usd='30.00',credit_only_providers=['apify','bfl'])
     account=ledger['providers']['apify']
     if inactive_period=='expired': account['allowance_expires_at']=(NOW-timedelta(seconds=1)).isoformat()
     else: account['allowance_starts_at']=(NOW+timedelta(seconds=1)).isoformat()
@@ -578,15 +577,15 @@ def test_monthly_ceiling_still_blocks_when_reached_in_band():
 def test_bfl_prepaid_credit_bound_still_blocks_in_band():
     guard=bfl_guard('0.08');document=guard.ledger.document
     policy=guard.automatic_policy
-    policy.update(cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'])
+    policy.update(cash_ceiling_usd='30.00',credit_only_providers=['apify','bfl'])
     policy['providers']['gemini'].pop('top_up_disabled_attestation',None)
     policy['providers']['gemini']['billing_account_id']='AAAAAA-BBBBBB-CCCCCC'
     policy['providers']['gemini']['bounded_auto_reload_attestation']={'automatic_top_up_enabled':True,
         'billing_account_id':'AAAAAA-BBBBBB-CCCCCC','trigger_balance_usd':'5','reload_amount_usd':'5',
-        'monthly_auto_charge_limit_usd':'10','observed_at':'2026-10-30T15:30:00Z',
+        'monthly_auto_charge_limit_usd':'30','observed_at':'2026-10-30T15:30:00Z',
         'reference':'explicit-owner-approved-current-reload-settings'}
     guard.expected_policy_sha=auto.digest(policy)
-    document.update(cash_ceiling_usd='10.00',credit_only_providers=['apify','bfl'],
+    document.update(cash_ceiling_usd='30.00',credit_only_providers=['apify','bfl'],
         automatic_policy_sha256=guard.expected_policy_sha)
     document['providers']['bfl'].update(credit_baseline_usd='0.07',remaining_credit_usd='0.07')
     document['reservations']['settled']={'provider':'bfl','operation':BFL_OP,'max_gross_usd':'0.07',
