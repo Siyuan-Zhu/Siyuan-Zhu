@@ -1,6 +1,82 @@
 {
   "entries": [
     {
+      "artwork_artist": "Anne Nyg\u00e5rd",
+      "artwork_source": "Unsplash",
+      "artwork_title": "Vigil",
+      "artwork_url": "https://unsplash.com/photos/0uRJY0sStM0",
+      "cluster_keywords": [
+        "season bibleproject",
+        "bibleproject com",
+        "journey through",
+        "through season",
+        "bibleproject"
+      ],
+      "commissioned_thesis": "As the calendar turns toward winter's deepest stretch, the day's strongest signal gathers around deliberate anticipation rather than hurried celebration. Across devotional life, a collective cadence is forming\u2014one that treats waiting itself as an active pilgrimage, orienting attention toward an approaching presence through quiet, disciplined observance.",
+      "critic_scores": {
+        "semantic_alignment": 0.94,
+        "composite": 0.912
+      },
+      "date": "2026-11-28",
+      "fallback_webp_path": "assets/pulse/2026-11-28.webp",
+      "flux_model": null,
+      "gloss": "Watchful stillness before a promised arrival.",
+      "headline": "Vigil \u2014 Watchful stillness before a promised arrival.",
+      "image_data_uri": "",
+      "image_url": "https://unsplash.com/photos/0uRJY0sStM0",
+      "mood_votes": {
+        "spot_on": 0,
+        "too_sunny": 0,
+        "too_heavy": 0
+      },
+      "orbit_sources_matched": [],
+      "publication_id": "7208af091a5fb7bf8b1e",
+      "published_at": "2026-11-28T08:53:23.759280Z",
+      "quote": "Watchful stillness before a promised arrival.",
+      "quote_attribution": "Editorial Director Synthesis",
+      "runner_up_clusters": [],
+      "schema_version": "2.0",
+      "summary": "As the calendar turns toward winter's deepest stretch, the day's strongest signal gathers around deliberate anticipation rather than hurried celebration. Across devotional life, a collective cadence is forming\u2014one that treats waiting itself as an active pilgrimage, orienting attention toward an approaching presence through quiet, disciplined observance.",
+      "top_macro_themes": [
+        "season bibleproject",
+        "bibleproject com",
+        "journey through",
+        "through season",
+        "bibleproject"
+      ],
+      "top_orbit_themes": [
+        "season bibleproject",
+        "bibleproject com",
+        "journey through",
+        "through season",
+        "bibleproject"
+      ],
+      "unsplash_photographer": "Anne Nyg\u00e5rd",
+      "unsplash_profile_url": "https://unsplash.com/@polarmermaid",
+      "updated_at": "2026-11-28T08:53:23.759280Z",
+      "visual_medium": "PHOTOGRAPHY",
+      "visual_tier_used": "PHOTOGRAPHY",
+      "window_hours": 96,
+      "word": "Vigil",
+      "media_provenance": {
+        "version": 1,
+        "classification": "PHOTOGRAPHY",
+        "basis": "camera_reported",
+        "provider": "unsplash",
+        "asset_id": "0uRJY0sStM0",
+        "source_url": "https://unsplash.com/photos/0uRJY0sStM0",
+        "camera_make": "Canon",
+        "camera_model": "Canon EOS 1300D",
+        "source_claim": {
+          "kind": "none",
+          "process": "unknown",
+          "statement": ""
+        },
+        "source_statement_sha256": "",
+        "allowance_exception": false
+      }
+    },
+    {
       "artwork_artist": "mindeurle lee",
       "artwork_source": "Unsplash",
       "artwork_title": "Benediction",
@@ -2190,6 +2266,6 @@
     }
   ],
   "schema_version": "2.0",
-  "updated_at": "2026-11-27T08:55:56.480030Z",
+  "updated_at": "2026-11-28T08:53:23.759280Z",
   "version": "2.0"
 }

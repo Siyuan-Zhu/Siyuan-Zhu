@@ -1,25 +1,25 @@
 {
   "version": 1,
-  "date": "2026-11-27",
-  "word": "Benediction",
-  "gloss": "A spoken blessing over unmerited abundance.",
-  "archetype": "S1_SUBTITLE",
+  "date": "2026-11-28",
+  "word": "Vigil",
+  "gloss": "Watchful stillness before a promised arrival.",
+  "archetype": "S1_FRAME",
   "medium": "PHOTOGRAPHY",
   "files": {
-    "assets/daily_pulse_light.webp": "b643216a2d9d5dec8194338c95c129d732f971219186dc00437c40b48087525d",
-    "assets/daily_pulse_dark.webp": "b643216a2d9d5dec8194338c95c129d732f971219186dc00437c40b48087525d",
-    "assets/daily_pulse.svg": "c0adf15dc0d5f43a272928a1695ef0b0da5993d9d92a0ed561e12c5b4d9f30d6",
-    "assets/pulse/2026-11-27.webp": "669bc729bb9cd07aaaef3871a3dfe2371b1d3a4e0054809eec0840ba7f9e2dc7"
+    "assets/daily_pulse_light.webp": "a5992fd2681d744f6ac254b17e5d0d9876fe8400153627ba72e22d911df8bb2c",
+    "assets/daily_pulse_dark.webp": "a5992fd2681d744f6ac254b17e5d0d9876fe8400153627ba72e22d911df8bb2c",
+    "assets/daily_pulse.svg": "75390dd11ad9802f3b77f07f1daaf65a1c26012a24e266900dee539499e587eb",
+    "assets/pulse/2026-11-28.webp": "ecf9632209bc0ed3b50ca14d3ec3a32c0faa37ea01aa03d297a4d0dfc4f10de2"
   },
   "media_provenance": {
     "version": 1,
     "classification": "PHOTOGRAPHY",
     "basis": "camera_reported",
     "provider": "unsplash",
-    "asset_id": "ozDFb-HMi6w",
-    "source_url": "https://unsplash.com/photos/ozDFb-HMi6w",
-    "camera_make": "Apple",
-    "camera_model": "iPhone 12 Pro",
+    "asset_id": "0uRJY0sStM0",
+    "source_url": "https://unsplash.com/photos/0uRJY0sStM0",
+    "camera_make": "Canon",
+    "camera_model": "Canon EOS 1300D",
     "source_claim": {
       "kind": "none",
       "process": "unknown",
@@ -28,5 +28,5 @@
     "source_statement_sha256": "",
     "allowance_exception": false
   },
-  "publication_id": "6183f1a99bac689759fc"
+  "publication_id": "7208af091a5fb7bf8b1e"
 }
